@@ -1,0 +1,7 @@
+{
+  "name": "AWNN",
+  "description": "A multi-track audio recorder and player with metronome and MIDI support.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
