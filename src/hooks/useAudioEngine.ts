@@ -81,6 +81,7 @@ export function generateClickTrackBuffer(
 }
 
 export function useAudioEngine() {
+  const layoutRetryCountRef = useRef(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const multitrackRef = useRef<MultiTrack | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -132,23 +133,23 @@ export function useAudioEngine() {
 
   const adjustLayout = useCallback(() => {
     if (!containerRef.current || !multitrackRef.current) return;
-    
+  
     containerRef.current.classList.add('multitrack-container');
-    
+  
     const expandedHeight = Math.floor(trackHeight * 1.5);
     const normalHeight = trackHeight;
     const currentMetronomeHeight = metronomeHeight;
-    
+  
     // Use tracks state directly
     const currentTracks = tracks || [];
-    
+  
     let totalHeight = 0;
     currentTracks.forEach(t => {
       const isMetronome = t.id === 'metronome';
       const isExpanded = t.id === selectedTrackId && !envelopeLocked && !isMetronome;
       totalHeight += isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
     });
-
+  
     let css = `
       :root {
         --expanded-track-h: ${expandedHeight}px;
@@ -161,58 +162,37 @@ export function useAudioEngine() {
         overflow: hidden !important;
       }
     `;
-
+  
     let previousTrackId: string | null = null;
     const multitrackItems = (multitrackRef.current as { tracks: TrackOptions[] }).tracks || [];
-    
+  
     // Check if DOM elements are rendered
     const trackElements = document.querySelectorAll('.multitrack-container > div > div > div');
-    
+  
+    // ---- START OF NEW CODE ----
     // If multitrack hasn't populated tracks yet, or DOM elements aren't rendered, retry shortly
+    // but with a maximum number of attempts.
     if (multitrackItems.length === 0 || trackElements.length === 0) {
-      setTimeout(adjustLayout, 100);
+      if (layoutRetryCountRef.current < 30) { // Retry for about 3 seconds
+        layoutRetryCountRef.current++;
+        setTimeout(adjustLayout, 100);
+      } else {
+        // After 30 attempts, force the UI to show so we can see errors
+        console.warn('Layout adjustment timed out, forcing isReady.');
+        setIsReady(true);
+        if (containerRef.current) {
+          containerRef.current.style.opacity = '1';
+        }
+      }
       return;
     }
-
+    // ---- END OF NEW CODE ----
+  
+    // ... (The rest of your existing layout code, starting with the for loop)
     for (let i = 0; i < multitrackItems.length; i++) {
-      const item = multitrackItems[i];
-      const childIndex = i + 2; 
-      
-      const isNewTrack = item.trackId !== previousTrackId;
-      const track = currentTracks.find(t => t.id === item.trackId);
-      const isMetronome = track?.id === 'metronome';
-      const isExpanded = track?.id === selectedTrackId && !envelopeLocked && !isMetronome;
-      const h = isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
-
-      css += `
-        .multitrack-container > div > div > div:nth-child(${childIndex}) {
-          z-index: ${isMetronome ? 1000 : 10 + i} !important;
-          height: ${h}px !important;
-          opacity: 0.8 !important;
-          mix-blend-mode: screen !important;
-          ${!isNewTrack ? `margin-top: -${h}px !important;` : `margin-top: 0px !important;`}
-        }
-      `;
-      
-      if (isNewTrack && previousTrackId !== null) {
-        css += `
-          .multitrack-container > div > div > div:nth-child(${childIndex})::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background-color: #4A5568;
-            z-index: 50;
-            pointer-events: none;
-          }
-        `;
-      }
-      
-      previousTrackId = item.trackId;
+      // ... (existing loop logic)
     }
-
+  
     let styleEl = document.getElementById('multitrack-custom-layout');
     if (!styleEl) {
       styleEl = document.createElement('style');
@@ -220,7 +200,7 @@ export function useAudioEngine() {
       document.head.appendChild(styleEl);
     }
     styleEl.textContent = css;
-
+  
     // Layout is now applied, we can show the UI
     setIsReady(true);
     if (containerRef.current) {
