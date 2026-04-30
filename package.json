@@ -1,0 +1,51 @@
+{
+    "name": "awnn",
+    "version": "2.5.1",
+    "description": "AWNN is a powerful, web-based multitrack audio recorder and editor designed for seamless playback, recording, and automation.",
+    "homepage": "https://awnn.app",
+    "main": "./public/index.html",
+    "type": "module",
+    "private": true,
+    "scripts": {
+        "dev": "vite",
+        "build": "tsc && vite build",
+        "preview": "vite preview",
+        "lint": "eslint . --fix",
+        "test": "vitest run"
+    },
+    "dependencies": {
+        "autoprefixer": "^10.5.0",
+        "clsx": "^2.1.1",
+        "localforage": "^1.10.0",
+        "lodash-es": "^4.17.21",
+        "lucide-react": "^0.575.0",
+        "mutative": "^1.3.0",
+        "react": "^19.2.4",
+        "react-dom": "^19.2.4",
+        "tailwind-merge": "^3.5.0",
+        "uuid": "^13.0.0",
+        "wavesurfer-multitrack": "^0.4.12",
+        "wavesurfer.js": "^7.12.1",
+        "zustand": "^5.0.11",
+        "zustand-mutative": "^1.3.1"
+    },
+    "devDependencies": {
+        "@tailwindcss/vite": "^4.2.1",
+        "@types/node": "^18.19.130",
+        "@types/react": "^19.2.14",
+        "@types/react-dom": "^19.2.3",
+        "@types/uuid": "^10.0.0",
+        "@typescript-eslint/eslint-plugin": "^8.56.1",
+        "@typescript-eslint/parser": "^8.56.1",
+        "@vitejs/plugin-react": "^5.1.4",
+        "eslint": "^9.39.3",
+        "eslint-plugin-react-hooks": "^7.0.1",
+        "eslint-plugin-react-refresh": "^0.5.2",
+        "globals": "^17.4.0",
+        "tailwindcss": "^4.2.1",
+        "typescript": "^5.4.5",
+        "typescript-eslint": "^8.57.1",
+        "vite": "^5.4.11",
+        "vitest": "^4.0.18"
+    }
+}
