@@ -53,10 +53,10 @@ export const LyricsBuilder: React.FC = () => {
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const btnClassBase = screenSize === 'small' 
-    ? `min-h-[${smallBtnSize}px] min-w-[${smallBtnSize}px] p-1 text-[9px]`
+    ? `min-h-[${smallBtnSize}px] p-1 text-[9px]`
     : screenSize === 'medium' 
-    ? `min-h-[${mediumBtnSize}px] min-w-[${mediumBtnSize}px] p-1.5 text-[10px]`
-    : `min-h-[${largeBtnSize}px] min-w-[${largeBtnSize}px] p-2 text-xs`;
+    ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]`
+    : `min-h-[${largeBtnSize}px] p-2 text-xs`;
   
   const getBtnClass = (isSquare = false) => cn(btnClassBase, isSquare ? 'aspect-square' : '');
   const btnIconSize = screenSize === 'small' ? 12 : screenSize === 'medium' ? 14 : 16;
