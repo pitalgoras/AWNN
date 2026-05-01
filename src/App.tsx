@@ -174,9 +174,10 @@ export default function App() {
         setShowMetronomeSettings(false);
         setEditingTrackId(null);
         setSelectedPhraseId(null);
-      } else if (e.key === 'd') { // Reset toolbar
+       } else if (e.key === 'd') { // Reset toolbar and app mode
         useStore.getState().setToolbarProposal(1);
         useStore.getState().setToolbarVisibleLabels(true);
+        useStore.getState().setAppMode('mixer');
       } else if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
         e.preventDefault();
         e.stopPropagation();
