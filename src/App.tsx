@@ -174,9 +174,6 @@ export default function App() {
         setShowMetronomeSettings(false);
         setEditingTrackId(null);
         setSelectedPhraseId(null);
-      } else if (e.key === 'l') { // Cycle toolbar proposals
-        const nextProposal = ((useStore.getState().toolbarProposal % 3) + 1) as 1 | 2 | 3;
-        useStore.getState().setToolbarProposal(nextProposal);
       } else if (e.key === 'd') { // Reset toolbar
         useStore.getState().setToolbarProposal(1);
         useStore.getState().setToolbarVisibleLabels(true);
