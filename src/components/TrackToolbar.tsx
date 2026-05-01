@@ -28,10 +28,6 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const toolbarProposal = useStore(s => s.toolbarProposal);
   const toolbarVisibleLabels = useStore(s => s.toolbarVisibleLabels);
   
-  const toolbarContext = useToolbarContext('vertical');
-  const isPortrait = toolbarContext.isPortrait;
-  const screenSize = toolbarContext.screenSize;
-  
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const toolbarBtnSize = screenSize === 'small' 
@@ -57,14 +53,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
     handleMutePointerUp 
   } = handlers;
   
-  const proposalClasses = {
-    1: "flex-col border-r border-zinc-800 select-none", // sidebar (left edge)
-    2: "flex-row border-b border-zinc-800 overflow-x-auto select-none", // top nav bar
-    3: "flex-col border-r border-zinc-800 w-16 select-none" // compact
-  };
-  
   const isCompact = toolbarProposal === 3;
-  const isHorizontal = toolbarProposal === 2;
   const showLabels = toolbarVisibleLabels && !isCompact;
   
   // Determine if single-row layout is needed based on track height
@@ -79,12 +68,12 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   return (
     <aside 
       style={{
-        ...(toolbarProposal === 1 ? { width: sidebarWidth } : {}),
-        ...(isHorizontal ? { height: '80px' } : {})
+        width: isCompact ? '64px' : sidebarWidth,
+        overflowY: 'auto'
       }}
-      className={cn("bg-zinc-900/30 shrink-0 flex left-0", isHorizontal ? "" : "overflow-y-auto", proposalClasses[toolbarProposal as 1|2|3])}
+      className="bg-zinc-900/30 shrink-0 flex flex-col left-0 border-r border-zinc-800 select-none"
     >
-      <div className={cn("flex", isHorizontal ? "flex-row" : "flex-col flex-1")}>
+      <div className="flex flex-col flex-1">
         {(tracks || []).map((track) => {
           const isMetronome = track.id === 'metronome';
           const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
@@ -101,14 +90,13 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
               onPointerUp={() => handleTrackPointerUp(track.id)}
               onPointerLeave={handleTrackPointerLeave}
               className={cn(
-                "p-1.5 transition-all cursor-pointer group relative overflow-hidden border-zinc-800",
-                isHorizontal ? "border-r w-48 flex-col" : "border-b",
+                "p-1.5 transition-all cursor-pointer group relative overflow-hidden border-b border-zinc-800",
                 selectedTrackId === track.id ? "bg-zinc-800/80 shadow-sm" : "bg-zinc-900/50 hover:bg-zinc-800/50"
               )}
-              style={isHorizontal ? {} : { height: currentHeight }}
+              style={{ height: currentHeight }}
             >
               <div 
-                className={cn("absolute", isHorizontal ? "left-0 bottom-0 right-0 h-1" : "right-0 top-0 bottom-0 w-1.5")}
+                className="absolute right-0 top-0 bottom-0 w-1.5"
                 style={{ backgroundColor: trackColor }} 
               />
               
@@ -176,7 +164,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                   </div>
                 ) : (
                   /* Two rows: label button (row 1), mute/record (row 2) */
-                  <div className={cn("flex gap-1 p-1", isHorizontal && "flex-row")}>
+                  <div className="flex gap-1 p-1">
                     <button 
                       onPointerDown={(e) => handleMutePointerDown(e, track.id)}
                       onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}

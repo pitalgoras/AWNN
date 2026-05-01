@@ -144,8 +144,15 @@ export const LyricsBuilder: React.FC = () => {
     cleaned = cleaned.replace(/\[(S|A|T|B|S&A|T&B)\]\s*\[ALL\]/g, '[ALL]');
     cleaned = cleaned.replace(/\[ALL\]\s*\[(S|A|T|B|S&A|T&B)\]/g, '[ALL]');
     
-    // Rule: remove duplicated identical consecutive labels
-    cleaned = cleaned.replace(/(\[[A-Z&]+\])\s*(?=\1)/g, '');
+// Rule: remove duplicate voicing tags with text between them (line-by-line)
+     cleaned = cleaned.split('\n').map(line => {
+       let lastTag = null;
+       return line.replace(/\[(ALL|S|A|T|B|S&A|T&B)\]/g, (match, tag) => {
+         if (tag === lastTag) return ''; // Remove duplicate
+         lastTag = tag;
+         return match;
+       });
+     }).join('\n');
     
     // Rule: if multiple conflicting voices, just keep the last painted one (this is tricky to regex perfectly, but we'll prune obvious ones)
     // E.g. [S] [A] -> [A]
@@ -159,17 +166,45 @@ export const LyricsBuilder: React.FC = () => {
     setLyricsText(cleaned);
   };
 
-  // Handle Paint bucket click/drag on a word
-  const handleWordInteraction = (startChar: number, endChar: number) => {
-    if (isEditMode) return;
-    
-    // Find the voice tag string for the active color
-    const voiceObj = STANDARD_VOICINGS.find(v => v.id === activeColorId) || STANDARD_VOICINGS[0];
-    const tagToInsert = voiceObj.tag + ' ';
-    
-    // Splice the tag right before the word
-    setLyricsCleanText(lyricsText.slice(0, startChar) + tagToInsert + lyricsText.slice(startChar));
-  };
+// Handle Paint bucket click/drag on a word
+const handleWordInteraction = (startChar: number, endChar: number) => {
+  if (isEditMode) return;
+  
+  // Get target tag from active color
+  const voiceObj = STANDARD_VOICINGS.find(v => v.id === activeColorId) || STANDARD_VOICINGS[0];
+  const targetTag = voiceObj.tag; // e.g., "[S]"
+  
+  // Step 1: Scan backward from startChar to find nearest [TAG] or SOF
+  const textBefore = lyricsText.slice(0, startChar);
+  const tagRegex = /\[(ALL|S|A|T|B|S&A|T&B)\]/g;
+  let match;
+  let lastTagMatch = null;
+  
+  while ((match = tagRegex.exec(textBefore)) !== null) {
+    lastTagMatch = match; // Last match is closest to startChar
+  }
+  
+  const currentTag = lastTagMatch ? lastTagMatch[0] : null;
+  const currentTagIndex = lastTagMatch ? lastTagMatch.index : -1;
+  
+  // Step 2: If current tag is same as target, do nothing (no duplicate)
+  if (currentTag === targetTag) {
+    return;
+  }
+  
+  // Step 3: If current tag exists and is different, replace it with target tag
+  if (currentTag) {
+    const beforeTag = lyricsText.slice(0, currentTagIndex);
+    const afterTag = lyricsText.slice(currentTagIndex + currentTag.length);
+    const newText = beforeTag + targetTag + afterTag;
+    setLyricsCleanText(newText);
+    return;
+  }
+  
+  // Step 4: No current tag (default [ALL]), insert new tag before word
+  const tagToInsert = targetTag + ' ';
+  setLyricsCleanText(lyricsText.slice(0, startChar) + tagToInsert + lyricsText.slice(startChar));
+};
 
   // Handle Anchor drop
   const handleAnchorLine = (lineStartIndex: number) => {

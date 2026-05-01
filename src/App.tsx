@@ -797,10 +797,10 @@ export default function App() {
         {/* We ALWAYS render Multitrack so the engine is never destroyed, but might hide it */}
         <div className={cn("flex-1 flex flex-col overflow-hidden", appMode === 'lyrics' && "opacity-0 pointer-events-none")}>
             
-            {/* Scrollable content row */}
-            <div className={cn("flex-1 flex", toolbarProposal === 2 ? "flex-col" : "flex-row")}>
-              
-              {/* Left Sidebar - Track Controls */}
+            {/* Main content: Left Sidebar (Track Controls) + Center (Waveforms) */}
+            <div className="flex-1 flex flex-row">
+               
+              {/* Left Sidebar - Track Controls (always on left edge) */}
               <TrackToolbar handlers={{
                 handleTrackPointerDown,
                 handleTrackPointerUp,
