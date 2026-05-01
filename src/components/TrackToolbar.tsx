@@ -35,10 +35,10 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const toolbarBtnSize = screenSize === 'small' 
-    ? `min-h-[${smallBtnSize}px] min-w-[${smallBtnSize}px] p-1 text-[9px]`
-    : screenSize === 'medium'
-    ? `min-h-[${mediumBtnSize}px] min-w-[${mediumBtnSize}px] p-1.5 text-[10px]`
-    : `min-h-[${largeBtnSize}px] min-w-[${largeBtnSize}px] p-2 text-xs`;
+    ? `min-h-[${smallBtnSize}px] p-1 text-[9px]`
+    : screenSize === 'medium' 
+    ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]`
+    : `min-h-[${largeBtnSize}px] p-2 text-xs`;
   
   const getToolbarBtnClass = (isSquare = false) => cn(toolbarBtnSize, isSquare ? 'aspect-square' : '');
   

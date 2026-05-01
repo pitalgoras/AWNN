@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 
-const PIXELS_PER_INCH = 96;
-const SMALL_SCREEN_INCHES = 6.7;
-const MEDIUM_SCREEN_INCHES = 10.7;
+// Modern approach: Use CSS pixel breakpoints, not inches
+// CSS pixels are already DPR-agnostic (browser handles high-DPI scaling)
+const SMALL_SCREEN_PX = 768;   // < 768px = small (mobile/tablet)
+const MEDIUM_SCREEN_PX = 1280; // 768-1280px = medium (laptop/tablet landscape)
 
 export type ScreenSize = 'small' | 'medium' | 'large';
 export type Orientation = 'portrait' | 'landscape';
@@ -14,37 +15,32 @@ interface ToolbarContextValue {
   toolbarType: ToolbarType;
   isPortrait: boolean;
   isLandscape: boolean;
-  screenWidthInches: number;
 }
 
 export function useToolbarContext(toolbarType: ToolbarType): ToolbarContextValue {
   const [context, setContext] = useState<ToolbarContextValue>(() => {
     const width = window.innerWidth;
-    const inches = width / PIXELS_PER_INCH;
     const isPortrait = window.matchMedia('(orientation: portrait)').matches;
-
+    
     return {
-      screenSize: getScreenSize(inches),
+      screenSize: getScreenSize(width),
       orientation: isPortrait ? 'portrait' : 'landscape',
       toolbarType,
       isPortrait,
       isLandscape: !isPortrait,
-      screenWidthInches: inches,
     };
   });
 
   const updateContext = useCallback(() => {
     const width = window.innerWidth;
-    const inches = width / PIXELS_PER_INCH;
     const isPortrait = window.matchMedia('(orientation: portrait)').matches;
-
+    
     setContext({
-      screenSize: getScreenSize(inches),
+      screenSize: getScreenSize(width),
       orientation: isPortrait ? 'portrait' : 'landscape',
       toolbarType,
       isPortrait,
       isLandscape: !isPortrait,
-      screenWidthInches: inches,
     });
   }, [toolbarType]);
 
@@ -60,8 +56,8 @@ export function useToolbarContext(toolbarType: ToolbarType): ToolbarContextValue
   return context;
 }
 
-function getScreenSize(inches: number): ScreenSize {
-  if (inches < SMALL_SCREEN_INCHES) return 'small';
-  if (inches <= MEDIUM_SCREEN_INCHES) return 'medium';
+function getScreenSize(widthPx: number): ScreenSize {
+  if (widthPx < SMALL_SCREEN_PX) return 'small';
+  if (widthPx <= MEDIUM_SCREEN_PX) return 'medium';
   return 'large';
 }

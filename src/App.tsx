@@ -86,10 +86,10 @@ export default function App() {
   
   // Button size strings (includes padding and text size)
   const btnClassBase = headerScreenSize === 'small' 
-    ? `min-h-[${smallBtnSize}px] min-w-[${smallBtnSize}px] p-1 text-[9px]`
+    ? `min-h-[${smallBtnSize}px] p-1 text-[9px]`
     : headerScreenSize === 'medium' 
-    ? `min-h-[${mediumBtnSize}px] min-w-[${mediumBtnSize}px] p-1.5 text-[10px]`
-    : `min-h-[${largeBtnSize}px] min-w-[${largeBtnSize}px] p-2 text-xs`;
+    ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]`
+    : `min-h-[${largeBtnSize}px] p-2 text-xs`;
   
   const getBtnClass = (isSquare = false) => cn(btnClassBase, isSquare ? 'aspect-square' : '');
   const headerIconSize = headerScreenSize === 'small' ? 12 : headerScreenSize === 'medium' ? 14 : 16;
@@ -524,7 +524,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-800">
+    <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-800 overflow-hidden">
       <StatusLogger />
       
       {/* Hidden input for importing project JSON file */}
@@ -725,14 +725,14 @@ export default function App() {
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setMoveLocked(!moveLocked)}
-                    className={cn(headerBtnSize, moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")}
+                    className={cn(getBtnClass(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")}
                     title={moveLocked ? "Movement Locked" : "Movement Unlocked"}
                   >
                     {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
                   </button>
                   <button
                     onClick={() => setEnvelopeLocked(!envelopeLocked)}
-                    className={cn(headerBtnSize, envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")}
+                    className={cn(getBtnClass(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")}
                     title={envelopeLocked ? "Envelopes Locked" : "Envelopes Unlocked"}
                   >
                     <Activity size={headerIconSize} />

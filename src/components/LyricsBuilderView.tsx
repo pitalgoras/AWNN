@@ -35,10 +35,10 @@ export default function LyricsBuilderView() {
   const lyricsScreenSize = lyricsContext.screenSize;
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const lyricsBtnSize = lyricsScreenSize === 'small' 
-    ? `min-h-[${smallBtnSize}px] min-w-[${smallBtnSize}px] p-1 text-[9px]`
+    ? `min-h-[${smallBtnSize}px] p-1 text-[9px]`
     : lyricsScreenSize === 'medium' 
-    ? `min-h-[${mediumBtnSize}px] min-w-[${mediumBtnSize}px] p-1.5 text-[10px]`
-    : `min-h-[${largeBtnSize}px] min-w-[${largeBtnSize}px] p-2 text-xs`;
+    ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]`
+    : `min-h-[${largeBtnSize}px] p-2 text-xs`;
   
   const getLyricsBtnClass = (isSquare = false) => cn(lyricsBtnSize, isSquare ? 'aspect-square' : '');
   const lyricsIconSize = lyricsScreenSize === 'small' ? 12 : lyricsScreenSize === 'medium' ? 14 : 16;

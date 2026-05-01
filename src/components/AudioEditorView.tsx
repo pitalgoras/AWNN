@@ -87,10 +87,10 @@ export default function AudioEditorView() {
   const sidebarScreenSize = leftSidebarContext.screenSize;
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const sidebarBtnSize = sidebarScreenSize === 'small' 
-    ? `min-h-[${smallBtnSize}px] min-w-[${smallBtnSize}px] p-1 text-[9px]`
+    ? `min-h-[${smallBtnSize}px] p-1 text-[9px]`
     : sidebarScreenSize === 'medium' 
-    ? `min-h-[${mediumBtnSize}px] min-w-[${mediumBtnSize}px] p-1.5 text-[10px]`
-    : `min-h-[${largeBtnSize}px] min-w-[${largeBtnSize}px] p-2 text-xs`;
+    ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]`
+    : `min-h-[${largeBtnSize}px] p-2 text-xs`;
   
   const getSidebarBtnClass = (isSquare = false) => cn(sidebarBtnSize, isSquare ? 'aspect-square' : '');
   const sidebarIconSize = sidebarScreenSize === 'small' ? 12 : sidebarScreenSize === 'medium' ? 14 : 16;
