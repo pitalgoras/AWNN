@@ -6,7 +6,20 @@ The adaptive UI system dynamically adjusts toolbar layouts, label abbreviations,
 - **Screen size** (inch-based): Small (<6.7"), Medium (6.7-10.7"), Large (>10.7")
 - **Orientation**: Portrait or Landscape
 - **Available space**: Per-item width for horizontal toolbars, total width for vertical toolbars
-- **Priority Tiers**: Tier 1 (always visible), Tier 2 (md+/landscape sm), Tier 3 (large only)
+- **Priority Tiers**: Tier1 (always visible), Tier 2 (md+/landscape sm), Tier 3 (large only)
+
+## Viewport-Anchored Chrome Rule
+
+The application shall maintain **viewport-anchored chrome** — all non-content UI elements (toolbars, control surfaces, buttons) must remain within the visible viewport boundaries at all times.
+
+- **Content vs. Chrome**: Content regions (lyrics editor, multitrack timeline, audio tracks) may implement independent scrolling to accommodate their full extent, but **no interactive control shall require scrolling to access**.
+- **Full Viewport Occupation**: The application view must occupy the full viewport with a clear **chrome/content separation**: fixed-position chrome surfaces and scrollable content regions.
+- **Key Technical Terms**:
+  - **Viewport-anchored chrome** — UI controls fixed within viewport boundaries
+  - **Chrome/content separation** — clear distinction between fixed UI and scrollable content
+  - **Always-accessible controls** — no scroll-to-reach interaction elements
+  - **Independent content scrolling** — content regions scroll without affecting chrome
+- **Implementation Requirement**: All toolbars, sidebars, and control panels must use `fixed`, `sticky`, or flex layout within viewport height (`h-screen`, `h-full`) — never exceed viewport bounds requiring scroll to access controls.
 
 ---
 

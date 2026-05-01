@@ -1,5 +1,16 @@
 ## ADAPTIVE UI CLARIFICATION ADDITIONS
 
+### Viewport-Anchored Chrome Rule
+- **Principle**: The application shall maintain **viewport-anchored chrome** — all non-content UI elements (toolbars, control surfaces, buttons) must remain within the visible viewport boundaries at all times.
+- **Content vs. Chrome**: Content regions (lyrics editor, multitrack timeline, audio tracks) may implement independent scrolling to accommodate their full extent, but **no interactive control shall require scrolling to access**.
+- **Full Viewport Occupation**: The application view must occupy the full viewport with a clear **chrome/content separation**: fixed-position chrome surfaces and scrollable content regions.
+- **Key Technical Terms**:
+  - **Viewport-anchored chrome** — UI controls fixed within viewport boundaries
+  - **Chrome/content separation** — clear distinction between fixed UI and scrollable content
+  - **Always-accessible controls** — no scroll-to-reach interaction elements
+  - **Independent content scrolling** — content regions scroll without affecting chrome
+- **Implementation Requirement**: All toolbars, sidebars, and control panels must use `fixed`, `sticky`, or flex layout within viewport height (`h-screen`, `h-full`) — never exceed viewport bounds requiring scroll to access controls.
+
 ### Label‑Inside‑Button Rule
 - **What**: Short tokens (`[S]`, `[A]`, `[T]`, `[B]`, `[S&A]`, `[T&B]`, `[ALL]`, `[Acc]`) are rendered *inside* the colored button or circle, instead of a separate label. This is true for:
   1. Voice palette in `LyricsBuilder` (both landscape & portrait).
