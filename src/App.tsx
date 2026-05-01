@@ -549,7 +549,7 @@ export default function App() {
       
       {/* Combined Header & Transport */}
       <header className={cn(
-        "border-b border-zinc-800 bg-zinc-900/90 flex shrink-0 z-50 w-full",
+        "border-b border-zinc-800 bg-zinc-900/90 flex shrink-0 z-50 w-full overflow-hidden",
         isSmallPortrait ? "flex-col h-20" : "h-10 sm:h-12 items-center px-2 sm:px-4"
       )}>
         {isSmallPortrait ? (
