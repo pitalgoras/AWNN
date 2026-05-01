@@ -31,7 +31,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const toolbarContext = useToolbarContext('vertical');
   const isPortrait = toolbarContext.isPortrait;
   const screenSize = toolbarContext.screenSize;
-
+  
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
   const toolbarBtnSize = screenSize === 'small' 
@@ -47,7 +47,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
     'vertical',
     (tracks || []).length + 1
   );
-
+  
   const { 
     handleTrackPointerDown, 
     handleTrackPointerUp, 
@@ -58,26 +58,31 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   } = handlers;
   
   const proposalClasses = {
-    1: "flex-col border-r border-zinc-800 select-none", // sidebar
+    1: "flex-col border-r border-zinc-800 select-none", // sidebar (left edge)
     2: "flex-row border-b border-zinc-800 overflow-x-auto select-none", // top nav bar
     3: "flex-col border-r border-zinc-800 w-16 select-none" // compact
   };
-
+  
   const isCompact = toolbarProposal === 3;
   const isHorizontal = toolbarProposal === 2;
   const showLabels = toolbarVisibleLabels && !isCompact;
-
+  
+  // Determine if single-row layout is needed based on track height
+  // If track height < 80px, force single row (label + mute/record side-by-side)
+  const singleRowThreshold = 80;
+  const useSingleRow = trackHeight < singleRowThreshold;
+  
   const getShortLabel = (track: any) => {
     return VOICE_TOKENS[track.label] || VOICE_TOKENS[track.name] || track.name.substring(0, 3);
   };
-
+  
   return (
     <aside 
       style={{
         ...(toolbarProposal === 1 ? { width: sidebarWidth } : {}),
         ...(isHorizontal ? { height: '80px' } : {})
       }}
-      className={cn("bg-zinc-900/30 shrink-0 flex", isHorizontal ? "" : "overflow-y-auto", proposalClasses[toolbarProposal as 1|2|3])}
+      className={cn("bg-zinc-900/30 shrink-0 flex left-0", isHorizontal ? "" : "overflow-y-auto", proposalClasses[toolbarProposal as 1|2|3])}
     >
       <div className={cn("flex", isHorizontal ? "flex-row" : "flex-col flex-1")}>
         {(tracks || []).map((track) => {
@@ -109,15 +114,15 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
               
               <div className={cn(
                 "w-full h-full",
-                isPortrait && screenSize === 'small' 
-                  ? "flex flex-row items-center p-1 gap-1" // Single row for small portrait: all buttons side-by-side
-                  : "flex flex-col" // Two rows for others
+                useSingleRow 
+                  ? "flex flex-row items-center p-1 gap-1" // Single row: all buttons side-by-side
+                  : "flex flex-col" // Two rows: label button (row 1), mute/record (row 2)
               )}>
                 {/* Label inside colored button - always visible */}
                 {!isMetronome && (
                   <div className={cn(
                     "flex gap-1",
-                    isPortrait && screenSize === 'small' ? "flex-1" : "w-full"
+                    useSingleRow ? "flex-1" : "w-full"
                   )}>
                     <button
                       onClick={() => useStore.getState().setSelectedTrackId(track.id)}
@@ -133,10 +138,10 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                     </button>
                   </div>
                 )}
-                
+               
                 {/* Mute/Solo & Record buttons */}
-                {isPortrait && screenSize === 'small' ? (
-                  /* Same row as label button for small portrait */
+                {useSingleRow ? (
+                  /* Same row as label button */
                   <div className="flex gap-1 flex-1">
                     <button 
                       onPointerDown={(e) => handleMutePointerDown(e, track.id)}
@@ -170,7 +175,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                     )}
                   </div>
                 ) : (
-                  /* Two rows for others: label button (row 1), mute/record (row 2) */
+                  /* Two rows: label button (row 1), mute/record (row 2) */
                   <div className={cn("flex gap-1 p-1", isHorizontal && "flex-row")}>
                     <button 
                       onPointerDown={(e) => handleMutePointerDown(e, track.id)}
