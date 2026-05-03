@@ -21,10 +21,20 @@ This document tracks the features discussed, planned, implemented, and discarded
 - [x] **Intelligent Clip Selection:** Double-click on a track selects the clip currently under the playhead.
 - [x] **Envelope Follows Clip:** Moving a clip on the timeline automatically shifts its associated envelope nodes.
 - [x] **Drag-to-Delete Nodes:** Envelope nodes can be deleted by dragging them far outside the track boundaries.
-- [x] **Lyrics Builder Mode:** 
-  - Toggle between Multitrack and Lyrics modes natively without halting playback or discarding project data.
-  - Interactive "Paint Bucket" editor that allows assigning colors (voicings) to words.
-  - Vertical Heatmap that translates WebAudio peaks to a VAD (Voice Activity Detection) visualization per track.
+ - [x] **Lyrics Builder Mode:** 
+   - Toggle between Multitrack and Lyrics modes natively without halting playback or discarding project data.
+   - Interactive "Paint Bucket" editor that allows assigning colors (voicings) to words.
+   - Voicing labels are only inserted when the voicing **changes**. The algorithm:
+     1. **Backward scan** for nearest voicing tag `V`; default `[ALL]` if none.
+     2. **"Right before" test**: `V` is valid only if between `V` and the word there is only whitespace and/or non-voicing tags (e.g., `[T:12.5]`).
+     3. **Apply**:
+        - If `V === X` (same tag): do nothing, then forward scan.
+        - If `V ≠ X` and `V` is right before: replace `V` with `X`.
+        - If `V ≠ X` and `V` not right before: insert `X` at word start.
+        - If no `V`: insert `X` at word start.
+     4. **Forward scan**: remove all subsequent `X` tags until a different voicing tag appears (cross-line allowed).
+     5. **Cleanup**: `setLyricsCleanText` removes duplicate tags with text between them (line-by-line).
+   - Vertical Heatmap that translates WebAudio peaks to a VAD (Voice Activity Detection) visualization per track.
 - [x] **Standalone `.awnn` File Export/Import:** Support for self-contained Base64 encoded JSON project saving and loading for robust offline and server-shared architectures.
 
 ## Discussed / Planned

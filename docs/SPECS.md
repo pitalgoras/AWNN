@@ -58,7 +58,19 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 18. **Lyrics Builder Mode:** A dedicated environment to import, edit, sync, and voice lyrics.
     * Uses a string-based tagging system (e.g., `[S]`, `[ALL]`, `[T:14.5]`) seamlessly woven into `lyricsText`, avoiding desync issues with complex internal segment maps.
     * Offers side-by-side VAD (Voice Activity Detection) visualizations (`VerticalHeatmap.tsx`) generated from track audio peaks to assist mapping.
-    * "Scaled View" intelligently spaces lyric lines proportional to their tagged playback times, forming a visual timeline.
+     * "Scaled View" intelligently spaces lyric lines proportional to their tagged playback times, forming a visual timeline.
+     * **Voicing Label Algorithm:** Tags are only inserted when the voicing changes. The logic for applying a voicing label `X` to a word at position `startChar` is:
+       1. **Backward scan:** From `startChar`, scan backwards (SOF) to find the nearest voicing tag `V` (`[ALL]`, `[S]`, `[A]`, `[T]`, `[B]`, `[S&A]`, `[T&B]`). If none, treat as default `[ALL]`.
+       2. **"Right before" test:** `V` is "right before" the word if between `V`'s closing `]` and `startChar` there is only whitespace and/or non-voicing tags (e.g., `[T:12.5]`). No other text or voicing tags allowed.
+       3. **Compare `V` and `X`:**
+          - If `V === X`: do nothing (no duplicate). Proceed to forward scan.
+          - If `V` exists and `V ≠ X`:
+            - If `V` is "right before": replace `V` with `X`.
+            - Else: insert `X` at `startChar`.
+          - Proceed to forward scan.
+          - If no `V` (default `[ALL]`): insert `X` at `startChar`, then forward scan.
+       4. **Forward scan:** Starting after the word (`endChar`), scan forward (cross-line, EOF) and remove every `X` tag encountered until a **different** voicing tag `Y` (`Y ≠ X`) appears. Stop at `Y`.
+       5. **Cleanup:** `setLyricsCleanText` performs line-by-line duplicate removal as a safety net (e.g., `[S]Hello [S]World` → `[S]Hello World`).
 19. **AWNN Project IO:** Projects (including the Base64-encoded recorded audio buffers, cues, BPM, and lyrics) can be fully exported/imported as a unified `.awnn` (JSON) representation.
 
 ## Known Limitations / Workarounds

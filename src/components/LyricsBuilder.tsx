@@ -174,41 +174,88 @@ export const LyricsBuilder: React.FC = () => {
 // Handle Paint bucket click/drag on a word
 const handleWordInteraction = (startChar: number, endChar: number) => {
   if (isEditMode) return;
-  
-  // Get target tag from active color
+
+  // Target tag from active color
   const voiceObj = STANDARD_VOICINGS.find(v => v.id === activeColorId) || STANDARD_VOICINGS[0];
   const targetTag = voiceObj.tag; // e.g., "[S]"
-  
-  // Step 1: Scan backward from startChar to find nearest [TAG] or SOF
+
+  // Helper: scan forward from a position and remove all targetTag occurrences until a different voicing tag appears
+  const removeForwardDuplicates = (text: string, fromIndex: number): string => {
+    const voicingTagPattern = /\[(ALL|S|A|T|B|S&A|T&B)\]/g;
+    let output = text.slice(0, fromIndex);
+    let rest = text.slice(fromIndex);
+    let match: RegExpExecArray | null;
+    while ((match = voicingTagPattern.exec(rest)) !== null) {
+      const matchedTag = match[0];
+      if (matchedTag === targetTag) {
+        // Remove this tag: skip it
+        output += rest.slice(0, match.index);
+        rest = rest.slice(match.index + matchedTag.length);
+        voicingTagPattern.lastIndex = 0; // reset because we modified rest
+        continue;
+      } else {
+        // Different tag encountered, stop
+        break;
+      }
+    }
+    output += rest;
+    return output;
+  };
+
+  // 1. Backward scan for nearest voicing tag V
   const textBefore = lyricsText.slice(0, startChar);
   const tagRegex = /\[(ALL|S|A|T|B|S&A|T&B)\]/g;
-  let match;
-  let lastTagMatch = null;
-  
-  while ((match = tagRegex.exec(textBefore)) !== null) {
-    lastTagMatch = match; // Last match is closest to startChar
+  let lastMatch: RegExpExecArray | null = null;
+  let m: RegExpExecArray | null;
+  while ((m = tagRegex.exec(textBefore)) !== null) {
+    lastMatch = m;
   }
-  
-  const currentTag = lastTagMatch ? lastTagMatch[0] : null;
-  const currentTagIndex = lastTagMatch ? lastTagMatch.index : -1;
-  
-  // Step 2: If current tag is same as target, do nothing (no duplicate)
-  if (currentTag === targetTag) {
-    return;
+  const V = lastMatch ? lastMatch[0] : null;
+  const VIndex = lastMatch ? lastMatch.index : -1;
+
+  // 2. Determine if V is "right before" the word
+  let isRightBefore = false;
+  if (V) {
+    const afterV = lyricsText.slice(VIndex + V.length, startChar);
+    // Remove non-voicing tags (like [T:...]) for checking
+    const cleaned = afterV.replace(/\[T:\d+(\.\d+)?\]/g, '');
+    // Check if cleaned contains any non-whitespace
+    const hasText = /\S/.test(cleaned);
+    // Check if there is any voicing tag in afterV (should not happen, but just in case)
+    const hasVoicing = /\[(ALL|S|A|T|B|S&A|T&B)\]/.test(afterV);
+    isRightBefore = !hasText && !hasVoicing;
   }
-  
-  // Step 3: If current tag exists and is different, replace it with target tag
-  if (currentTag) {
-    const beforeTag = lyricsText.slice(0, currentTagIndex);
-    const afterTag = lyricsText.slice(currentTagIndex + currentTag.length);
-    const newText = beforeTag + targetTag + afterTag;
+
+  // 3. Compare V and targetTag
+  let newText = lyricsText;
+  if (V && V === targetTag) {
+    // Same tag: do nothing for backward part, but forward scan after the word
+    newText = removeForwardDuplicates(lyricsText, endChar);
     setLyricsCleanText(newText);
     return;
+  } else if (V && V !== targetTag) {
+    if (isRightBefore) {
+      // Replace V with targetTag
+      newText = lyricsText.slice(0, VIndex) + targetTag + lyricsText.slice(VIndex + V.length);
+      // Forward scan from after the word (endChar unchanged because replacement before word)
+      newText = removeForwardDuplicates(newText, endChar);
+    } else {
+      // Insert targetTag at startChar
+      const toInsert = targetTag + ' ';
+      newText = lyricsText.slice(0, startChar) + toInsert + lyricsText.slice(startChar);
+      // Forward scan from after the inserted tag + word
+      const newEndChar = endChar + toInsert.length;
+      newText = removeForwardDuplicates(newText, newEndChar);
+    }
+  } else {
+    // No V (default ALL) -> insert targetTag at startChar
+    const toInsert = targetTag + ' ';
+    newText = lyricsText.slice(0, startChar) + toInsert + lyricsText.slice(startChar);
+    const newEndChar = endChar + toInsert.length;
+    newText = removeForwardDuplicates(newText, newEndChar);
   }
-  
-  // Step 4: No current tag (default [ALL]), insert new tag before word
-  const tagToInsert = targetTag + ' ';
-  setLyricsCleanText(lyricsText.slice(0, startChar) + tagToInsert + lyricsText.slice(startChar));
+
+  setLyricsCleanText(newText);
 };
 
   // Handle Anchor drop
@@ -281,9 +328,9 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
           if (isPortrait && screenSize === 'small') {
             // Bottom bar: single voices as vertical columns, multiple-voicing buttons to the right
             return (
-              <>
+              <div className="flex flex-row items-start flex-1">
                 {/* Single voices as vertical columns (voice + M/R below each) */}
-                <div className="flex gap-1">
+                <div className="flex flex-row gap-1 flex-shrink-0">
                   {singleVoicings.map(v => {
                     const track = v.trackId ? tracks.find(t => t.id === v.trackId) : null;
                     const contrastColor = getContrastColor(v.id);
@@ -306,7 +353,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                         >
                           {v.tag}
                         </button>
-                      
+                       
                         {/* Mute & Record buttons below voice button */}
                         {track && (
                           <>
@@ -347,10 +394,10 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                 </div>
                 
                 {/* Divider */}
-                <div className="w-px h-full bg-zinc-800 mx-1" />
+                <div className="w-px h-full bg-zinc-800 mx-1 flex-shrink-0" />
                 
                 {/* Multiple-voicing buttons flowing to the right */}
-                <div className="flex gap-1 items-center">
+                <div className="flex flex-row gap-1 items-center flex-shrink-0">
                   {nonSingleVoicings.map(v => {
                     const contrastColor = getContrastColor(v.id);
                     return (
@@ -374,7 +421,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                     );
                   })}
                 </div>
-              </>
+              </div>
             );
           }
           

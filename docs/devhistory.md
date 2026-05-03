@@ -179,4 +179,21 @@ This document tracks the key technical decisions, bug fixes, and architectural s
 **Decision:**
 * **Auto-Calibration Logic:** Identified that huge latencies (500ms+) were caused by the `onaudioprocess` loop missing the beep and instead triggering on background room noise indefinitely. Added a 400ms hard timeout. Brought threshold up to `0.1` (midpoint).
 * **Loopback UX:** Moved Loopback Latency Test out of the global settings into Advanced Settings. Refactored the Loopback modal to be a non-blocking floating panel in the bottom-right corner, so the user can interactively adjust the slider while watching the timeline shift behind it.
-* **Chrome `goog` Constraints:** Modern browsers heavily process audio streams even when standard `false` properties are passed for AGC and noise suppression. Rebuilt the raw audio request object to use `{ exact: false }` for W3C properties *and* appended internal WebRTC flags (`googAutoGainControl`, `googNoiseSuppression`, `googHighpassFilter`, `googTypingNoiseDetection`) to forcefully bypass native browser limiters.
+ * **Chrome `goog` Constraints:** Modern browsers heavily process audio streams even when standard `false` properties are passed for AGC and noise suppression. Rebuilt the raw audio request object to use `{ exact: false }` for W3C properties *and* appended internal WebRTC flags (`googAutoGainControl`, `googNoiseSuppression`, `googHighpassFilter`, `googTypingNoiseDetection`) to forcefully bypass native browser limiters.
+
+## 20. Voicing Label Algorithm Refinement (2026-05-03)
+**Problem:** When painting voicing labels on lyrics, duplicate tags appeared, and labels were added even when the same voicing already applied. The voicing tags should only exist when the voicing **changes**.
+
+**Decision:**
+* **Backward Scan:** From the word's start position, scan backwards (SOF) to find the nearest voicing tag `V`. If none, treat as default `[ALL]`.
+* **"Right Before" Test:** `V` is considered "right before" the word only if between `V`'s closing `]` and the word's start there is only whitespace and/or non-voicing tags (e.g., `[T:12.5]`). No other text allowed.
+* **Apply Logic:**
+  - If `V === X` (same tag): do nothing for backward part; proceed to forward scan.
+  - If `V ≠ X` and `V` is right before: replace `V` with `X`.
+  - If `V ≠ X` and `V` not right before: insert `X` at word start.
+  - If no `V`: insert `X` at word start.
+* **Forward Scan:** After the word, scan forward (cross-line, EOF) and remove every `X` tag encountered until a **different** voicing tag `Y` (`Y ≠ X`) appears. Stop at `Y`.
+* **Cleanup:** `setLyricsCleanText` performs line-by-line duplicate removal as a safety net, handling cases like `[S]Hello [S]World` → `[S]Hello World`.
+* **Implementation:** Updated `LyricsBuilder.tsx`:
+  - `setLyricsCleanText` now uses line-by-line processing to remove duplicate voicing tags with text between them.
+  - `handleWordInteraction` implements the backward scan, "right before" test, backward replace/insert, and forward duplicate removal via a helper scanner.
