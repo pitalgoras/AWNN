@@ -61,6 +61,11 @@ export const LyricsBuilder: React.FC = () => {
   const getBtnClass = (isSquare = false) => cn(btnClassBase, isSquare ? 'aspect-square' : '');
   const btnIconSize = screenSize === 'small' ? 12 : screenSize === 'medium' ? 14 : 16;
   
+  // Palette voicing buttons: small fixed size, not full-width
+  const paletteBtnSize = screenSize === 'small' ? 'h-8 w-8 min-h-0 text-[9px]' : 'h-10 w-10 min-h-0 text-[10px]';
+  // M/R buttons below voices: compact size
+  const smallBtnClass = screenSize === 'small' ? 'h-6 px-2 text-[9px]' : 'h-7 px-2 text-[10px]';
+  
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Use a PIXELS_PER_SECOND constant, same as VerticalHeatmap
@@ -286,13 +291,12 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                 {nonSingleVoicings.map(v => {
                   const contrastColor = getContrastColor(v.id);
                   return (
-                    <div key={v.id} className="flex-1 flex items-center">
+                    <div key={v.id} className="flex items-center justify-center">
                       <button
                         onClick={() => setActiveColorId(v.id)}
                         className={cn(
-                          "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center w-full",
-                          getBtnClass(true),
-                          isPortrait && screenSize === 'small' ? "flex-1" : "w-full",
+                          "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
+                          paletteBtnSize,
                           activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
                         )}
                         style={{
@@ -339,8 +343,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                         onClick={() => setActiveColorId(v.id)}
                         className={cn(
                           "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
-                          getBtnClass(true),
-                          isPortrait && screenSize === 'small' ? "flex-1" : "w-full",
+                          paletteBtnSize,
                           activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
                         )}
                         style={{
@@ -363,7 +366,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                             }}
                             className={cn(
                               "rounded flex items-center justify-center text-[10px] font-bold transition-all",
-                              getBtnClass(true),
+                              smallBtnClass,
                               track.isMuted 
                                 ? "bg-red-500/20 text-red-400" 
                                 : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
@@ -377,7 +380,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                               onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
                               className={cn(
                                 "rounded flex items-center justify-center transition-colors",
-                                getBtnClass(true),
+                                smallBtnClass,
                                 "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
                               )}
                               title="Record"
