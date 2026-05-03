@@ -21,6 +21,15 @@
 - Only research, analysis, and presenting findings to user
 - Wait for explicit "exit Plan Mode" or "proceed" before making changes
 
+## Git Operations Rules
+
+### CRITICAL: Never Overwrite Local Modified Files Without Consent
+
+- **NEVER overwrite local modified files** with older versions from git without explicit user consent
+- This includes commands like: `git checkout -- <file>`, `git restore <file>`, `git reset --hard`, `git pull` when they would discard local changes
+- Always check `git status` first - if a file shows as modified (not staged), warn the user and ask before overwriting
+- Exception: Only proceed without asking if user explicitly says "overwrite" or "discard changes"
+
 ## General Guidelines
 
 - Stick strictly to approved plans - do not add extra actions
