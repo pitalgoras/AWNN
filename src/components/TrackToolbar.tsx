@@ -27,6 +27,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const metronomeHeight = useStore(s => s.metronomeHeight);
   const toolbarProposal = useStore(s => s.toolbarProposal);
   const toolbarVisibleLabels = useStore(s => s.toolbarVisibleLabels);
+  const { screenSize } = useToolbarContext('vertical');
   
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
