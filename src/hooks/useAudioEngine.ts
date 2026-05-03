@@ -242,15 +242,36 @@ export function useAudioEngine() {
     ).join(',') + `|bpm:${bpm}|ts:${timeSignature?.[0]}/${timeSignature?.[1]}`;
   }, [tracks, bpm, timeSignature]);
 
-  // Initialize AudioContext once
-  useEffect(() => {
+  // Lazy AudioContext initialization - must be called on user gesture
+  const ensureAudioContext = useCallback(() => {
     if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
     }
-    return () => {
-      // We don't close it here anymore to keep it alive between track structure changes
-    };
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
+    }
+    return audioContextRef.current;
   }, []);
+
+  // Initialize AudioContext on first user gesture
+  useEffect(() => {
+    const handleFirstGesture = () => {
+      ensureAudioContext();
+      document.removeEventListener('click', handleFirstGesture);
+      document.removeEventListener('touchstart', handleFirstGesture);
+      document.removeEventListener('keydown', handleFirstGesture);
+    };
+    
+    document.addEventListener('click', handleFirstGesture);
+    document.addEventListener('touchstart', handleFirstGesture);
+    document.addEventListener('keydown', handleFirstGesture);
+    
+    return () => {
+      document.removeEventListener('click', handleFirstGesture);
+      document.removeEventListener('touchstart', handleFirstGesture);
+      document.removeEventListener('keydown', handleFirstGesture);
+    };
+  }, [ensureAudioContext]);
 
   // Initialize Multitrack
   useEffect(() => {
@@ -263,10 +284,11 @@ export function useAudioEngine() {
       containerRef.current.style.transition = 'opacity 0.3s ease-in-out';
     }
 
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
-    }
     const sharedAudioContext = audioContextRef.current;
+    if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+      console.warn('AudioContext not initialized. Call ensureAudioContext() on user gesture first.');
+      return;
+    }
     
     const multitrackItems: (TrackOptions & { trackId: string })[] = [];
 
@@ -918,10 +940,8 @@ export function useAudioEngine() {
   const playPause = useCallback(async () => {
     if (!multitrackRef.current) return;
 
-    // Resume AudioContext on user gesture
-    if (audioContextRef.current?.state === 'suspended') {
-      await audioContextRef.current.resume();
-    }
+    // Ensure AudioContext is ready (creates/resumes on user gesture)
+    ensureAudioContext();
 
     if (useStore.getState().isRecording) {
       // If recording, stop recording which will also stop playback
@@ -1104,10 +1124,8 @@ export function useAudioEngine() {
 
   const startRecording = useCallback(async (trackId: string) => {
     try {
-      // Resume AudioContext on user gesture
-      if (audioContextRef.current?.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
+      // Ensure AudioContext is ready (creates/resumes on user gesture)
+      ensureAudioContext();
 
       if (!continuousMicStreamRef.current) {
         const rawRecordingMode = useStore.getState().rawRecordingMode;
