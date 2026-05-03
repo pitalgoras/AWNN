@@ -7,14 +7,14 @@ import { getContrastColor } from '../lib/utils';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 
-export const STANDARD_VOICINGS = [
+const STANDARD_VOICINGS = [
   // Single voices (with trackId) – Right section, two rows with M/R
   { id: '#4a5568', label: 'Accompaniment', tag: '[Acc]', trackId: '1' }, // TODO: Replace all "Backtrack" references later with "Accompaniment"
   { id: '#F6E05E', label: 'Soprano', tag: '[S]', trackId: '2' },
   { id: '#F56565', label: 'Alto', tag: '[A]', trackId: '3' },
   { id: '#48BB78', label: 'Tenor', tag: '[T]', trackId: '4' },
   { id: '#4299E1', label: 'Bass', tag: '[B]', trackId: '5' },
-
+  
   // Non-single voices (no trackId) – Left section, single row only
   { id: '#A0AEC0', label: 'Unison', tag: '[ALL]', trackId: null },
   { id: '#ED8936', label: 'Soprano & Alto', tag: '[S&A]', trackId: null },
@@ -45,9 +45,13 @@ export const LyricsBuilder: React.FC = () => {
   const isPortrait = toolbarContext.isPortrait;
   const screenSize = toolbarContext.screenSize;
   
+  // Toolbar ref for adaptive labels
+  const lyricsRef = useRef<HTMLDivElement>(null);
+  // Approximate item count: Palette, Align, Edit, Anchor, Wand, Arrows, Mic, Volume = 8
   const { isAbbreviated: lyricsAbbreviated, getLabel: lyricsGetLabel } = useAdaptiveLabels(
-    screenSize,
-    { compact: 50, tiny: 30 }
+    lyricsRef as React.RefObject<HTMLElement>,
+    'vertical',
+    8
   );
   
   // Responsive sizing based on screenSize
@@ -67,6 +71,11 @@ export const LyricsBuilder: React.FC = () => {
   const smallBtnClass = screenSize === 'small' ? 'h-6 px-2 text-[9px]' : 'h-7 px-2 text-[10px]';
   
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Handle record button click - toggles global recording state
+  const handleRecord = (trackId: string) => {
+    setIsRecording(!isRecording);
+  };
   
   // Use a PIXELS_PER_SECOND constant, same as VerticalHeatmap
   const PIXELS_PER_SECOND = 20;

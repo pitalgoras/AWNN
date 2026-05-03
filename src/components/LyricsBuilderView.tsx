@@ -98,7 +98,6 @@ export default function LyricsBuilderView() {
         >
           {lyricsLabel('Publish Snapshot', 'Publish')}
         </button>
-        </div>
 
         <div className="flex-1" />
 

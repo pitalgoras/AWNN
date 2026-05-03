@@ -4,6 +4,7 @@ import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind,
 import { cn } from '../lib/utils';
 import { calculatePeaksAsync } from '../utils/audioUtils';
 import { useAudioEngine } from '../hooks/useAudioEngine';
+import { useToolbarContext } from '../hooks/useToolbarContext';
 
 import { BpmInput } from './BpmInput';
 import { SyncTool } from './SyncTool';
@@ -82,6 +83,9 @@ export default function AudioEditorView() {
   const audioInputRef = useRef<HTMLInputElement>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const muteLongPressTimer = useRef<{ [key: string]: NodeJS.Timeout | null }>({});
+  
+  // Left sidebar context for responsive sizing
+  const leftSidebarContext = useToolbarContext('vertical');
   
   // Responsive sizing based on screenSize
   const sidebarScreenSize = leftSidebarContext.screenSize;
