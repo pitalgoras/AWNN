@@ -3,10 +3,9 @@
 ## Overview
 
 The adaptive UI system dynamically adjusts toolbar layouts, label abbreviations, and element visibility based on:
-- **Screen size** (inch-based): Small (<6.7"), Medium (6.7-10.7"), Large (>10.7")
+- **Screen size** (CSS pixel breakpoints): Small (<768px), Medium (768-1280px), Large (>1280px)
 - **Orientation**: Portrait or Landscape
 - **Available space**: Per-item width for horizontal toolbars, total width for vertical toolbars
-- **Priority Tiers**: Tier1 (always visible), Tier 2 (md+/landscape sm), Tier 3 (large only)
 
 ## Viewport-Anchored Chrome Rule
 
@@ -23,17 +22,16 @@ The application shall maintain **viewport-anchored chrome** — all non-content 
 
 ---
 
-## Module 1: `useToolbarContext.ts`
+## Module1: `useToolbarContext.ts`
 
 ### Purpose
-Detect screen size (inch-based), orientation, and toolbar type.
+Detect screen size (CSS pixel breakpoints), orientation, and toolbar type.
 
 ### Key Implementation Details
 ```typescript
-// Constants
-const PIXELS_PER_INCH = 96;  // CSS pixels per inch
-const SMALL_SCREEN_INCHES = 6.7;
-const MEDIUM_SCREEN_INCHES = 10.7;
+// CSS pixel breakpoints (replaces inch-based calculations)
+const SMALL_SCREEN_PX = 768;   // < 768px = small
+const MEDIUM_SCREEN_PX = 1280; // 768-1280px = medium
 
 // Types
 export type ScreenSize = 'small' | 'medium' | 'large';
@@ -44,11 +42,136 @@ export type ToolbarType = 'horizontal' | 'vertical';
 interface ToolbarContextValue {
   screenSize: ScreenSize;      // 'small', 'medium', 'large'
   orientation: Orientation;    // 'portrait' | 'landscape'
-  toolbarType: ToolbarType;  // 'horizontal' | 'vertical'
+  toolbarType: ToolbarType;    // 'horizontal' | 'vertical'
   isPortrait: boolean;
   isLandscape: boolean;
-  screenWidthInches: number;
 }
+```
+
+### How it works
+1. Uses `window.innerWidth` to get viewport width in CSS pixels
+2. Uses `window.matchMedia('(orientation: portrait)')` to detect orientation
+3. Returns `getScreenSize(widthPx)`:
+   - `< 768px` → `'small'`
+   - `<= 1280px` → `'medium'`
+   - `> 1280px` → `'large'`
+4. Listens to `resize` and `orientationchange` events to update reactively
+
+### Usage
+```typescript
+const context = useToolbarContext('horizontal');  // or 'vertical'
+// context.screenSize → 'small' | 'medium' | 'large'
+// context.isPortrait → true | false
+```
+
+### Per-Component Logic Requirement
+**All components importing `useToolbarContext` MUST use the return values** to drive UI decisions:
+
+1. **Button Sizing**: Use `screenSize` to set button sizes (stored in Zustand store, editable in Advanced Settings):
+   ```tsx
+   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
+   const btnClassBase = screenSize === 'small' 
+     ? `min-h-[${smallBtnSize}px] p-1 text-[9px]` 
+     : screenSize === 'medium' 
+     ? `min-h-[${mediumBtnSize}px] p-1.5 text-[10px]` 
+     : `min-h-[${largeBtnSize}px] p-2 text-xs`;
+   const getBtnClass = (isSquare = false) => cn(btnClassBase, isSquare ? 'aspect-square' : '');
+   ```
+
+2. **Special Palette Button Sizing**: Voice palette buttons use fixed small sizes (no min-w constraints):
+   ```tsx
+   const paletteBtnSize = screenSize === 'small' ? 'h-8 w-8 min-h-0 text-[9px]' : 'h-10 w-10 min-h-0 text-[10px]';
+   ```
+
+3. **Padding & Text**: Scale proportionally with button size:
+   | screenSize | Button Size | Padding | Text Size | Icon Size |
+   |------------|-------------|---------|-----------|-----------|
+   | small      | 36px (default) | p-1     | text-[9px] | size={12} |
+   | medium     | 44px (default) | p-1.5   | text-[10px] | size={14} |
+   | large      | 52px (default) | p-2     | text-xs   | size={16} |
+
+4. **Button Shape Rules**:
+   - **Square (aspect-square)**: Voice buttons (short `[]` label), Transport buttons, Mute/Record buttons
+   - **Rectangular**: Text buttons ("Pre-roll", "Metro", "Cues", "Settings", etc.) - must fit text
+   - **No min-w constraints**: Buttons may shrink to fit available space
+
+5. **Text Sizing**: Use `screenSize` for label text:
+   ```tsx
+   const textSizeClass = screenSize === 'small' ? 'text-[9px]' 
+                       : screenSize === 'medium' ? 'text-[10px]' 
+                       : 'text-xs';
+   ```
+
+### Configurable Button Sizes (Advanced Settings)
+- Values stored in Zustand store: `smallBtnSize` (default 36), `mediumBtnSize` (default 44), `largeBtnSize` (default 52)
+- Setter functions: `setSmallBtnSize`, `setMediumBtnSize`, `setLargeBtnSize`
+- Editable via Advanced Settings page
+- Changes apply immediately via `useToolbarContext` per-component logic
+
+### Components Required to Use `useToolbarContext`
+| Component | Path | Status |
+|-----------|------|--------|
+| `App.tsx` | `src/App.tsx` | ✅ Implemented - `getBtnClass()` pattern, 3-area header for small portrait |
+| `TrackToolbar.tsx` | `src/components/TrackToolbar.tsx` | ✅ Implemented - uses `screenSize` from `useToolbarContext('vertical')` |
+| `AudioEditorView.tsx` | `src/components/AudioEditorView.tsx` | ✅ Implemented - `getSidebarBtnClass()` with store values |
+| `LyricsBuilderView.tsx` | `src/components/LyricsBuilderView.tsx` | ✅ Implemented - `getLyricsBtnClass()` with store values |
+| `LyricsBuilder.tsx` | `src/components/LyricsBuilder.tsx` | ✅ Implemented - voice palette split, `getBtnClass()` pattern |
+
+---
+
+## Module 2: `useAdaptiveLabels.ts`
+
+### Purpose
+Automatically abbreviate labels when space is constrained using ResizeObserver.
+
+### Key Implementation Details
+```typescript
+// CSS pixel thresholds (replaces inch-based calculations)
+const VERTICAL_ABBREVIATION_THRESHOLD_PX = 50;  // Vertical toolbar width < 50px → abbreviate
+const HORIZONTAL_ITEM_THRESHOLD_PX = 30;         // Horizontal toolbar per-item width < 30px → abbreviate
+
+interface UseAdaptiveLabelsReturn {
+  isAbbreviated: boolean;
+  getLabel: (full: string, abbreviated: string) => string;
+}
+
+export function useAdaptiveLabels(
+  toolbarRef: React.RefObject<HTMLElement>,
+  toolbarType: ToolbarType,
+  itemCount: number
+): UseAdaptiveLabelsReturn
+```
+
+### How it works
+1. **Vertical toolbar**: Measures `el.offsetWidth` → if `< 50px` → `isAbbreviated = true`
+2. **Horizontal toolbar**: Measures `el.offsetWidth`, calculates `availableWidthPerItem = (totalWidth - (itemCount-1) * gap) / itemCount` → if `< 30px` → `isAbbreviated = true`
+3. Uses `ResizeObserver` to re-check on container size changes
+4. `getLabel(full, abbreviated)` returns `abbreviated` if `isAbbreviated`, else `full`
+
+### CRITICAL: Must Call `getLabel()` for All Labels
+**All components importing `useAdaptiveLabels` MUST use `getLabel()`** for every visible label:
+
+```tsx
+// App.tsx example
+<span>{mainToolbarLabel('Pre-roll', 'Pre')}</span>
+<span>{mainToolbarLabel('Cues', 'Cues')}</span>
+<span>{mainToolbarLabel('Settings', 'Set')}</span>
+
+// TrackToolbar example  
+<span>{getLabel('Mute', 'M')}</span>
+<span>{getLabel('Record', 'R')}</span>
+
+// LyricsBuilderView example
+<span>{lyricsLabel('Edit Text', 'Edit')}</span>
+```
+
+### Usage
+```typescript
+const { isAbbreviated, getLabel } = useAdaptiveLabels(ref, 'horizontal', 15);
+
+// In JSX:
+<span>{getLabel('Tempo', 'BPM')}</span>
+{!isAbbreviated && <span>Full label text</span>}
 ```
 
 ### How it works
@@ -171,7 +294,7 @@ const { isAbbreviated, getLabel } = useAdaptiveLabels(ref, 'horizontal', 15);
 ## Module 3: `MoreIconDropdown.tsx`
 
 ### Purpose
-Overflow dropdown ("+" icon) for Tier 2/3 items that don't fit in the toolbar.
+Overflow dropdown ("+" icon) for items that don't fit in the toolbar.
 
 ### Props
 ```typescript
@@ -188,7 +311,7 @@ interface MoreIconDropdownProps {
 3. **Vertical toolbar**: Dropdown appears to the **right** (`left-full top-0 ml-1`)
 4. **Horizontal toolbar**: Dropdown appears **below** (`top-full left-0 mt-1`)
 5. Clicking outside closes the dropdown (via `mousedown` event listener)
-6. Children are the overflow items (Tier 2/3 buttons)
+6. Children are the overflow items
 
 ### Usage
 ```tsx
@@ -205,7 +328,7 @@ interface MoreIconDropdownProps {
 ### Purpose
 Switch between multitrack workspace (audio editing) and lyrics builder view.
 
-### How it works (from original `awnn0.9.1.zip`)
+### How it works
 
 #### 1. Store State (`src/store/useStore.ts`)
 ```typescript
@@ -262,18 +385,36 @@ appMode: 'mixer' as const,
 
 ---
 
+## TrackToolbar Special Rules
+
+### Single-Row Layout
+- Triggered when `trackHeight < 80px` (not screen size)
+- Label + Mute/Record buttons side-by-side in one row
+- Two rows otherwise (label row, M/R row below)
+
+### Left-Edge Positioning
+- Fixed to left viewport edge (`left-0`)
+- Scrolls independently of content
+- Never exceeds viewport bounds
+
+### Lock/Unlock Buttons
+- Visible **only** when `appMode === 'mixer'`
+- Hidden in lyrics mode
+
+---
+
 ## Priority Tier System
 
-### Tier 1: Always Visible
+### Tier1: Always Visible
 - Move Lock, Envelope Lock, Lyrics/Multitrack Toggle
 - Never hidden, regardless of screen size
 
-### Tier 2: Visibility by Screen Size + Orientation
+### Tier2: Visibility by Screen Size + Orientation
 - Pre-roll, Cues toggle, Settings
 - **Small portrait**: Moved to 3-area header layout (see below), distributed by usability
 - **Medium/large, landscape**: Visible in main toolbar row via `sm:flex`
 
-### Tier 3: Large Screens Only
+### Tier3: Large Screens Only
 - Zoom slider
 - Visible only on `lg:` (≥1024px)
 - On smaller screens: overflow to `MoreIconDropdown`
@@ -282,10 +423,9 @@ appMode: 'mixer' as const,
 When `screenSize === 'small' && isPortrait`:
 - **Header becomes 2 rows** with 3 areas:
   - **Left area**: 2 rows of items (Tier 2 + other items by usability)
-  - **Center area**: Transport controls (Play, FF, Rewind) spanning **full 2-row height**, made **bigger** (min-h-[44px] min-w-[44px] or larger)
+  - **Center area**: Transport controls (Play, FF, Rewind) spanning **full 2-row height**, made **bigger** (min-h-[44px] or larger)
   - **Right area**: 2 rows of items (Tier 2 + other items by usability)
 - Items distributed by **usability criteria**, NOT by Tier
-- Order adjusted manually per usability (not automated tier logic)
 
 ### Implementation Pattern
 ```tsx
@@ -303,10 +443,28 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
 ) : (
   // Normal single-row layout
   <div className="flex items-center gap-1">
-    {/* Tier 2 items with hidden sm:flex */}
+    {/* Tier2 items with hidden sm:flex */}
   </div>
 )}
 ```
+
+---
+
+## Voice Palette Layout (Lyrics Mode)
+
+### Sidebar Layout (Landscape/Desktop)
+- **Left Section** (`.filter(v => !v.trackId)`): Non-single voices (`[ALL]`, `[S&A]`, `[T&B]`) — single column, no mute/record
+- **Right Section** (`.filter(v => v.trackId)`): Single voices (`[Acc]`, `[S]`, `[A]`, `[T]`, `[B]`) — two rows (voice button → M/R below)
+
+### Bottom Bar Layout (Portrait Small)
+- Single voices form **vertical columns** (voice button + M/R below each)
+- Multiple-voicing buttons (`[ALL]`, `[S&A]`, `[T&B]`) flow to the **right** in a row
+- No single-row fallback — always columns for single voices
+
+### Button Sizing
+- **Palette buttons**: Fixed small size (`h-8 w-8` small, `h-10 w-10` medium+)
+- **M/R buttons**: Compact size (`h-6 px-2` small, `h-7 px-2` medium+)
+- No min-w constraints — buttons shrink to fit
 
 ---
 
@@ -331,6 +489,8 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
 3. **Tailwind v4**: Uses `@import "tailwindcss"` (NOT `@tailwind base/components/utilities`)
 4. **Build errors**: If `npx vite build` fails with PostCSS errors, restore `index.css` from zip and ensure correct Tailwind version
 5. **ResizeObserver**: Must observe the toolbar container element, not individual items
+6. **No inch calculations**: All screen size detection uses CSS pixel breakpoints (768px, 1280px)
+7. **No min-w constraints**: Buttons may shrink to fit available space
 
 ---
 
@@ -339,20 +499,23 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
 1. [ ] Toggle button switches between mixer (multitrack) and lyrics modes
 2. [ ] Multitrack mode initializes audio engine (no infinite "Initializing Engine" spinner)
 3. [ ] Lyrics mode shows `LyricsBuilder` component
-4. [ ] Labels abbreviate at <0.8" width threshold (use browser DevTools to simulate)
-5. [x] Tier 2 items hide on small screens (<640px width)
-6. [x] Tier 3 items hide below 1024px width
+4. [ ] Labels abbreviate at <50px vertical width or <30px horizontal per-item width
+5. [x] Tier2 items hide on small screens (<768px width)
+6. [x] Tier3 items hide below 1024px width
 7. [x] `MoreIconDropdown` shows overflow items on small screens
 8. [x] Build passes: `npx vite build`
-9. [x] **`useToolbarContext` per-component**: App.tsx uses `mainToolbarContext` for btn/text sizing
-10. [x] **`useToolbarContext` per-component**: TrackToolbar.tsx uses `toolbarContext` for btn/text sizing
-11. [x] **`useToolbarContext` per-component**: AudioEditorView.tsx uses `leftSidebarContext` for btn/text sizing
-12. [x] **`useToolbarContext` per-component**: LyricsBuilderView.tsx uses `lyricsContext` for btn/text sizing
+9. [x] **`useToolbarContext` per-component**: App.tsx uses `getBtnClass()` pattern
+10. [x] **`useToolbarContext` per-component**: TrackToolbar.tsx uses `screenSize` from `useToolbarContext('vertical')`
+11. [x] **`useToolbarContext` per-component**: AudioEditorView.tsx uses `getSidebarBtnClass()` with store values
+12. [x] **`useToolbarContext` per-component**: LyricsBuilderView.tsx uses `getLyricsBtnClass()` with store values
 13. [x] Button sizes respond to `screenSize`: small=36px, medium=44px, large=52px (configurable in Advanced Settings)
+14. [x] TrackToolbar single-row when `trackHeight < 80px`
+15. [x] Voice palette bottom bar: single voices as columns, multiple-voicing buttons to the right
+16. [x] No min-w constraints on buttons
 
 ---
 
-## Recent Implementation Summary (2026-04-30)
+## Recent Implementation Summary (2026-05-03)
 
 ### Completed Changes
 1. **Store (useStore.ts)**: Added `smallBtnSize` (36), `mediumBtnSize` (44), `largeBtnSize` (52) + setters
@@ -361,17 +524,23 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
    - 3-area header layout for small portrait (left/center/right)
    - Lock/Unlock buttons conditioned on `appMode === 'mixer'`
    - Added button size configuration UI to Advanced Settings
-3. **TrackToolbar.tsx**: Implemented `getToolbarBtnClass()` with store values
-4. **AudioEditorView.tsx**: Implemented `getSidebarBtnClass()` with store values
-5. **LyricsBuilderView.tsx**: Implemented `getLyricsBtnClass()` with store values
+   - Removed `toolbarProposal` cycling and related state
+3. **TrackToolbar.tsx**: 
+   - Fixed missing `screenSize` from `useToolbarContext('vertical')`
+   - Single-row layout based on `trackHeight < 80px`
+   - Left-edge positioning (`left-0`)
+4. **AudioEditorView.tsx**: Removed `min-w` constraints from buttons
+5. **LyricsBuilderView.tsx**: Removed `min-w` constraints from buttons
 6. **LyricsBuilder.tsx**:
    - Voice palette left/right split (non-single left, single right)
-   - Top-aligned non-single voices
-   - Added `getBtnClass()` pattern with `useToolbarContext('vertical')`
-   - Added `useAdaptiveLabels` hook and `getLabel()` calls
-   - Added missing "Edit Text" floating button
-   - Updated Fixed/Scaled toggle (shortened: p-0.5 px-1 text-[8px])
-   - All buttons use responsive sizing from store
+   - Bottom bar layout: single voices as vertical columns, multiple-voicing buttons flow right
+   - Added `paletteBtnSize` (fixed small buttons) and `smallBtnClass` (compact M/R)
+   - Removed `min-w` constraints
+7. **useToolbarContext.ts**: Simplified to CSS pixel breakpoints (<768px small, 768-1280px medium, >1280px large)
+8. **useAdaptiveLabels.ts**: Replaced inch-based calculations with CSS pixel thresholds (50px vertical, 30px horizontal per-item)
 
 ### Build Status
-- ✅ Build passes: `npx vite build` (~1772 modules, ~492 kB JS)
+- ✅ Build passes: `npx vite build` (~1772 modules, ~492-494 kB JS)
+- ✅ All inch-based calculations removed
+- ✅ No `toolbarProposal` references remain
+- ✅ No `min-w` constraints on buttons

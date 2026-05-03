@@ -130,6 +130,13 @@ export default function App() {
 
   // Handle Responsive Layout
   useEffect(() => {
+    // Force-reset persisted layout state that might cause issues
+    useStore.setState({ 
+      toolbarProposal: 1, 
+      appMode: 'mixer',
+      sidebarWidth: Math.floor(window.innerWidth * 0.25) 
+    });
+    
     const handleResize = () => {
       const headerHeight = window.innerWidth < 640 ? 48 : 64;
       const availableHeight = window.innerHeight - headerHeight - 4; // -4 for playhead slider height

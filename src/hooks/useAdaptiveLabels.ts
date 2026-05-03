@@ -1,7 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { ToolbarType } from './useToolbarContext';
 
-const ABBREVIATION_THRESHOLD_INCHES = 0.8;
+// CSS pixel thresholds (replace inch-based calculations)
+const VERTICAL_ABBREVIATION_THRESHOLD_PX = 50;  // Vertical toolbar width < 50px → abbreviate
+const HORIZONTAL_ITEM_THRESHOLD_PX = 30;         // Horizontal toolbar per-item width < 30px → abbreviate
 
 interface UseAdaptiveLabelsReturn {
   isAbbreviated: boolean;
@@ -21,17 +23,15 @@ export function useAdaptiveLabels(
     if (!el) return;
 
     if (toolbarType === 'vertical') {
-      // Vertical toolbar: check width
-      const widthInches = el.offsetWidth / 96;
-      setIsAbbreviated(widthInches < ABBREVIATION_THRESHOLD_INCHES);
+      // Vertical toolbar: check width in CSS pixels
+      setIsAbbreviated(el.offsetWidth < VERTICAL_ABBREVIATION_THRESHOLD_PX);
     } else {
-      // Horizontal toolbar: check available width per item
+      // Horizontal toolbar: check available width per item in CSS pixels
       const totalWidth = el.offsetWidth;
       const gap = 8; // approximate gap between items in pixels
       const totalGaps = (itemCount - 1) * gap;
       const availableWidthPerItem = (totalWidth - totalGaps) / itemCount;
-      const inchesPerItem = availableWidthPerItem / 96;
-      setIsAbbreviated(inchesPerItem < ABBREVIATION_THRESHOLD_INCHES);
+      setIsAbbreviated(availableWidthPerItem < HORIZONTAL_ITEM_THRESHOLD_PX);
     }
   }, [toolbarRef, toolbarType, itemCount]);
 
