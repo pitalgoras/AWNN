@@ -88,8 +88,9 @@ export function useAudioEngine() {
   const metronomeBufferRef = useRef<{bpm: number, timeSignature: [number, number], buffer: AudioBuffer} | null>(null);
   const isPreRollingRef = useRef(false);
   const [multitrack, setMultitrack] = useState<MultiTrack | null>(null);
-  
-    const { 
+  // Dummy state to force a retry when AudioContext becomes available
+  // AudioContext initialization & retry mechanism
+  const { 
     tracks, 
     zoom, 
     isPlaying,
@@ -242,37 +243,6 @@ export function useAudioEngine() {
     ).join(',') + `|bpm:${bpm}|ts:${timeSignature?.[0]}/${timeSignature?.[1]}`;
   }, [tracks, bpm, timeSignature]);
 
-  // Lazy AudioContext initialization - must be called on user gesture
-  const ensureAudioContext = useCallback(() => {
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
-    }
-    if (audioContextRef.current.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
-    return audioContextRef.current;
-  }, []);
-
-  // Initialize AudioContext on first user gesture
-  useEffect(() => {
-    const handleFirstGesture = () => {
-      ensureAudioContext();
-      document.removeEventListener('click', handleFirstGesture);
-      document.removeEventListener('touchstart', handleFirstGesture);
-      document.removeEventListener('keydown', handleFirstGesture);
-    };
-    
-    document.addEventListener('click', handleFirstGesture);
-    document.addEventListener('touchstart', handleFirstGesture);
-    document.addEventListener('keydown', handleFirstGesture);
-    
-    return () => {
-      document.removeEventListener('click', handleFirstGesture);
-      document.removeEventListener('touchstart', handleFirstGesture);
-      document.removeEventListener('keydown', handleFirstGesture);
-    };
-  }, [ensureAudioContext]);
-
   // Initialize Multitrack
   useEffect(() => {
     if (!containerRef.current) return;
@@ -286,8 +256,13 @@ export function useAudioEngine() {
 
     const sharedAudioContext = audioContextRef.current;
     if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
-      console.warn('AudioContext not initialized. Call ensureAudioContext() on user gesture first.');
-      return;
+      // Create AudioContext if not exists or closed
+      audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
+    }
+    
+    // Resume if suspended (should not happen as we create it here, but just in case)
+    if (audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume();
     }
     
     const multitrackItems: (TrackOptions & { trackId: string })[] = [];
@@ -940,8 +915,10 @@ export function useAudioEngine() {
   const playPause = useCallback(async () => {
     if (!multitrackRef.current) return;
 
-    // Ensure AudioContext is ready (creates/resumes on user gesture)
-    ensureAudioContext();
+    // Resume AudioContext on user gesture
+    if (audioContextRef.current?.state === 'suspended') {
+      await audioContextRef.current.resume();
+    }
 
     if (useStore.getState().isRecording) {
       // If recording, stop recording which will also stop playback
@@ -1124,8 +1101,10 @@ export function useAudioEngine() {
 
   const startRecording = useCallback(async (trackId: string) => {
     try {
-      // Ensure AudioContext is ready (creates/resumes on user gesture)
-      ensureAudioContext();
+      // Resume AudioContext on user gesture
+      if (audioContextRef.current?.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
 
       if (!continuousMicStreamRef.current) {
         const rawRecordingMode = useStore.getState().rawRecordingMode;
