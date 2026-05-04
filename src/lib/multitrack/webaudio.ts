@@ -18,7 +18,9 @@ class WebAudioPlayer {
   public crossOrigin: string | null = null
 
   constructor(audioContext: AudioContext | null = null) {
+    console.log('WebAudioPlayer constructor: audioContext =', audioContext);
     this.audioContext = audioContext || new AudioContext();
+    console.log('WebAudioPlayer constructor: this.audioContext =', this.audioContext);
     
     this.gainNode = this.audioContext.createGain()
     this.gainNode.connect(this.audioContext.destination)
