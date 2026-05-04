@@ -1131,134 +1131,17 @@ export function useAudioEngine() {
   }, []);
 
   const startRecording = useCallback(async (trackId: string) => {
-    try {
-      // Resume AudioContext on user gesture
-      if (audioContextRef.current?.state === 'suspended') {
-        await audioContextRef.current.resume();
-      }
-
-      if (!continuousMicStreamRef.current) {
-        const rawRecordingMode = useStore.getState().rawRecordingMode;
-        const constraints: MediaStreamConstraints = rawRecordingMode 
-          ? { 
-              audio: { 
-                echoCancellation: { exact: false }, 
-                noiseSuppression: { exact: false }, 
-                autoGainControl: { exact: false },
-                // @ts-ignore - Chrome specific constraints
-                googEchoCancellation: false,
-                googAutoGainControl: false,
-                googNoiseSuppression: false,
-                googHighpassFilter: false,
-                googTypingNoiseDetection: false
-              } 
-            }
-          : { audio: true };
-          
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        continuousMicStreamRef.current = stream;
-        startContinuousRecorder();
-      }
-      
-      activeTrackIdRef.current = trackId;
-      
-      const storeState = useStore.getState();
-      const isCurrentlyPlaying = storeState.isPlaying;
-      const preRollMode = storeState.preRollMode;
-      
-      // If already playing, force no count-in regardless of preRollMode setting
-      const effectivePreRollMode = isCurrentlyPlaying ? 'none' : preRollMode;
-
-      if (storeState.currentTime < 0) {
-        alert("Cannot start recording during the pre-roll (before Bar 1).");
-        return;
-      }
-      
-      // Prevent punching in during the pre-roll (Bar 0)
-      const punchInUserTime = Math.max(0, storeState.currentTime);
-      
-      const beatsPerSecond = storeState.bpm / 60;
-      const secondsPerBeat = 1 / beatsPerSecond;
-      const secondsPerBar = secondsPerBeat * storeState.timeSignature[0];
-      
-      // Recording starts 1 bar before punch-in if count-in is enabled
-      const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
-
-      // Seek to pre-roll start (allow negative user time for pre-roll)
-      // Only seek if we are NOT already playing (to avoid interrupting playback)
-      if (!isCurrentlyPlaying) {
-        seekTo(recordStartUserTime, true);
-      }
-
-      recordingStartTransportTimeRef.current = recordStartUserTime;
-      expectedPreRollRef.current = effectivePreRollMode !== 'none' ? secondsPerBar : 0;
-      punchInTimeRef.current = performance.now();
-      recordingCancelledRef.current = false;
-      isPreRollingRef.current = effectivePreRollMode !== 'none';
-      
-      // 1. Set recording mode FIRST so engine knows to allow negative seeks/scrolls
-      if (multitrackRef.current) {
-        multitrackRef.current.setRecordingMode(effectivePreRollMode !== 'none');
-      }
-      
-      // 2. Seek to the start of the pre-roll in Real Time
-      // If effectivePreRollMode is 'none', we don't seek back.
-      // Only seek if we are NOT already playing (to avoid interrupting playback)
-      if (!isCurrentlyPlaying) {
-        seekTo(recordStartUserTime, true);
-      }
-
-      // 3. Coordinated start time for perfect sync
-      const audioContext = audioContextRef.current;
-      if (!audioContext) throw new Error('AudioContext not initialized');
-      
-      const recorderStartCtxTime = audioContext.currentTime;
-
-      // Schedule playback with a small buffer to ensure recorder is ready
-      const playbackStartCtxTime = recorderStartCtxTime + 0.15; 
-      const startDelay = playbackStartCtxTime - recorderStartCtxTime;
-      
-      // Store the expected pre-roll duration (1 bar + the start delay)
-      expectedPreRollRef.current = (effectivePreRollMode !== 'none' ? secondsPerBar : 0) + startDelay;
-      
-      // 4. Start Playback
-      if (multitrackRef.current && typeof multitrackRef.current.play === 'function') {
-        if (!isCurrentlyPlaying) {
-          multitrackRef.current.play(playbackStartCtxTime);
-        }
-      }
-      
-      setIsPlaying(true);
-      setIsRecording(true);
-      
-      // After 1 bar, we are at the punch-in point
-      if (effectivePreRollMode !== 'none') {
-        setTimeout(() => {
-          if (useStore.getState().isRecording) {
-            isPreRollingRef.current = false;
-          }
-        }, secondsPerBar * 1000);
-      } else {
-        isPreRollingRef.current = false;
-      }
-
-    } catch (err) {
-      console.error("Error accessing microphone:", err);
-      alert("Could not access microphone.");
-      setIsRecording(false);
+    if (!recordingEngineRef.current) {
+      console.error('RecordingEngine not initialized');
+      return;
     }
-  }, [setIsPlaying, setIsRecording, seekTo, startContinuousRecorder]);
+    await recordingEngineRef.current.startRecording(trackId);
+  }, []);
 
   const stopRecording = useCallback(() => {
-    if (continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
-      continuousRecorderRef.current.stop();
-    }
-    if (multitrackRef.current) {
-      multitrackRef.current.setRecordingMode(false);
-    }
-    isPreRollingRef.current = false;
-    setIsRecording(false);
-  }, [setIsRecording]);
+    if (!recordingEngineRef.current) return;
+    recordingEngineRef.current.stopRecording();
+  }, []);
 
   useEffect(() => {
     if (!isRecording && continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
