@@ -82,24 +82,8 @@ export function useAudioEngine() {
   const secondsPerBeat = 1 / beatsPerSecond;
   const secondsPerBar = secondsPerBeat * (timeSignature?.[0] || 4);
 
-  const continuousMicStreamRef = useRef<MediaStream | null>(null);
-  const continuousRecorderRef = useRef<MediaRecorder | null>(null);
-  const recordingCancelledRef = useRef(false);
-  const audioChunksRef = useRef<Blob[]>([]);
-  const activeTrackIdRef = useRef<string | null>(null);
-  const recorderStartTimeRef = useRef<number>(0);
-  const punchInTimeRef = useRef<number>(0);
-  const recordingStartTransportTimeRef = useRef<number>(0);
-  const expectedPreRollRef = useRef<number>(0);
-  
-  useEffect(() => {
-    if (continuousMicStreamRef.current) {
-      continuousMicStreamRef.current.getTracks().forEach(t => t.stop());
-      continuousMicStreamRef.current = null;
-    }
-  }, [rawRecordingMode]);
-
-  // Initialize and update audio engines
+   
+   // Initialize and update audio engines
   useEffect(() => {
     // Initialize MetronomeEngine when audioContext is available
     if (audioContextRef.current && !metronomeEngineRef.current) {
@@ -953,23 +937,14 @@ export function useAudioEngine() {
 
     if (useStore.getState().isRecording) {
       // If recording, stop recording which will also stop playback
-      if (isPreRollingRef.current) {
-        recordingCancelledRef.current = true;
-        isPreRollingRef.current = false;
-      }
-      if (continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
-        continuousRecorderRef.current.stop();
-      }
-      
-      setIsRecording(false);
-      setIsPlaying(false);
-    } else {
-      if (!isPlaying && continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
-        const runningTime = (performance.now() - recorderStartTimeRef.current) / 1000;
-        if (runningTime > 5) {
-          continuousRecorderRef.current.stop();
+      if (recordingEngineRef.current) {
+        if (isPreRollingRef.current) {
+          recordingEngineRef.current.cancelRecording();
+        } else {
+          recordingEngineRef.current.stopRecording();
         }
       }
+    } else {
       setIsPlaying(!isPlaying);
     }
   }, [isPlaying, setIsPlaying, setIsRecording]);
@@ -1002,134 +977,6 @@ export function useAudioEngine() {
     }
   }, [bpm, timeSignature, setCurrentTime]);
 
-  const startContinuousRecorder = useCallback(() => {
-    if (!continuousMicStreamRef.current) return;
-    
-    if (continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
-      continuousRecorderRef.current.stop();
-    }
-    
-    audioChunksRef.current = [];
-    const mediaRecorder = new MediaRecorder(continuousMicStreamRef.current);
-    continuousRecorderRef.current = mediaRecorder;
-    
-    mediaRecorder.ondataavailable = (e) => {
-      if (e.data.size > 0) {
-        audioChunksRef.current.push(e.data);
-      }
-    };
-    
-    mediaRecorder.onstop = async () => {
-      // We only process if we were actually recording
-      if (!useStore.getState().isRecording && !activeTrackIdRef.current) {
-        startContinuousRecorder();
-        return;
-      }
-      
-      if (recordingCancelledRef.current) {
-        audioChunksRef.current = [];
-        activeTrackIdRef.current = null;
-        startContinuousRecorder();
-        return;
-      }
-      
-      const trackId = activeTrackIdRef.current;
-      activeTrackIdRef.current = null;
-      
-      if (!trackId) return;
-      
-      const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-      const audioUrl = URL.createObjectURL(audioBlob);
-      
-      const expectedPreRoll = expectedPreRollRef.current;
-      const state = useStore.getState();
-      const latencyMs = state.globalLatencyMs + state.extraLatencyMs;
-      const latencySec = latencyMs / 1000;
-      
-      // Calculate how much to trim from the beginning of the continuous recording
-      const punchInOffsetSec = (punchInTimeRef.current - recorderStartTimeRef.current) / 1000;
-      
-      let actualTrimSec = 0;
-      let startPos = 0;
-      
-      if (expectedPreRoll > 0) {
-        // We had a count-in. We don't need the circular buffer from before the count-in.
-        // We just trim the count-in (minus a small 0.5s buffer to catch early notes).
-        const keepPreRollSec = 0.5;
-        actualTrimSec = punchInOffsetSec + Math.max(0, expectedPreRoll - keepPreRollSec);
-        startPos = recordingStartTransportTimeRef.current + Math.max(0, expectedPreRoll - keepPreRollSec) - latencySec;
-      } else {
-        // No count-in (punch-in during playback). We use the circular buffer.
-        const keepPreRollSec = 1.5;
-        actualTrimSec = Math.max(0, punchInOffsetSec - keepPreRollSec);
-        startPos = recordingStartTransportTimeRef.current - (punchInOffsetSec - actualTrimSec) - latencySec;
-      }
-      
-      console.log('onstop', { expectedPreRoll, latencyMs, latencySec, startPos, actualTrimSec, punchInOffsetSec });
-      
-      let finalAudioBuffer: AudioBuffer | undefined;
-      let finalAudioUrl = audioUrl;
-      let finalAudioBlob = audioBlob;
-      let peaks: number[][] | undefined;
-      
-      try {
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        const audioContext = audioContextRef.current;
-        if (!audioContext) throw new Error('AudioContext not initialized');
-        const originalBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-        
-        // Destructively trim the pre-roll
-        const sampleRate = originalBuffer.sampleRate;
-        const startSample = Math.floor(actualTrimSec * sampleRate);
-        const endSample = originalBuffer.length;
-        const newLength = Math.max(1, endSample - startSample);
-        
-        const trimmedBuffer = audioContext.createBuffer(
-          originalBuffer.numberOfChannels,
-          newLength,
-          sampleRate
-        );
-        
-        for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
-          const originalData = originalBuffer.getChannelData(channel);
-          const trimmedData = trimmedBuffer.getChannelData(channel);
-          for (let i = 0; i < newLength; i++) {
-            trimmedData[i] = originalData[startSample + i] || 0;
-          }
-        }
-        
-        finalAudioBuffer = trimmedBuffer;
-        
-        // Pre-calculate peaks to avoid main-thread spikes during WaveSurfer init
-        peaks = await calculatePeaksAsync(trimmedBuffer);
-        
-        // Convert trimmed buffer back to WAV blob
-        const trimmedWav = audioBufferToWav(trimmedBuffer);
-        finalAudioBlob = new Blob([trimmedWav], { type: 'audio/wav' });
-        finalAudioUrl = URL.createObjectURL(finalAudioBlob);
-        
-      } catch (e) {
-        console.error("Failed to decode and trim recorded audio", e);
-      }
-      
-      useStore.getState().addPhrase(trackId, { 
-        url: finalAudioUrl, 
-        blob: finalAudioBlob,
-        audioBuffer: finalAudioBuffer,
-        peaks: peaks, // Store pre-calculated peaks
-        startPosition: startPos,
-        duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1,
-        createdAt: Date.now()
-      });
-      
-      // Instantly restart the continuous recorder for the next recording
-      startContinuousRecorder();
-    };
-    
-    recorderStartTimeRef.current = performance.now();
-    mediaRecorder.start(100);
-  }, []);
-
   const startRecording = useCallback(async (trackId: string) => {
     if (!recordingEngineRef.current) {
       console.error('RecordingEngine not initialized');
@@ -1142,13 +989,6 @@ export function useAudioEngine() {
     if (!recordingEngineRef.current) return;
     recordingEngineRef.current.stopRecording();
   }, []);
-
-  useEffect(() => {
-    if (!isRecording && continuousRecorderRef.current && continuousRecorderRef.current.state !== 'inactive') {
-      // Don't stop it automatically here, it's managed by stopRecording
-      // continuousRecorderRef.current.stop();
-    }
-  }, [isRecording]);
 
   useEffect(() => {
     useStore.getState().setSeekTo(seekTo);
