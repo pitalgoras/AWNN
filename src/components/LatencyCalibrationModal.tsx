@@ -115,10 +115,11 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
         }
       };
 
-      const finishCalibration = (latencies: number[]) => {
+       const finishCalibration = (latencies: number[]) => {
         processor.disconnect();
         source.disconnect();
         ctx.close();
+        audioContextRef.current = null;
         stream.getTracks().forEach(t => t.stop());
         
         setIsCalibrating(false);
@@ -140,6 +141,12 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
 
     } catch (err) {
       console.error(err);
+      // Clean up on error
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+      audioContextRef.current = null;
+      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
       setError("Microphone access denied or audio error.");
       setIsCalibrating(false);
     }
@@ -147,7 +154,10 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
 
   useEffect(() => {
     return () => {
-      if (audioContextRef.current) audioContextRef.current.close();
+      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+        audioContextRef.current.close();
+      }
+      audioContextRef.current = null;
       if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
