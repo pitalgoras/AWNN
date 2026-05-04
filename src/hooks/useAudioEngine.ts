@@ -6,6 +6,8 @@ import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
 import { audioBufferToWav } from '../audio/processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../audio/processing/audioUtils';
+import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
+import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
 import { perfLogger } from '../utils/PerformanceLogger';
 
 // Override WaveSurfer.prototype.load to catch unhandled promise rejections globally
@@ -37,49 +39,6 @@ WaveSurfer.prototype.play = function(this: WaveSurfer, ...args: unknown[]) {
 
 const SILENT_WAV = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
 
-export function generateClickTrackBuffer(
-  audioContext: AudioContext,
-  bpm: number,
-  timeSignature: [number, number],
-  durationInSeconds: number
-): AudioBuffer {
-  const sampleRate = audioContext.sampleRate;
-  const beatsPerSecond = bpm / 60;
-  const secondsPerBeat = 1 / beatsPerSecond;
-  const beatsPerBar = timeSignature[0];
-  const secondsPerBar = secondsPerBeat * beatsPerBar;
-
-  // Round up duration to the nearest whole bar
-  const totalBars = Math.max(1, Math.ceil(durationInSeconds / secondsPerBar));
-  const finalDuration = totalBars * secondsPerBar;
-
-  const buffer = audioContext.createBuffer(1, Math.ceil(finalDuration * sampleRate), sampleRate);
-  const data = buffer.getChannelData(0);
-
-  for (let bar = 0; bar < totalBars; bar++) {
-    for (let beat = 0; beat < beatsPerBar; beat++) {
-      const time = bar * secondsPerBar + beat * secondsPerBeat;
-      const sampleIndex = Math.floor(time * sampleRate);
-      
-      // Generate a simple click sound (sine wave burst)
-      const isFirstBeat = beat === 0;
-      const freq = isFirstBeat ? 1500 : 1000;
-      const clickDuration = 0.05; // 50ms
-      const clickSamples = Math.floor(clickDuration * sampleRate);
-
-      for (let i = 0; i < clickSamples; i++) {
-        if (sampleIndex + i < data.length) {
-          // Envelope: quick attack, exponential decay
-          const envelope = Math.exp(-i / (sampleRate * 0.01));
-          data[sampleIndex + i] += Math.sin(2 * Math.PI * freq * (i / sampleRate)) * envelope * 0.5;
-        }
-      }
-    }
-  }
-
-  return buffer;
-}
-
 export function useAudioEngine() {
   const rawRecordingMode = useStore(state => state.rawRecordingMode);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -88,6 +47,10 @@ export function useAudioEngine() {
   const metronomeBufferRef = useRef<{bpm: number, timeSignature: [number, number], buffer: AudioBuffer} | null>(null);
   const isPreRollingRef = useRef(false);
   const [multitrack, setMultitrack] = useState<MultiTrack | null>(null);
+  
+  // Engine refs for modular audio architecture
+  const metronomeEngineRef = useRef<MetronomeEngine | null>(null);
+  const recordingEngineRef = useRef<RecordingEngine | null>(null);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
   const { 
@@ -101,6 +64,8 @@ export function useAudioEngine() {
     waveformQuality,
     bpm,
     timeSignature,
+    globalLatencyMs,
+    extraLatencyMs,
     duration,
     setIsPlaying,
     setIsRecording,
@@ -133,6 +98,68 @@ export function useAudioEngine() {
       continuousMicStreamRef.current = null;
     }
   }, [rawRecordingMode]);
+
+  // Initialize and update audio engines
+  useEffect(() => {
+    // Initialize MetronomeEngine when audioContext is available
+    if (audioContextRef.current && !metronomeEngineRef.current) {
+      metronomeEngineRef.current = new MetronomeEngine(audioContextRef.current);
+    }
+
+    // Initialize RecordingEngine
+    if (!recordingEngineRef.current) {
+      const config: RecordingConfig = {
+        rawRecordingMode,
+        globalLatencyMs: globalLatencyMs || 0,
+        extraLatencyMs: extraLatencyMs || 0,
+        bpm: bpm || 120,
+        timeSignature: timeSignature || [4, 4],
+        preRollMode: 'none',
+        isPlaying: false,
+        currentTime: 0,
+      };
+
+      const callbacks: RecordingCallbacks = {
+        onSetIsPlaying: (playing) => setIsPlaying(playing),
+        onSetIsRecording: (recording) => setIsRecording(recording),
+        onAddPhrase: (trackId, phrase) => useStore.getState().addPhrase(trackId, phrase),
+        onSeekTo: (time, allowNegative) => seekTo(time, allowNegative),
+        getStoreState: () => useStore.getState(),
+      };
+
+      recordingEngineRef.current = new RecordingEngine(config, callbacks);
+    }
+
+    // Update RecordingEngine config
+    if (recordingEngineRef.current) {
+      recordingEngineRef.current.updateConfig({
+        rawRecordingMode,
+        globalLatencyMs: globalLatencyMs || 0,
+        extraLatencyMs: extraLatencyMs || 0,
+        bpm: bpm || 120,
+        timeSignature: timeSignature || [4, 4],
+        isPlaying,
+      });
+    }
+
+    // Update MetronomeEngine config
+    if (metronomeEngineRef.current) {
+      metronomeEngineRef.current.updateConfig({
+        bpm: bpm || 120,
+        timeSignature: timeSignature || [4, 4],
+        isPlaying,
+      });
+    }
+
+    return () => {
+      if (recordingEngineRef.current) {
+        recordingEngineRef.current.cleanup();
+      }
+      if (metronomeEngineRef.current) {
+        metronomeEngineRef.current.cleanup();
+      }
+    };
+  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, isPlaying, setIsPlaying, setIsRecording]);
 
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());
@@ -873,8 +900,7 @@ export function useAudioEngine() {
     
     perfLogger.log(4);
     
-    const fullBuffer = generateClickTrackBuffer(
-      audioContextRef.current,
+    const fullBuffer = metronomeEngineRef.current!.generateClickTrackBuffer(
       debouncedBpm,
       debouncedTimeSignature,
       finalTargetDuration

@@ -93,4 +93,20 @@ export class MetronomeEngine {
     this.audioContext = audioContext;
     this.clearCache();
   }
+
+  /**
+   * Update metronome config (clears cache if bpm/timeSignature change)
+   */
+  updateConfig(config: { bpm?: number; timeSignature?: [number, number]; isPlaying?: boolean }): void {
+    if (config.bpm !== undefined || config.timeSignature !== undefined) {
+      this.clearCache();
+    }
+  }
+
+  /**
+   * Cleanup resources
+   */
+  cleanup(): void {
+    this.clearCache();
+  }
 }
