@@ -261,8 +261,13 @@ export function useAudioEngine() {
     }
     
     // Resume if suspended (should not happen as we create it here, but just in case)
-    if (audioContextRef.current.state === 'suspended') {
+    if (audioContextRef.current?.state === 'suspended') {
       audioContextRef.current.resume();
+    }
+    
+    // Ensure AudioContext is not null
+    if (!audioContextRef.current) {
+      throw new Error('Failed to create AudioContext');
     }
     
     const multitrackItems: (TrackOptions & { trackId: string })[] = [];
