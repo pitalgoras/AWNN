@@ -230,7 +230,7 @@ export default function AudioEditorView() {
     );
 
     calibratorRef.current = calibrator;
-    await calibrator.calibrate();
+    calibrator.calibrate();
   };
 
   const handleContainerClick = (e: React.MouseEvent) => {

@@ -55,9 +55,10 @@ export class LatencyCalibrator {
     };
   }
 
-  async calibrate(): Promise<LatencyCalibrationResult> {
+  async calibrate(): Promise<void> {
     if (this.isRunning) {
-      return { success: false, latencies: [], averageLatencyMs: 0, error: 'Calibration already running' };
+      this.callbacks.onError?.('Calibration already running');
+      return;
     }
 
     this.isRunning = true;
@@ -84,7 +85,8 @@ export class LatencyCalibrator {
         );
       } catch (err) {
         console.warn('AudioWorklet not supported, falling back to ScriptProcessor', err);
-        return this.calibrateWithScriptProcessor();
+        await this.calibrateWithScriptProcessor();
+        return;
       }
 
       // Create source from microphone stream
@@ -92,7 +94,7 @@ export class LatencyCalibrator {
 
       // Create AudioWorklet node
       this.workletNode = new AudioWorkletNode(this.audioContext, 'latency-detector-processor');
-      
+
       // Set threshold
       this.workletNode.port.postMessage({
         type: 'SET_THRESHOLD',
@@ -111,34 +113,18 @@ export class LatencyCalibrator {
       // Start the first test
       this.runNextTest();
 
-      // Return a promise that resolves when calibration completes
-      return new Promise((resolve) => {
-        this.callbacks.onComplete = (result) => {
-          if (this.callbacks.onComplete) {
-            this.callbacks.onComplete(result);
-          }
-          resolve(result);
-        };
-      });
-
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Unknown error';
       this.cleanup();
-      const result: LatencyCalibrationResult = {
-        success: false,
-        latencies: [],
-        averageLatencyMs: 0,
-        error: `Microphone access denied or audio error: ${errorMsg}`
-      };
-      this.callbacks.onError?.(result.error);
-      return result;
+      this.callbacks.onError?.(`Microphone access denied or audio error: ${errorMsg}`);
     }
   }
 
-  private async calibrateWithScriptProcessor(): Promise<LatencyCalibrationResult> {
+  private async calibrateWithScriptProcessor(): Promise<void> {
     // Fallback for browsers not supporting AudioWorklet
     if (!this.audioContext || !this.stream) {
-      return { success: false, latencies: [], averageLatencyMs: 0, error: 'AudioContext or stream not initialized' };
+      this.callbacks.onError?.('AudioContext or stream not initialized');
+      return;
     }
 
     const ctx = this.audioContext;
@@ -152,53 +138,51 @@ export class LatencyCalibrator {
     let beepTime = 0;
     let isWaitingForBeep = false;
 
-    return new Promise((resolve) => {
-      processor.onaudioprocess = (e) => {
-        if (!isWaitingForBeep || beepTime === 0) return;
+    processor.onaudioprocess = (e) => {
+      if (!isWaitingForBeep || beepTime === 0) return;
 
-        const data = e.inputBuffer.getChannelData(0);
-        const currentTime = ctx.currentTime;
+      const data = e.inputBuffer.getChannelData(0);
+      const currentTime = ctx.currentTime;
 
-        if (currentTime < beepTime) return;
+      if (currentTime < beepTime) return;
 
-        for (let i = 0; i < data.length; i++) {
-          if (Math.abs(data[i]) > this.options.threshold) {
-            const sampleTime = currentTime + (i / ctx.sampleRate);
-            const latencyMs = (sampleTime - beepTime) * 1000;
+      for (let i = 0; i < data.length; i++) {
+        if (Math.abs(data[i]) > this.options.threshold) {
+          const sampleTime = currentTime + (i / ctx.sampleRate);
+          const latencyMs = (sampleTime - beepTime) * 1000;
 
-            if (latencyMs < 400) {
-              this.detectedLatencies.push(latencyMs);
-            }
-
-            isWaitingForBeep = false;
-            processor.disconnect();
-            source.disconnect();
-
-            // Run next test or finish
-            this.currentTest++;
-            if (this.currentTest < this.options.numTests) {
-              setTimeout(() => this.runNextTestWithProcessor(ctx, stream), this.options.testInterval);
-            } else {
-              this.finishCalibration(resolve);
-            }
-            return;
+          if (latencyMs < 400) {
+            this.detectedLatencies.push(latencyMs);
           }
-        }
 
-        if (currentTime > beepTime + 0.4) {
           isWaitingForBeep = false;
+          processor.disconnect();
+          source.disconnect();
+
+          // Run next test or finish
           this.currentTest++;
           if (this.currentTest < this.options.numTests) {
-            setTimeout(() => this.runNextTestWithProcessor(ctx, stream), 100);
+            setTimeout(() => this.runNextTestWithProcessor(ctx, stream), this.options.testInterval);
           } else {
-            this.finishCalibration(resolve);
+            this.finishCalibration();
           }
+          return;
         }
-      };
+      }
 
-      // Start first test
-      this.runNextTestWithProcessor(ctx, stream);
-    });
+      if (currentTime > beepTime + 0.4) {
+        isWaitingForBeep = false;
+        this.currentTest++;
+        if (this.currentTest < this.options.numTests) {
+          setTimeout(() => this.runNextTestWithProcessor(ctx, stream), 100);
+        } else {
+          this.finishCalibration();
+        }
+      }
+    };
+
+    // Start first test
+    this.runNextTestWithProcessor(ctx, stream);
   }
 
   private runNextTestWithProcessor(ctx: AudioContext, stream: MediaStream) {
@@ -293,9 +277,7 @@ export class LatencyCalibrator {
     this.currentTest++;
   }
 
-  private finishCalibration(
-    resolve?: (value: LatencyCalibrationResult) => void
-  ): LatencyCalibrationResult {
+  private finishCalibration(): void {
     const success = this.detectedLatencies.length > 0;
     const averageLatencyMs = success
       ? Math.round(this.detectedLatencies.reduce((a, b) => a + b, 0) / this.detectedLatencies.length)
@@ -309,14 +291,7 @@ export class LatencyCalibrator {
     };
 
     this.cleanup();
-
-    if (resolve) {
-      resolve(result);
-    } else {
-      this.callbacks.onComplete?.(result);
-    }
-
-    return result;
+    this.callbacks.onComplete?.(result);
   }
 
   cancel() {
@@ -326,6 +301,7 @@ export class LatencyCalibrator {
       this.timeoutId = null;
     }
     this.cleanup();
+    this.callbacks.onError?.('Calibration cancelled');
   }
 
   private cleanup() {

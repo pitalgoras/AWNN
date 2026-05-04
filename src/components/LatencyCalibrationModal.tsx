@@ -56,7 +56,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
     );
 
     calibratorRef.current = calibrator;
-    await calibrator.calibrate();
+    calibrator.calibrate();
   };
 
   useEffect(() => {
