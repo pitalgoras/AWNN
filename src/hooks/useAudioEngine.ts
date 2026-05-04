@@ -254,8 +254,8 @@ export function useAudioEngine() {
       containerRef.current.style.transition = 'opacity 0.3s ease-in-out';
     }
 
-    const sharedAudioContext = audioContextRef.current;
-    if (!sharedAudioContext || sharedAudioContext.state === 'closed') {
+    
+    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
       // Create AudioContext if not exists or closed
       audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
     }
@@ -289,7 +289,7 @@ export function useAudioEngine() {
             height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
             pixelRatio,
             sampleRate,
-            media: new WebAudioPlayer(sharedAudioContext),
+            media: new WebAudioPlayer(audioContextRef.current),
           } as unknown as TrackOptions['options']
         });
       } else {
@@ -316,7 +316,7 @@ export function useAudioEngine() {
               height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
               pixelRatio,
               sampleRate,
-              media: new WebAudioPlayer(sharedAudioContext),
+              media: new WebAudioPlayer(audioContextRef.current),
             } as unknown as TrackOptions['options']
           });
         });
@@ -330,7 +330,7 @@ export function useAudioEngine() {
       cursorWidth: 2,
       cursorColor: '#D72F21',
       trackBackground: '#2D3748',
-      audioContext: sharedAudioContext,
+      audioContext: audioContextRef.current!,
       moveLocked: moveLocked,
       timelineOptions: {
         formatTimeCallback: (seconds: number) => {
