@@ -1,4 +1,4 @@
-import { Phrase } from '../store/useStore';
+import { Phrase } from '../../store/useStore';
 
 /**
  * Calculates peaks for a given AudioBuffer.

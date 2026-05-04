@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown } from 'lucide-react';
 import { cn } from '../lib/utils';
-import { calculatePeaksAsync } from '../utils/audioUtils';
+import { calculatePeaksAsync } from '../audio/processing/audioUtils';
 import { useAudioEngine } from '../hooks/useAudioEngine';
 import { useToolbarContext } from '../hooks/useToolbarContext';
+import { LatencyCalibrator, LatencyCalibrationResult } from '../lib/audio/LatencyCalibrator';
 
 import { BpmInput } from './BpmInput';
 import { SyncTool } from './SyncTool';
@@ -17,7 +18,7 @@ import { PlayheadSlider } from './PlayheadSlider';
 import { StatusLogger } from './StatusLogger';
 import { perfLogger } from '../utils/PerformanceLogger';
 
-import { formatBarBeat } from '../utils/timeFormat';
+import { formatBarBeat } from '../audio/time/timeFormat';
 
 export default function AudioEditorView() {
   const tracks = useStore(s => s.tracks);
@@ -83,6 +84,7 @@ export default function AudioEditorView() {
   const audioInputRef = useRef<HTMLInputElement>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const muteLongPressTimer = useRef<{ [key: string]: NodeJS.Timeout | null }>({});
+  const calibratorRef = useRef<LatencyCalibrator | null>(null);
   
   // Left sidebar context for responsive sizing
   const leftSidebarContext = useToolbarContext('vertical');
@@ -155,6 +157,16 @@ export default function AudioEditorView() {
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [setSelectedPhraseId, playPause, setShowTracksModal]);
 
+  // Cleanup calibrator on unmount
+  useEffect(() => {
+    return () => {
+      if (calibratorRef.current) {
+        calibratorRef.current.cancel();
+        calibratorRef.current = null;
+      }
+    };
+  }, []);
+
   const lastTapTime = useRef<{ [key: string]: number }>({});
 
   // Sync Phrase Names and Selection to DOM for CSS labeling
@@ -192,82 +204,33 @@ export default function AudioEditorView() {
   }, [tracks, selectedPhraseId, isReady, multitrackRef]);
 
   const autoCalibrateLatency = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
-      });
-      
-      const ctx = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(256, 1, 1);
-      
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      
-      let beepTime = 0;
-      let detected = false;
-      let timeoutId: NodeJS.Timeout | undefined = undefined;
-      
-      const finish = (latencyMs?: number) => {
-        if (detected) return;
-        detected = true;
-        clearTimeout(timeoutId);
-        processor.disconnect();
-        source.disconnect();
-        ctx.close();
-        stream.getTracks().forEach(t => t.stop());
-        
-        if (latencyMs !== undefined) {
-          const finalLatency = Math.max(0, Math.min(1000, Math.round(latencyMs)));
-          setGlobalLatencyMs(finalLatency);
-          alert(`Auto-calibration successful! Latency set to ${finalLatency}ms.`);
-        } else {
-          alert('Auto-calibration failed. Could not detect the test tone.');
-        }
-      };
-      
-      processor.onaudioprocess = (e) => {
-        if (detected || beepTime === 0) return;
-        
-        const data = e.inputBuffer.getChannelData(0);
-        const currentTime = ctx.currentTime;
-        
-        if (currentTime < beepTime) return;
-        
-        for (let i = 0; i < data.length; i++) {
-          if (Math.abs(data[i]) > 0.15) {
-            const sampleTime = currentTime + (i / ctx.sampleRate);
-            const latencyMs = (sampleTime - beepTime) * 1000;
-            finish(latencyMs);
-            return;
-          }
-        }
-      };
-      
-      const osc = ctx.createOscillator();
-      osc.type = 'square';
-      osc.frequency.value = 1000;
-      
-      const env = ctx.createGain();
-      env.gain.setValueAtTime(0, ctx.currentTime);
-      
-      beepTime = ctx.currentTime + 0.5;
-      
-      env.gain.setValueAtTime(1, beepTime);
-      env.gain.exponentialRampToValueAtTime(0.001, beepTime + 0.1);
-      
-      osc.connect(env);
-      env.connect(ctx.destination);
-      
-      osc.start(beepTime);
-      osc.stop(beepTime + 0.2);
-      
-      timeoutId = setTimeout(() => finish(), 2000);
-      
-    } catch (err) {
-      console.error("Calibration error:", err);
-      alert("Could not access microphone for calibration.");
+    // Cancel any existing calibration
+    if (calibratorRef.current) {
+      calibratorRef.current.cancel();
     }
+
+    const calibrator = new LatencyCalibrator(
+      {
+        onComplete: (result: LatencyCalibrationResult) => {
+          if (result.success && result.averageLatencyMs > 0) {
+            const finalLatency = Math.max(0, Math.min(1000, result.averageLatencyMs));
+            setGlobalLatencyMs(finalLatency);
+            alert(`Auto-calibration successful! Latency set to ${finalLatency}ms.`);
+          } else {
+            alert(`Auto-calibration failed: ${result.error || 'Could not detect the test tone.'}`);
+          }
+          calibratorRef.current = null;
+        },
+        onError: (errorMsg: string) => {
+          alert(`Calibration error: ${errorMsg}`);
+          calibratorRef.current = null;
+        }
+      },
+      { numTests: 3, threshold: 0.15 }
+    );
+
+    calibratorRef.current = calibrator;
+    await calibrator.calibrate();
   };
 
   const handleContainerClick = (e: React.MouseEvent) => {

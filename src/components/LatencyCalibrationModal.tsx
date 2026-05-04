@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { X, Zap, Play, RotateCcw, Info } from 'lucide-react';
+import { LatencyCalibrator, LatencyCalibrationResult } from '../lib/audio/LatencyCalibrator';
 
 interface LatencyCalibrationModalProps {
   onClose: () => void;
@@ -11,14 +12,13 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
   const extraLatencyMs = useStore(s => s.extraLatencyMs);
   const setExtraLatencyMs = useStore(s => s.setExtraLatencyMs);
-  
+
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
   const [lastDetectedLatency, setLastDetectedLatency] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+
+  const calibratorRef = useRef<LatencyCalibrator | null>(null);
 
   const runAutoCalibration = async () => {
     setIsCalibrating(true);
@@ -26,139 +26,46 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
     setError(null);
     setLastDetectedLatency(null);
 
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: { 
-          echoCancellation: false, 
-          noiseSuppression: false, 
-          autoGainControl: false,
-          // Try to get the rawest possible stream
-        } 
-      });
-      streamRef.current = stream;
-      
-      const ctx = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      audioContextRef.current = ctx;
-      
-      const source = ctx.createMediaStreamSource(stream);
-      const processor = ctx.createScriptProcessor(512, 1, 1);
-      
-      source.connect(processor);
-      processor.connect(ctx.destination);
-      
-      const detectedLatencies: number[] = [];
-      const numTests = 5;
-      let currentTest = 0;
-      let beepTime = 0;
-      let isWaitingForBeep = false;
-
-      const runNextTest = () => {
-        if (currentTest >= numTests) {
-          finishCalibration(detectedLatencies);
-          return;
-        }
-        
-        setCalibrationProgress((currentTest / numTests) * 100);
-        
-        // Schedule beep in 500ms
-        beepTime = ctx.currentTime + 0.5;
-        isWaitingForBeep = true;
-        
-        const osc = ctx.createOscillator();
-        const env = ctx.createGain();
-        
-        osc.type = 'square';
-        osc.frequency.value = 1000;
-        
-        env.gain.setValueAtTime(0, beepTime);
-        env.gain.linearRampToValueAtTime(1, beepTime + 0.005);
-        env.gain.exponentialRampToValueAtTime(0.001, beepTime + 0.05);
-        
-        osc.connect(env);
-        env.connect(ctx.destination);
-        
-        osc.start(beepTime);
-        osc.stop(beepTime + 0.1);
-        
-        currentTest++;
-      };
-
-      processor.onaudioprocess = (e) => {
-        if (!isWaitingForBeep || beepTime === 0) return;
-        
-        const data = e.inputBuffer.getChannelData(0);
-        const currentTime = ctx.currentTime;
-        
-        // Only start looking for the beep after it was scheduled to play
-        if (currentTime < beepTime) return;
-        
-        for (let i = 0; i < data.length; i++) {
-          if (Math.abs(data[i]) > 0.1) { // Threshold for the beep
-            const sampleTime = currentTime + (i / ctx.sampleRate);
-            const latencyMs = (sampleTime - beepTime) * 1000;
-            
-            if (latencyMs < 400) {
-              detectedLatencies.push(latencyMs);
-            }
-            isWaitingForBeep = false;
-            
-            // Wait a bit before next test
-            setTimeout(runNextTest, 300);
-            return;
-          }
-        }
-        
-        // Timeout if no beep detected within 400ms of scheduled time
-        if (currentTime > beepTime + 0.4) {
-          isWaitingForBeep = false;
-          setTimeout(runNextTest, 100);
-        }
-      };
-
-       const finishCalibration = (latencies: number[]) => {
-        processor.disconnect();
-        source.disconnect();
-        ctx.close();
-        audioContextRef.current = null;
-        stream.getTracks().forEach(t => t.stop());
-        
-        setIsCalibrating(false);
-        setCalibrationProgress(100);
-
-        if (latencies.length > 0) {
-          // Average the results, excluding outliers if needed
-          const avg = latencies.reduce((a, b) => a + b, 0) / latencies.length;
-          const final = Math.max(0, Math.min(1000, Math.round(avg)));
-          setLastDetectedLatency(final);
-          setGlobalLatencyMs(final);
-        } else {
-          setError("Could not detect the test tone. Ensure your speakers are audible to the microphone.");
-        }
-      };
-
-      // Start first test
-      runNextTest();
-
-    } catch (err) {
-      console.error(err);
-      // Clean up on error
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
-      }
-      audioContextRef.current = null;
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
-      setError("Microphone access denied or audio error.");
-      setIsCalibrating(false);
+    // Cancel any existing calibration
+    if (calibratorRef.current) {
+      calibratorRef.current.cancel();
     }
+
+    const calibrator = new LatencyCalibrator(
+      {
+        onProgress: (progress) => setCalibrationProgress(progress),
+        onComplete: (result: LatencyCalibrationResult) => {
+          setIsCalibrating(false);
+          setCalibrationProgress(100);
+
+          if (result.success && result.averageLatencyMs > 0) {
+            setLastDetectedLatency(result.averageLatencyMs);
+            setGlobalLatencyMs(result.averageLatencyMs);
+          } else {
+            setError(result.error || "Could not detect the test tone. Ensure your speakers are audible to the microphone.");
+          }
+          calibratorRef.current = null;
+        },
+        onError: (errorMsg: string) => {
+          setError(errorMsg);
+          setIsCalibrating(false);
+          calibratorRef.current = null;
+        }
+      },
+      { numTests: 5, threshold: 0.1 }
+    );
+
+    calibratorRef.current = calibrator;
+    await calibrator.calibrate();
   };
 
   useEffect(() => {
     return () => {
-      if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
-        audioContextRef.current.close();
+      // Cancel calibration on unmount
+      if (calibratorRef.current) {
+        calibratorRef.current.cancel();
+        calibratorRef.current = null;
       }
-      audioContextRef.current = null;
-      if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
     };
   }, []);
 

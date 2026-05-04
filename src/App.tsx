@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from './store/useStore';
 import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText } from 'lucide-react';
 import { cn } from './lib/utils';
-import { calculatePeaksAsync } from './utils/audioUtils';
+import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
 
 import { BpmInput } from './components/BpmInput';
@@ -15,13 +15,13 @@ import { LatencyCalibrationModal } from './components/LatencyCalibrationModal';
 import { TimelineGrid } from './components/TimelineGrid';
 import { LyricsBuilder } from './components/LyricsBuilder';
 import { TrackToolbar } from './components/TrackToolbar';
-import { exportProjectToJSON, importProjectFromJSON } from './utils/projectIO';
+import { exportProjectToJSON, importProjectFromJSON } from './audio/project/projectIO';
 
 import { TransportTimeDisplay } from './components/TransportTimeDisplay';
 import { StatusLogger } from './components/StatusLogger';
 import { perfLogger } from './utils/PerformanceLogger';
 
-import { formatBarBeat } from './utils/timeFormat';
+import { formatBarBeat } from './audio/time/timeFormat';
 
 export default function App() {
   const tracks = useStore(s => s.tracks);

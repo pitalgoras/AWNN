@@ -1,6 +1,6 @@
 import React from 'react';
 import { useStore } from '../store/useStore';
-import { formatTime, formatBarBeat } from '../utils/timeFormat';
+import { formatTime, formatBarBeat } from '../audio/time/timeFormat';
 
 export function TransportTimeDisplay() {
   const currentTime = useStore((state) => state.currentTime);

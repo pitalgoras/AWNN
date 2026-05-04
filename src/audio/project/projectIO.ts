@@ -1,4 +1,4 @@
-import { Track, Phrase } from '../store/useStore';
+import { Track, Phrase } from '../../store/useStore';
 
 const blobToBase64 = (blob: Blob): Promise<string> => {
   return new Promise((resolve, reject) => {

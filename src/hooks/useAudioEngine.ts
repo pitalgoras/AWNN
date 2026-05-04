@@ -4,8 +4,8 @@ import MultiTrack, { type TrackOptions } from '../lib/multitrack/multitrack';
 import WebAudioPlayer from '../lib/multitrack/webaudio';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
-import { audioBufferToWav } from '../utils/audioBufferToWav';
-import { calculatePeaksAsync } from '../utils/audioUtils';
+import { audioBufferToWav } from '../audio/processing/audioBufferToWav';
+import { calculatePeaksAsync } from '../audio/processing/audioUtils';
 import { perfLogger } from '../utils/PerformanceLogger';
 
 // Override WaveSurfer.prototype.load to catch unhandled promise rejections globally
