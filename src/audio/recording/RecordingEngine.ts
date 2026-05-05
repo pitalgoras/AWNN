@@ -4,6 +4,7 @@
  */
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
+import { perfLogger } from '../../utils/PerformanceLogger';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
@@ -14,6 +15,7 @@ export interface RecordingConfig {
   preRollMode: string;
   isPlaying: boolean;
   currentTime: number;
+  audioContextRef: React.RefObject<AudioContext | null>;
 }
 
 export interface RecordingCallbacks {
@@ -38,11 +40,30 @@ export class RecordingEngine {
   private punchInTime = 0;
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
-  private audioContext: AudioContext | null = null;
+  private recordingSessionId = 0;
 
   constructor(config: RecordingConfig, callbacks: RecordingCallbacks) {
     this.config = config;
     this.callbacks = callbacks;
+    
+    // Expose debug API on window
+    if (typeof window !== 'undefined') {
+      (window as any).__recordingDebug = {
+        getState: () => ({
+          activeTrackId: this.activeTrackId,
+          recordingSessionId: this.recordingSessionId,
+          isRecording: this.isRecording(),
+          recorderState: this.continuousRecorder?.state,
+          hasStream: !!this.continuousMicStream,
+        }),
+        start: (trackId: string) => this.startRecording(trackId),
+        stop: () => this.stopRecording(),
+        cancel: () => this.cancelRecording(),
+        getConfig: () => this.config,
+        getChunksLength: () => this.audioChunks.length,
+      };
+      console.log('RecordingEngine: Debug API available at window.__recordingDebug');
+    }
   }
 
   updateConfig(config: Partial<RecordingConfig>) {
@@ -61,29 +82,35 @@ export class RecordingEngine {
 
     const constraints: MediaStreamConstraints = this.config.rawRecordingMode
       ? {
-          audio: {
-            echoCancellation: { exact: false },
-            noiseSuppression: { exact: false },
-            autoGainControl: { exact: false },
-            // @ts-ignore - Chrome specific constraints
-            googEchoCancellation: false,
-            googAutoGainControl: false,
-            googNoiseSuppression: false,
-            googHighpassFilter: false,
-            googTypingNoiseDetection: false,
+            audio: {
+              echoCancellation: { exact: false },
+              noiseSuppression: { exact: false },
+              autoGainControl: { exact: false },
+              // @ts-ignore - Chrome specific constraints
+              googEchoCancellation: false,
+              googAutoGainControl: false,
+              googNoiseSuppression: false,
+              googHighpassFilter: false,
+              googTypingNoiseDetection: false,
+            }
           }
-        }
       : { audio: true };
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     this.continuousMicStream = stream;
+    // Start continuous recording immediately (as user explained)
     this.startContinuousRecorder();
   }
 
   private startContinuousRecorder(): void {
-    if (!this.continuousMicStream) return;
+    if (!this.continuousMicStream) {
+      console.log('startContinuousRecorder: no stream, returning');
+      return;
+    }
 
     if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+      console.log('startContinuousRecorder: stopping existing recorder');
+      // Don't try to prevent onstop - just stop it, session ID will handle invalidation
       this.continuousRecorder.stop();
     }
 
@@ -105,37 +132,62 @@ export class RecordingEngine {
       }
     };
 
-    mediaRecorder.onstop = async () => {
-      await this.handleRecorderStop();
+    // Add error handler to catch recorder errors
+    mediaRecorder.onerror = (event) => {
+      console.error('MediaRecorder ERROR:', event);
+    };
+
+    // Capture sessionId AND activeTrackId OUTSIDE the arrow function
+    const sessionId = this.recordingSessionId;
+    const trackId = this.activeTrackId;  // Capture trackId too!
+    mediaRecorder.onstop = () => {
+      console.log('onstop handler: calling handleRecorderStop with sessionId=' + sessionId + ', trackId=' + trackId);
+      this.handleRecorderStop(sessionId, trackId);
     };
 
     this.recorderStartTime = performance.now();
+    console.log('startContinuousRecorder: starting recorder with timeslice=100');
     mediaRecorder.start(100);
   }
 
-  private async handleRecorderStop(): Promise<void> {
+  private async handleRecorderStop(sessionId: number, capturedTrackId: string | null): Promise<void> {
+    // Check if this is a stale session FIRST (before any other logic)
+    if (sessionId !== this.recordingSessionId) {
+      console.log('handleRecorderStop: STALE session detected!', { sessionId, currentSessionId: this.recordingSessionId, capturedTrackId });
+      perfLogger.log(23, sessionId, this.recordingSessionId);
+      return; // Exit immediately - don't process stale sessions
+    }
+    
     const storeState = this.callbacks.getStoreState();
-
-    // We only process if we were actually recording
-    if (!storeState.isRecording && !this.activeTrackId) {
-      this.startContinuousRecorder();
+    
+    console.log('handleRecorderStop: entry', { sessionId, capturedTrackId, thisActiveTrackId: this.activeTrackId });
+    console.log('handleRecorderStop: call stack', new Error().stack);
+    
+    // If this fires too quickly (within 1 second of start), log warning
+    const timeSinceStart = performance.now() - this.recorderStartTime;
+    if (timeSinceStart < 1000) {
+      console.warn('handleRecorderStop fired suspiciously fast!', { timeSinceStart, sessionId, capturedTrackId });
+      // Don't debugger - we already have the stale check above
+    }
+    
+    console.log('handleRecorderStop: CURRENT session, proceeding', { sessionId, capturedTrackId });
+    
+    // Use the captured trackId (not this.activeTrackId which might have been overwritten)
+    const trackId = capturedTrackId;
+    
+    if (!trackId) {
+      console.log('handleRecorderStop: no trackId, returning');
       return;
     }
-
-    if (this.recordingCancelled) {
-      this.audioChunks = [];
-      this.activeTrackId = null;
-      this.startContinuousRecorder();
-      return;
-    }
-
-    const trackId = this.activeTrackId;
+    
+    console.log('handleRecorderStop: CURRENT session, proceeding', { sessionId, trackId });
+    
+    // If we get here, it's the current session
     this.activeTrackId = null;
-
-    if (!trackId) return;
-
+    
     const audioBlob = new Blob(this.audioChunks, { type: this.continuousRecorder?.mimeType || 'audio/webm' });
     const audioUrl = URL.createObjectURL(audioBlob);
+    console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
     const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
     const latencySec = latencyMs / 1000;
@@ -172,12 +224,12 @@ export class RecordingEngine {
     let finalAudioBlob = audioBlob;
     let peaks: number[][] | undefined;
 
-    try {
-      const arrayBuffer = await audioBlob.arrayBuffer();
-      if (!this.audioContext) {
-        this.audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      }
-      const originalBuffer = await this.audioContext.decodeAudioData(arrayBuffer.slice(0));
+      try {
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        // Match original pattern: use audioContextRef.current directly
+        const audioContext = this.config.audioContextRef?.current;
+        if (!audioContext) throw new Error('AudioContext not initialized');
+      const originalBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
 
       // Destructively trim the pre-roll
       const sampleRate = originalBuffer.sampleRate;
@@ -185,7 +237,7 @@ export class RecordingEngine {
       const endSample = originalBuffer.length;
       const newLength = Math.max(1, endSample - startSample);
 
-      const trimmedBuffer = this.audioContext.createBuffer(
+      const trimmedBuffer = audioContext.createBuffer(
         originalBuffer.numberOfChannels,
         newLength,
         sampleRate
@@ -213,6 +265,8 @@ export class RecordingEngine {
       console.error("Failed to decode and trim recorded audio", e);
     }
 
+    console.log('handleRecorderStop: creating phrase', { trackId, startPos, duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1 });
+    perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {
       url: finalAudioUrl,
       blob: finalAudioBlob,
@@ -222,6 +276,10 @@ export class RecordingEngine {
       duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1,
       createdAt: Date.now()
     });
+    console.log('handleRecorderStop: phrase created, setting isRecording to false');
+    
+    this.callbacks.onSetIsRecording(false);
+    perfLogger.log(25, this.recordingSessionId, 0);
 
     // Instantly restart the continuous recorder for the next recording
     this.startContinuousRecorder();
@@ -229,19 +287,42 @@ export class RecordingEngine {
 
   async startRecording(trackId: string): Promise<void> {
     try {
-      // Resume AudioContext on user gesture if needed
-      if (this.audioContext?.state === 'suspended') {
-        await this.audioContext.resume();
-      }
-
-      if (!this.continuousMicStream) {
-        await this.initStream();
-      }
-
+      console.log('startRecording: entry', { trackId, currentTime: this.config.currentTime });
+      
+      // Increment session ID to invalidate any pending handleRecorderStop calls
+      this.recordingSessionId++;
+      const currentSessionId = this.recordingSessionId;
+      perfLogger.log(18, trackId, currentSessionId);
+      console.log('startRecording: sessionId =', currentSessionId);
+      
+      // Set activeTrackId FIRST before any async operations
       this.activeTrackId = trackId;
+      perfLogger.log(19, trackId, currentSessionId);
+      console.log('startRecording: activeTrackId set', trackId);
+      
+      // Ensure stream exists (will call initStream which starts continuous recording)
+      if (!this.continuousMicStream) {
+        console.log('startRecording: calling initStream to create stream + start continuous recording');
+        await this.initStream();  // initStream starts the continuous recorder
+        perfLogger.log(20, this.recordingSessionId, 0);
+        console.log('startRecording: initStream complete, continuous recorder running');
+      }
+      
+      // NOW stop the continuous recorder to recycle the buffer from the beginning
+      console.log('startRecording: stopping continuous recorder to recycle buffer');
+      if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+        this.continuousRecorder.stop();  // This fires onstop → handleRecorderStop (will be stale due to sessionId check)
+      }
+      
+      // Immediately restart with fresh recorder for this recording session
+      console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
+      this.startContinuousRecorder();  // Creates new recorder with current sessionId
 
       const isCurrentlyPlaying = this.config.isPlaying;
       const preRollMode = this.config.preRollMode;
+
+      console.log('startRecording', { preRollMode, isCurrentlyPlaying, currentTime: this.config.currentTime });
+      perfLogger.log(21, preRollMode, this.config.currentTime);
 
       // If already playing, force no count-in regardless of preRollMode setting
       const effectivePreRollMode = isCurrentlyPlaying ? 'none' : preRollMode;
@@ -276,10 +357,9 @@ export class RecordingEngine {
       // This would need to be passed via callbacks if multitrack needs it
 
       // Coordinated start time for perfect sync
-      if (!this.audioContext) {
-        this.audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
-      }
-      const recorderStartCtxTime = this.audioContext.currentTime;
+      const audioContext = this.config.audioContextRef?.current;
+      if (!audioContext) throw new Error('AudioContext not initialized');
+      const recorderStartCtxTime = audioContext.currentTime;
       const playbackStartCtxTime = recorderStartCtxTime + 0.15;
       const startDelay = playbackStartCtxTime - recorderStartCtxTime;
 
@@ -293,20 +373,26 @@ export class RecordingEngine {
     } catch (err) {
       console.error("Error accessing microphone:", err);
       alert("Could not access microphone.");
-      this.callbacks.onSetIsRecording(false);
+    this.callbacks.onSetIsRecording(false);
+    perfLogger.log(25, this.recordingSessionId, 0);
     }
   }
 
   stopRecording(): void {
+    console.log('stopRecording: called', new Error().stack);
+    console.log('stopRecording: recorder state =', this.continuousRecorder?.state);
     if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+      console.log('stopRecording: stopping recorder');
       this.continuousRecorder.stop();
     }
-    this.callbacks.onSetIsRecording(false);
+    // onSetIsRecording(false) is now called in handleRecorderStop after phrase creation
   }
 
   cancelRecording(): void {
+    console.log('cancelRecording: called', new Error().stack);
     this.recordingCancelled = true;
     if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+      console.log('cancelRecording: stopping recorder');
       this.continuousRecorder.stop();
     }
     this.callbacks.onSetIsRecording(false);
@@ -323,10 +409,7 @@ export class RecordingEngine {
       this.continuousMicStream = null;
     }
 
-    if (this.audioContext && this.audioContext.state !== 'closed') {
-      this.audioContext.close();
-      this.audioContext = null;
-    }
+    // AudioContext is managed by useAudioEngine, not here
 
     this.audioChunks = [];
     this.activeTrackId = null;

@@ -53,30 +53,32 @@ export function useAudioEngine() {
   const recordingEngineRef = useRef<RecordingEngine | null>(null);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
-  const { 
-    tracks, 
-    zoom, 
-    isPlaying,
-    isRecording,
-    selectedTrackId,
-    selectedPhraseId,
-    envelopeLocked,
-    waveformQuality,
-    bpm,
-    timeSignature,
-    globalLatencyMs,
-    extraLatencyMs,
-    duration,
-    setIsPlaying,
-    setIsRecording,
-    setCurrentTime,
-    setDuration,
-    moveLocked,
-    isReady,
-    setIsReady,
-    trackHeight,
-    metronomeHeight
-  } = useStore();
+const { 
+  tracks, 
+  zoom, 
+  isPlaying,
+  isRecording,
+  selectedTrackId,
+  selectedPhraseId,
+  envelopeLocked,
+  waveformQuality,
+  bpm,
+  timeSignature,
+  preRollMode,
+  currentTime,
+  globalLatencyMs,
+  extraLatencyMs,
+  duration,
+  setIsPlaying,
+  setIsRecording,
+  setCurrentTime,
+  setDuration,
+  moveLocked,
+  isReady,
+  setIsReady,
+  trackHeight,
+  metronomeHeight
+} = useStore();
 
   const beatsPerSecond = (bpm || 120) / 60;
   const secondsPerBeat = 1 / beatsPerSecond;
@@ -98,16 +100,29 @@ export function useAudioEngine() {
         extraLatencyMs: extraLatencyMs || 0,
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
-        preRollMode: 'none',
-        isPlaying: false,
-        currentTime: 0,
+        preRollMode,
+        isPlaying,
+        currentTime,
+        audioContextRef,
       };
 
       const callbacks: RecordingCallbacks = {
-        onSetIsPlaying: (playing) => setIsPlaying(playing),
-        onSetIsRecording: (recording) => setIsRecording(recording),
-        onAddPhrase: (trackId, phrase) => useStore.getState().addPhrase(trackId, phrase),
-        onSeekTo: (time, allowNegative) => seekTo(time, allowNegative),
+        onSetIsPlaying: (playing) => {
+          console.log('callback: setIsPlaying', playing);
+          setIsPlaying(playing);
+        },
+        onSetIsRecording: (recording) => {
+          console.log('callback: setIsRecording', recording);
+          setIsRecording(recording);
+        },
+        onAddPhrase: (trackId, phrase) => {
+          console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration });
+          useStore.getState().addPhrase(trackId, phrase);
+        },
+        onSeekTo: (time, allowNegative) => {
+          console.log('callback: seekTo', { time, allowNegative });
+          seekTo(time, allowNegative);
+        },
         getStoreState: () => useStore.getState(),
       };
 
@@ -122,6 +137,8 @@ export function useAudioEngine() {
         extraLatencyMs: extraLatencyMs || 0,
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
+        preRollMode,
+        currentTime,
         isPlaying,
       });
     }
@@ -143,7 +160,7 @@ export function useAudioEngine() {
         metronomeEngineRef.current.cleanup();
       }
     };
-  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, isPlaying, setIsPlaying, setIsRecording]);
+  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, isPlaying, setIsPlaying, setIsRecording, preRollMode, currentTime]);
 
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());
@@ -387,11 +404,22 @@ export function useAudioEngine() {
       // Calculate max duration in User Time
       let maxDuration = 0;
       const wssList = multitrack.wavesurfers || [];
-      wssList.forEach((ws: WaveSurfer, i: number) => {
+      wssList.forEach((ws: WaveSurfer) => {
         try {
-          if (multitrackItems[i].trackId === 'metronome') return;
+          // Get trackId from wavesurfer options (set during creation)
+          const wsTrackId = (ws as any).options?.trackId || (ws as any).options?.id;
+          
+          // Skip metronome track
+          if (wsTrackId === 'metronome' || wsTrackId === 'placeholder') return;
+          
+          // Find matching item(s) in multitrackItems by trackId
+          const matchingItems = multitrackItems.filter(item => item.trackId === wsTrackId);
+          if (matchingItems.length === 0) return;
+          
+          // Use the first matching item (or calculate max duration across all phrases for this track)
           const d = ws.getDuration();
-          const realStartPos = multitrackItems[i].startPosition || 0;
+          const item = matchingItems[0];
+          const realStartPos = item.startPosition || 0;
           const userStartPos = realStartPos - secondsPerBar;
           if (d + userStartPos > maxDuration) maxDuration = d + userStartPos;
         } catch {
@@ -574,6 +602,10 @@ export function useAudioEngine() {
           const wssList = multitrackRef.current.wavesurfers || [];
           wssList.forEach((ws: WaveSurfer) => {
             try {
+              // Skip placeholder track
+              const wsId = (ws as any).options?.id || (ws as any).options?.trackId;
+              if (wsId === 'placeholder' || wsId === 'metronome') return;
+              
               if (ws.isPlaying()) ws.pause();
             } catch {
               // ignore
@@ -605,6 +637,13 @@ export function useAudioEngine() {
       
       const count = track.phrases.length === 0 ? 1 : track.phrases.length;
       for (let j = 0; j < count; j++) {
+        // Skip placeholder track in wssList
+        while (itemIndex < wssList.length) {
+          const wsId = (wssList[itemIndex] as any).options?.id || (wssList[itemIndex] as any).options?.trackId;
+          if (wsId !== 'placeholder') break;
+          itemIndex++;
+        }
+        
         const ws = wssList[itemIndex];
         if (ws && typeof ws.setOptions === 'function') {
           // Only update if height actually changed to prevent flickering
@@ -651,8 +690,17 @@ export function useAudioEngine() {
     const wssList = multitrackRef.current.wavesurfers || [];
     const multitrackItems = (multitrackRef.current as { tracks: TrackOptions[] }).tracks || [];
     
-    wssList.forEach((ws: WaveSurfer, i: number) => {
-      const item = multitrackItems[i];
+    wssList.forEach((ws: WaveSurfer) => {
+      // Get trackId from wavesurfer options
+      const wsTrackId = (ws as any).options?.trackId || (ws as any).options?.id;
+      
+      // Skip placeholder track
+      if (wsTrackId === 'placeholder' || wsTrackId === 'metronome') return;
+      
+      // Find matching item in multitrackItems by trackId
+      const item = multitrackItems.find(item => item.trackId === wsTrackId);
+      if (!item) return;
+      
       if (item && !String(item.id).startsWith('empty_')) {
         const track = (tracks || []).find(t => t.id === item.trackId);
         const phrase = track?.phrases.find(p => p.id === item.id);

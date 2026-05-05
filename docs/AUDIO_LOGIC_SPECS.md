@@ -18,7 +18,13 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 *   **Pre-roll (Count-in) Behavior:**
     *   **When stopped:** A 1-bar pre-roll is applied to recordings if the `preRollMode` is set to 'always' or 'recording'. The engine begins recording 1 bar earlier, and this pre-roll portion is "hard trimmed" upon stopping, ensuring the final clip starts exactly at the intended punch-in time. If `preRollMode` is 'none', recording starts immediately without a count-in.
     *   **When already playing:** If the user presses record while playback is already active, recording starts immediately at the current playhead position without any count-in, regardless of the `preRollMode` setting. This allows for seamless "punch-in" recording during playback without interrupting the flow.
-*   **User Time vs. Real Time:** The project "Real Time" starts at -1 bar (Bar 0), but "User Time" 0:0:0 corresponds to Bar 1 (labeled "1.1"). All phrase `startPosition` values are stored relative to User Time 0.
+*   **~/ User Time vs. Real Time:** ~~The project "Real Time" starts at -1 bar (Bar 0), but "User Time" 0:0:0 corresponds to Bar 1 (labeled "1.1"). All phrase `startPosition` values are stored relative to User Time 0.~~
+*   **User Time vs. Real Time (Updated):**
+    *   **Real Time:** Actual seconds from start of project. Bar 0 = 0s to `secondsPerBar`, Bar 1 = `secondsPerBar` to `2*secondsPerBar`.
+    *   **User Time:** Shifted by `+secondsPerBar`. User Time 0 = Bar 1.1 = Real Time `secondsPerBar`.
+    *   **Bar 0 Purpose:** EXCLUSIVELY for pre-roll count-in. NOT a normal bar for recording. UI hides Bar 0 unless pre-roll is active.
+    *   **Phrase Storage:** `startPosition` stored in User Time (so Bar 1.1 = position 0).
+    *   **Timeline Rendering:** `TimelineGrid` hides Bar 0 during normal playback, reveals during pre-roll.
 *   **Tempo Control (BpmInput):**
     *   **Interaction:** Supports direct typing (3-digit), vertical scrubbing (drag-to-change), and arrow keys (Up/Down).
     *   **Responsiveness:** The UI prioritizes input responsiveness. Metronome regeneration is debounced (500ms) to prevent audio processing from interrupting the user's input flow.
@@ -29,7 +35,11 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 *   **Timeline Grid Performance:**
     *   **Virtualization:** The grid only renders beat/bar lines that are currently visible in the viewport, maintaining 60fps performance even at high zoom levels.
 *   **Audio Integrity:** Audio clips are stored at their absolute time in seconds/milliseconds. Changing the BPM shifts the grid and metronome but does NOT stretch or move existing audio clips.
-*   **Metronome:** A dedicated metronome track provides a click track. **There is no "manual" metronome; it is always a pre-rendered audio track.** This track is the single source of truth for project synchronization. It plays during the pre-roll and standard playback. It can be muted or its volume adjusted, but it cannot be recorded onto. The metronome track is rendered as a 1-bar clip laid consecutively (appended dynamically) to save memory. The metronome track is thinner (40px) and has no text label on its clips.
+*   **Metronome:** A dedicated metronome track provides a click track. **There is no "manual" metronome; it is always a pre-rendered audio track.** This track is the single source of truth for project synchronization. It plays during the pre-roll and standard playback. It can be muted or its volume adjusted, but it cannot be recorded onto. The metronome track is rendered as a 1-bar clip laid consecutively (appended dynamically) to save memory. The metronome track is thinner (40px) and has no text label on its clips. **Track ID:** Currently `'metronome'` (consider renaming to `'0'` in future).
+*   **Continuous Recorder Pattern:** The recording engine maintains a persistent `MediaStream` + `MediaRecorder` with `timeslice=100ms`. This serves TWO purposes:
+    *   **Eliminate mic latency:** Microphone is always "hot" (warmed up), avoiding cold-start latency.
+    *   **Circular buffer for pre-roll:** Last N seconds of audio are available when user presses Record (punch-in). The `audioChunks[]` array acts as a rolling buffer that gets "recycled" on each new recording.
+    *   **Flow:** `initStream()` starts continuous recording. `startRecording()` stops the recorder (recycles buffer from beginning), then immediately restarts it for the new session.
 *   **Cues & Navigation:**
     *   **Cues:** Users can add markers (cues) to the timeline. Cues are visible in the transport bar and the sidebar.
     *   **Bar.Beat Display:** The transport bar features a digital display showing the current position in `Bar.Beat` format (e.g., `1.1`, `2.3`). User Time 0:0:0 corresponds to Bar 1.1.
