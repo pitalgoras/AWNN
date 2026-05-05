@@ -93,6 +93,10 @@ const {
     }
 
     // Initialize RecordingEngine
+    // Detect AudioWorklet support
+    const audioContext = audioContextRef.current;
+    const useAudioWorklet = audioContext?.audioWorklet !== undefined;
+
     if (!recordingEngineRef.current) {
       const config: RecordingConfig = {
         rawRecordingMode,
@@ -104,6 +108,7 @@ const {
         isPlaying,
         currentTime,
         audioContextRef,
+        useAudioWorklet,
       };
 
       const callbacks: RecordingCallbacks = {
@@ -140,6 +145,7 @@ const {
         preRollMode,
         currentTime,
         isPlaying,
+        useAudioWorklet,
       });
     }
 

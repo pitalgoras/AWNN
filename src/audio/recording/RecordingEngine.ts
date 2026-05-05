@@ -16,6 +16,7 @@ export interface RecordingConfig {
   isPlaying: boolean;
   currentTime: number;
   audioContextRef: React.RefObject<AudioContext | null>;
+  useAudioWorklet?: boolean; // Use AudioWorklet for recording (shared clock with playback)
 }
 
 export interface RecordingCallbacks {
@@ -42,9 +43,17 @@ export class RecordingEngine {
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
 
+  // AudioWorklet recording (shared clock with playback)
+  private audioWorkletNode: AudioWorkletNode | null = null;
+  private mediaStreamSource: MediaStreamAudioSourceNode | null = null;
+  private useAudioWorklet = false;
+  private audioWorkletData: Float32Array[] = []; // Stores Float32Arrays with timestamps
+  private audioWorkletStartTime = 0;
+
   constructor(config: RecordingConfig, callbacks: RecordingCallbacks) {
     this.config = config;
     this.callbacks = callbacks;
+    this.useAudioWorklet = config.useAudioWorklet ?? false;
     
     // Expose debug API on window
     if (typeof window !== 'undefined') {
@@ -55,6 +64,7 @@ export class RecordingEngine {
           isRecording: this.isRecording(),
           recorderState: this.continuousRecorder?.state,
           hasStream: !!this.continuousMicStream,
+          useAudioWorklet: this.useAudioWorklet,
         }),
         start: (trackId: string) => this.startRecording(trackId),
         stop: () => this.stopRecording(),
@@ -68,6 +78,9 @@ export class RecordingEngine {
 
   updateConfig(config: Partial<RecordingConfig>) {
     this.config = { ...this.config, ...config };
+    if (config.useAudioWorklet !== undefined) {
+      this.useAudioWorklet = config.useAudioWorklet;
+    }
   }
 
   isRecording(): boolean {
@@ -98,8 +111,66 @@ export class RecordingEngine {
 
     const stream = await navigator.mediaDevices.getUserMedia(constraints);
     this.continuousMicStream = stream;
-    // Start continuous recording immediately (as user explained)
-    this.startContinuousRecorder();
+
+    if (this.useAudioWorklet) {
+      await this.initAudioWorklet();
+    } else {
+      // Start continuous recording immediately (as user explained)
+      this.startContinuousRecorder();
+    }
+  }
+
+  private async initAudioWorklet(): Promise<void> {
+    const audioContext = this.config.audioContextRef?.current;
+    if (!audioContext) {
+      console.error('AudioWorklet init failed: AudioContext not available');
+      this.useAudioWorklet = false; // Fallback to MediaRecorder
+      this.startContinuousRecorder();
+      return;
+    }
+
+    try {
+      // Load the AudioWorklet processor
+      await audioContext.audioWorklet.addModule('/worklets/recorder.worklet.js');
+
+      // Create MediaStreamAudioSourceNode to connect mic to AudioContext
+      this.mediaStreamSource = audioContext.createMediaStreamSource(this.continuousMicStream!);
+
+      // Create AudioWorkletNode
+      this.audioWorkletNode = new AudioWorkletNode(audioContext, 'recorder-worklet', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0, // No output needed for recording
+        channelCount: 1,
+        processorOptions: {
+          sampleRate: audioContext.sampleRate,
+        }
+      });
+
+      // Handle messages from AudioWorklet
+      this.audioWorkletNode.port.onmessage = (e) => {
+        const data = e.data;
+        if (data.type === 'RECORDING_STARTED') {
+          console.log('AudioWorklet: Recording started at', data.startTime, 'contextTime:', data.currentTime);
+          this.audioWorkletStartTime = data.startTime;
+        } else if (data.type === 'AUDIO_DATA') {
+          // Store the Float32Array (transferred from worklet)
+          this.audioWorkletData.push(data.audioData);
+        } else if (data.type === 'RECORDING_STOPPED') {
+          console.log('AudioWorklet: Recording stopped at', data.stopTime);
+          this.handleAudioWorkletStop();
+        }
+      };
+
+      // Connect mic source to AudioWorklet
+      this.mediaStreamSource.connect(this.audioWorkletNode);
+      // AudioWorkletNode has no output, so don't connect to destination
+
+      console.log('AudioWorklet recording initialized');
+    } catch (err) {
+      console.error('AudioWorklet init failed, falling back to MediaRecorder:', err);
+      this.useAudioWorklet = false;
+      this.startContinuousRecorder();
+    }
   }
 
   private startContinuousRecorder(): void {
@@ -285,6 +356,83 @@ export class RecordingEngine {
     this.startContinuousRecorder();
   }
 
+  // Handle AudioWorklet recording stop (shared clock with playback)
+  private async handleAudioWorkletStop(): Promise<void> {
+    if (this.audioWorkletData.length === 0) {
+      console.warn('handleAudioWorkletStop: no data received');
+      return;
+    }
+
+    const trackId = this.activeTrackId;
+    if (!trackId) {
+      console.log('handleAudioWorkletStop: no trackId');
+      return;
+    }
+
+    // Combine all Float32Arrays into one
+    const totalLength = this.audioWorkletData.reduce((sum, arr) => sum + arr.length, 0);
+    const combinedData = new Float32Array(totalLength);
+    let offset = 0;
+    this.audioWorkletData.forEach(arr => {
+      combinedData.set(arr, offset);
+      offset += arr.length;
+    });
+    this.audioWorkletData = [];
+
+    const audioContext = this.config.audioContextRef?.current;
+    if (!audioContext) {
+      console.error('handleAudioWorkletStop: AudioContext not available');
+      return;
+    }
+
+    // Create AudioBuffer from Float32Array
+    const sampleRate = audioContext.sampleRate;
+    const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
+    audioBuffer.getChannelData(0).set(combinedData);
+
+    // Calculate startPos with latency compensation (timing evils #1 and #2)
+    const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
+    const latencySec = latencyMs / 1000;
+
+    const startPos = this.recordingStartTransportTime - latencySec;
+
+    // Pre-calculate peaks
+    let peaks: number[][] | undefined;
+    try {
+      peaks = await calculatePeaksAsync(audioBuffer);
+    } catch (e) {
+      console.warn('Failed to calculate peaks:', e);
+    }
+
+    // Convert to WAV
+    const wavBlob = new Blob([audioBufferToWav(audioBuffer)], { type: 'audio/wav' });
+    const finalAudioUrl = URL.createObjectURL(wavBlob);
+
+    console.log('handleAudioWorkletStop: creating phrase (shared clock)', {
+      trackId,
+      startPos,
+      duration: audioBuffer.duration,
+      latencyMs
+    });
+
+    perfLogger.log(24, trackId, startPos);
+    this.callbacks.onAddPhrase(trackId, {
+      url: finalAudioUrl,
+      blob: wavBlob,
+      audioBuffer: audioBuffer,
+      peaks: peaks,
+      startPosition: startPos,
+      duration: audioBuffer.duration,
+      createdAt: Date.now()
+    });
+
+    console.log('handleAudioWorkletStop: phrase created, setting isRecording to false');
+    this.callbacks.onSetIsRecording(false);
+    perfLogger.log(25, this.recordingSessionId, 0);
+
+    this.activeTrackId = null;
+  }
+
   async startRecording(trackId: string): Promise<void> {
     try {
       console.log('startRecording: entry', { trackId, currentTime: this.config.currentTime });
@@ -308,15 +456,28 @@ export class RecordingEngine {
         console.log('startRecording: initStream complete, continuous recorder running');
       }
       
-      // NOW stop the continuous recorder to recycle the buffer from the beginning
-      console.log('startRecording: stopping continuous recorder to recycle buffer');
-      if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
-        this.continuousRecorder.stop();  // This fires onstop → handleRecorderStop (will be stale due to sessionId check)
+      if (this.useAudioWorklet) {
+        // AudioWorklet: set isRecording parameter to 1 at the right time
+        console.log('startRecording: using AudioWorklet (shared clock)');
+        if (this.audioWorkletNode) {
+          const audioContext = this.config.audioContextRef?.current;
+          if (audioContext) {
+            const startTime = audioContext.currentTime + 0.15;
+            this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(1, startTime);
+            console.log('AudioWorklet: set isRecording=1 at', startTime);
+          }
+        }
+      } else {
+        // MediaRecorder: stop old recorder to recycle buffer
+        console.log('startRecording: stopping continuous recorder to recycle buffer');
+        if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+          this.continuousRecorder.stop();  // This fires onstop → handleRecorderStop (will be stale due to sessionId check)
+        }
+        
+        // Immediately restart with fresh recorder for this recording session
+        console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
+        this.startContinuousRecorder();  // Creates new recorder with current sessionId
       }
-      
-      // Immediately restart with fresh recorder for this recording session
-      console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
-      this.startContinuousRecorder();  // Creates new recorder with current sessionId
 
       const isCurrentlyPlaying = this.config.isPlaying;
       const preRollMode = this.config.preRollMode;
@@ -380,10 +541,22 @@ export class RecordingEngine {
 
   stopRecording(): void {
     console.log('stopRecording: called', new Error().stack);
-    console.log('stopRecording: recorder state =', this.continuousRecorder?.state);
-    if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
-      console.log('stopRecording: stopping recorder');
-      this.continuousRecorder.stop();
+    
+    if (this.useAudioWorklet && this.audioWorkletNode) {
+      // AudioWorklet: set isRecording parameter to 0
+      const audioContext = this.config.audioContextRef?.current;
+      if (audioContext) {
+        const stopTime = audioContext.currentTime + 0.05;
+        this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(0, stopTime);
+        console.log('AudioWorklet: set isRecording=0 at', stopTime);
+      }
+    } else {
+      // MediaRecorder: stop the recorder
+      console.log('stopRecording: recorder state =', this.continuousRecorder?.state);
+      if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+        console.log('stopRecording: stopping recorder');
+        this.continuousRecorder.stop();
+      }
     }
     // onSetIsRecording(false) is now called in handleRecorderStop after phrase creation
   }
@@ -391,7 +564,15 @@ export class RecordingEngine {
   cancelRecording(): void {
     console.log('cancelRecording: called', new Error().stack);
     this.recordingCancelled = true;
-    if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+    
+    if (this.useAudioWorklet && this.audioWorkletNode) {
+      // AudioWorklet: set isRecording parameter to 0
+      const audioContext = this.config.audioContextRef?.current;
+      if (audioContext) {
+        this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(0, audioContext.currentTime);
+      }
+      this.audioWorkletData = []; // Discard recorded data
+    } else if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
       console.log('cancelRecording: stopping recorder');
       this.continuousRecorder.stop();
     }
@@ -399,10 +580,23 @@ export class RecordingEngine {
   }
 
   cleanup(): void {
-    if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
-      this.continuousRecorder.stop();
+    if (this.useAudioWorklet) {
+      // Cleanup AudioWorklet resources
+      if (this.audioWorkletNode) {
+        this.audioWorkletNode.port.close();
+        this.audioWorkletNode.disconnect();
+        this.audioWorkletNode = null;
+      }
+      if (this.mediaStreamSource) {
+        this.mediaStreamSource.disconnect();
+        this.mediaStreamSource = null;
+      }
+    } else {
+      if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+        this.continuousRecorder.stop();
+      }
+      this.continuousRecorder = null;
     }
-    this.continuousRecorder = null;
 
     if (this.continuousMicStream) {
       this.continuousMicStream.getTracks().forEach(t => t.stop());
@@ -412,6 +606,7 @@ export class RecordingEngine {
     // AudioContext is managed by useAudioEngine, not here
 
     this.audioChunks = [];
+    this.audioWorkletData = [];
     this.activeTrackId = null;
   }
 }

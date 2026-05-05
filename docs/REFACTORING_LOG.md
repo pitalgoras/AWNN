@@ -150,6 +150,78 @@ if (sessionId !== this.recordingSessionId) {
 
 ---
 
+## The 4 Timing Evils (Critical Understanding)
+
+When recording audio in the browser, there are **4 separate timing problems** that each need their own solution:
+
+### 1. Input Latency (Mic → System)
+- **Problem**: Sound hitting mic → system receiving it (hardware/firmware delay)
+- **Solution**: `globalLatencyMs` compensation in `startPosition` calculation
+- **Value**: Typically 100-200ms depending on hardware
+
+### 2. Output Latency (System → Speaker)
+- **Problem**: System playing sound → user hearing it (DAC/amp/speaker delay)
+- **Solution**: `outputLatency` used in visual sync (`currentTime - outputLatency`)
+- **Value**: Typically 10-50ms
+
+### 3. Recording/Playback Jitter (Timing Instability)
+- **Problem**: WebAudio API timing isn't perfectly stable - CPU spikes, main thread blocking cause timing to drift
+- **Solution**: **AudioWorklet recording** (shares AudioContext's clock with playback)
+- **Benefit**: Symmetric jitter - if playback drifts, recording drifts equally → stays in sync
+- **Implementation**: `public/worklets/recorder.worklet.js` + `RecordingEngine.ts` AudioWorklet support
+
+### 4. UI Delays (Graphics + Data Capture)
+- **Problem**: Browser UI rendering, React re-renders, main thread blocking affect timing
+- **Solution**: Separate issue, affects UI feedback not audio sync
+- **Mitigation**: Performance optimizations, debouncing, throttling
+
+**Key Insight**: AudioWorklet solves #3 by sharing the same clock (and jitter) between playback and recording.
+
+---
+
+## AudioWorklet Recording (Shared Clock)
+
+### Why AudioWorklet?
+- **MediaRecorder**: Uses its own clock, NOT synchronized with AudioContext
+- **AudioWorklet**: Runs on audio render thread, uses **same `currentTime`** as playback
+
+From MDN: *"Returns a double that represents the ever-increasing context time of the audio block being processed. It is equal to the currentTime property of the BaseAudioContext the worklet belongs to."*
+
+### Implementation Files
+- **Processor**: `public/worklets/recorder.worklet.js`
+- **Engine Support**: `src/audio/recording/RecordingEngine.ts` (AudioWorklet mode)
+- **Fallback**: MediaRecorder if AudioWorklet not supported
+
+### How It Works
+```
+getUserMedia() → mic MediaStream
+    ↓
+audioContext.createMediaStreamSource(micStream) → connects mic INTO AudioContext
+    ↓
+AudioWorkletNode with 'recorder-worklet' processor
+    ↓
+process(inputs, outputs) receives samples + has currentTime (AudioContext's clock)
+    ↓
+this.port.postMessage() sends samples to main thread
+    ↓
+handleAudioWorkletStop() processes data (same clock as playback)
+```
+
+### Benefits
+1. **Shared jitter**: Playback and recording drift together → stay in sync
+2. **Sample-accurate timing**: `currentFrame / sampleRate` = exact AudioContext time
+3. **No separate clock compensation needed** for jitter (still need #1 and #2)
+
+### Still Needed: Latency Compensation (#1 and #2)
+Even with AudioWorklet, we still apply:
+```typescript
+const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
+const latencySec = latencyMs / 1000;
+startPos = this.recordingStartTransportTime - latencySec;
+```
+
+---
+
 ## Postponed Changes
 
 ### 1. Rename Metronome Track ID from 'metronome' to '0'
