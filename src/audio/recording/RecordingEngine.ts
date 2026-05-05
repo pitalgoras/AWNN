@@ -136,10 +136,10 @@ export class RecordingEngine {
       // Create MediaStreamAudioSourceNode to connect mic to AudioContext
       this.mediaStreamSource = audioContext.createMediaStreamSource(this.continuousMicStream!);
 
-      // Create AudioWorkletNode
+      // Create AudioWorkletNode with 1 output (needed to keep it active)
       this.audioWorkletNode = new AudioWorkletNode(audioContext, 'recorder-worklet', {
         numberOfInputs: 1,
-        numberOfOutputs: 0, // No output needed for recording
+        numberOfOutputs: 1, // Must have output to stay active in render graph
         channelCount: 1,
         processorOptions: {
           sampleRate: audioContext.sampleRate,
@@ -158,12 +158,20 @@ export class RecordingEngine {
         } else if (data.type === 'RECORDING_STOPPED') {
           console.log('AudioWorklet: Recording stopped at', data.stopTime);
           this.handleAudioWorkletStop();
+        } else if (data.type === 'DEBUG') {
+          console.log('AudioWorklet DEBUG:', data);
         }
       };
 
       // Connect mic source to AudioWorklet
       this.mediaStreamSource.connect(this.audioWorkletNode);
-      // AudioWorkletNode has no output, so don't connect to destination
+      
+      // Connect to destination through silent gain node to keep worklet active
+      // Without this, the worklet might not get process() calls
+      const silentGain = audioContext.createGain();
+      silentGain.gain.value = 0; // Silent
+      this.audioWorkletNode.connect(silentGain);
+      silentGain.connect(audioContext.destination);
 
       console.log('AudioWorklet recording initialized');
     } catch (err) {
@@ -457,15 +465,11 @@ export class RecordingEngine {
       }
       
       if (this.useAudioWorklet) {
-        // AudioWorklet: set isRecording parameter to 1 at the right time
+        // AudioWorklet: use message passing (more reliable than parameter changes)
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
-          const audioContext = this.config.audioContextRef?.current;
-          if (audioContext) {
-            const startTime = audioContext.currentTime + 0.15;
-            this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(1, startTime);
-            console.log('AudioWorklet: set isRecording=1 at', startTime);
-          }
+          this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
+          console.log('AudioWorklet: posted START_RECORDING message');
         }
       } else {
         // MediaRecorder: stop old recorder to recycle buffer
@@ -543,13 +547,9 @@ export class RecordingEngine {
     console.log('stopRecording: called', new Error().stack);
     
     if (this.useAudioWorklet && this.audioWorkletNode) {
-      // AudioWorklet: set isRecording parameter to 0
-      const audioContext = this.config.audioContextRef?.current;
-      if (audioContext) {
-        const stopTime = audioContext.currentTime + 0.05;
-        this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(0, stopTime);
-        console.log('AudioWorklet: set isRecording=0 at', stopTime);
-      }
+      // AudioWorklet: send STOP_RECORDING message (more reliable than parameter)
+      console.log('AudioWorklet: posting STOP_RECORDING message');
+      this.audioWorkletNode.port.postMessage({ type: 'STOP_RECORDING' });
     } else {
       // MediaRecorder: stop the recorder
       console.log('stopRecording: recorder state =', this.continuousRecorder?.state);

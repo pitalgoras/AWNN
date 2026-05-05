@@ -19,47 +19,124 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._audioData = []; // Array of Float32Array per channel
     this._recordingStartTime = 0;
     this._sampleRate = sampleRate;
+    this._processCount = 0;
+    this._shouldStop = false;
+    this._shouldStart = false;
     
     this.port.onmessage = (event) => {
-      if (event.data.type === 'SET_SAMPLE_RATE') {
-        // Sample rate is already available as `sampleRate` global
+      if (event.data.type === 'STOP_RECORDING') {
+        // Set flag, will be handled in next process() call
+        this._shouldStop = true;
+      } else if (event.data.type === 'START_RECORDING') {
+        // Set flag, will be handled in next process() call
+        this._shouldStart = true;
       }
     };
   }
 
   process(inputs, outputs, parameters) {
-    const input = inputs[0]; // Mono or stereo input
-    if (!input || input.length === 0) {
+    this._processCount++;
+    
+    // Handle stop/start flags from messages (more reliable than parameters)
+    if (this._shouldStop) {
+      this._shouldStop = false;
+      if (this._isRecording) {
+        this._isRecording = false;
+        this._flush();
+        this.port.postMessage({
+          type: 'RECORDING_STOPPED',
+          stopTime: currentFrame / sampleRate,
+          currentTime: currentTime,
+        });
+      }
+    }
+    
+    if (this._shouldStart) {
+      this._shouldStart = false;
+      if (!this._isRecording) {
+        this._isRecording = true;
+        this._audioData = [];
+        this._recordingStartTime = currentFrame / sampleRate;
+        this.port.postMessage({
+          type: 'RECORDING_STARTED',
+          startTime: this._recordingStartTime,
+          sampleRate: this._sampleRate,
+          currentTime: currentTime,
+        });
+      }
+    }
+    
+    // Debug: log every 1000 process calls
+    if (this._processCount % 1000 === 0) {
+      const inputLen = (inputs && inputs[0] && inputs[0][0]) ? inputs[0][0].length : 0;
+      this.port.postMessage({
+        type: 'DEBUG',
+        processCount: this._processCount,
+        isRecording: this._isRecording,
+        inputLength: inputLen,
+      });
+    }
+
+    // Defensive check: ensure inputs exist and have channels
+    if (!inputs || inputs.length === 0) {
       return true;
     }
 
+    const input = inputs[0]; // First input (MediaStreamSource)
+    if (!input || input.length === 0) {
+      return true; // No channels available yet
+    }
+
+    // Backup: also check parameter (in case message was missed)
     const shouldRecord = parameters.isRecording[0] >= 0.5;
-    
-    if (shouldRecord && !this._isRecording) {
-      // Start recording
-      this._isRecording = true;
-      this._audioData = [];
-      this._recordingStartTime = currentFrame / sampleRate; // AudioContext time
+    if (shouldRecord !== this._isRecording) {
       this.port.postMessage({
-        type: 'RECORDING_STARTED',
-        startTime: this._recordingStartTime,
-        sampleRate: this._sampleRate,
-        currentTime: currentTime, // AudioContext.currentTime
+        type: 'DEBUG',
+        msg: 'Parameter change detected (backup check)',
+        shouldRecord,
+        isRecording: this._isRecording,
       });
-    } else if (!shouldRecord && this._isRecording) {
-      // Stop recording - flush data
-      this._isRecording = false;
-      this._flush();
-      this.port.postMessage({
-        type: 'RECORDING_STOPPED',
-        stopTime: currentFrame / sampleRate,
-        currentTime: currentTime,
+    }
+    
+    if (this._isRecording && input[0]) {
+      // Store a copy of the audio data
+      const channelData = input[0]; // First channel (mono)
+      const copy = new Float32Array(channelData.length);
+      copy.set(channelData);
+      this._audioData.push({
+        data: copy,
+        time: currentFrame / sampleRate, // AudioContext time for this buffer
       });
     }
 
+    return true;
+  }
+
+    // Defensive check: ensure inputs exist and have channels
+    if (!inputs || inputs.length === 0) {
+      return true;
+    }
+
+    const input = inputs[0]; // First input (MediaStreamSource)
+    if (!input || input.length === 0) {
+      return true; // No channels available yet
+    }
+
+    // Also check parameter (backup method)
+    const shouldRecord = parameters.isRecording[0] >= 0.5;
+    if (shouldRecord !== this._isRecording) {
+      this.port.postMessage({
+        type: 'DEBUG',
+        msg: 'Parameter change detected, using message instead',
+        shouldRecord,
+        isRecording: this._isRecording,
+      });
+      // Don't use parameter - we use messages for reliability
+    }
+    
     if (this._isRecording && input[0]) {
       // Store a copy of the audio data
-      const channelData = input[0]; // Mono for now
+      const channelData = input[0]; // First channel (mono)
       const copy = new Float32Array(channelData.length);
       copy.set(channelData);
       this._audioData.push({
