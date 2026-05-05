@@ -25,11 +25,17 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
-        // Set flag, will be handled in next process() call
         this._shouldStop = true;
+        this.port.postMessage({
+          type: 'DEBUG',
+          msg: 'STOP_RECORDING flag set',
+        });
       } else if (event.data.type === 'START_RECORDING') {
-        // Set flag, will be handled in next process() call
         this._shouldStart = true;
+        this.port.postMessage({
+          type: 'DEBUG',
+          msg: 'START_RECORDING flag set',
+        });
       }
     };
   }
@@ -68,7 +74,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     
     // Debug: log every 1000 process calls
     if (this._processCount % 1000 === 0) {
-      const inputLen = (inputs && inputs[0] && inputs[0][0]) ? inputs[0][0].length : 0;
+      const inputLen = (inputs && inputs[0] && inputs[0].length) ? inputs[0].length : 0;
       this.port.postMessage({
         type: 'DEBUG',
         processCount: this._processCount,
@@ -96,42 +102,6 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         shouldRecord,
         isRecording: this._isRecording,
       });
-    }
-    
-    if (this._isRecording && input[0]) {
-      // Store a copy of the audio data
-      const channelData = input[0]; // First channel (mono)
-      const copy = new Float32Array(channelData.length);
-      copy.set(channelData);
-      this._audioData.push({
-        data: copy,
-        time: currentFrame / sampleRate, // AudioContext time for this buffer
-      });
-    }
-
-    return true;
-  }
-
-    // Defensive check: ensure inputs exist and have channels
-    if (!inputs || inputs.length === 0) {
-      return true;
-    }
-
-    const input = inputs[0]; // First input (MediaStreamSource)
-    if (!input || input.length === 0) {
-      return true; // No channels available yet
-    }
-
-    // Also check parameter (backup method)
-    const shouldRecord = parameters.isRecording[0] >= 0.5;
-    if (shouldRecord !== this._isRecording) {
-      this.port.postMessage({
-        type: 'DEBUG',
-        msg: 'Parameter change detected, using message instead',
-        shouldRecord,
-        isRecording: this._isRecording,
-      });
-      // Don't use parameter - we use messages for reliability
     }
     
     if (this._isRecording && input[0]) {
