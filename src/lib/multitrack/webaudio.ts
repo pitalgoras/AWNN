@@ -16,8 +16,9 @@ class WebAudioPlayer {
   private buffer: AudioBuffer | null = null
   public paused = true
   public crossOrigin: string | null = null
+  private _offset = 0 // NEW: Offset to skip (for audioOffset feature)
 
-  constructor(audioContext: AudioContext | null = null) {
+  constructor(audioContext: AudioContext | null = null, options?: { offset?: number }) {
     if (audioContext) {
       console.log('WebAudioPlayer constructor: using provided audioContext', audioContext.state);
     }
@@ -26,6 +27,12 @@ class WebAudioPlayer {
     
     this.gainNode = this.audioContext.createGain()
     this.gainNode.connect(this.audioContext.destination)
+    
+    // NEW: Store offset from options
+    if (options?.offset !== undefined) {
+      this._offset = options.offset;
+      console.log('WebAudioPlayer: offset set to', this._offset);
+    }
   }
 
   addEventListener(event: string, listener: () => void, options?: { once?: boolean }) {
@@ -137,7 +144,8 @@ class WebAudioPlayer {
     this.bufferNode.connect(this.gainNode)
 
     const duration = this.buffer?.duration || 0
-    const offset = Math.max(0, Math.min(this.playedDuration, duration - 0.001))
+    // NEW: Use this._offset to skip head + compensate latency
+    const offset = Math.max(0, Math.min(this.playedDuration + this._offset, duration - 0.001))
 
     try {
       if (this.buffer) {
@@ -153,7 +161,7 @@ class WebAudioPlayer {
     } catch (e) {
       console.error('WebAudioPlayer: Error starting bufferNode', e)
     }
-    
+
     this.playStartTime = startTime
     this.emitEvent('play')
   }

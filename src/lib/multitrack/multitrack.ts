@@ -11,7 +11,9 @@ export type TrackId = string | number
 type SingleTrackOptions = Omit<
   WaveSurferOptions,
   'container' | 'minPxPerSec' | 'duration' | 'cursorColor' | 'cursorWidth' | 'interact' | 'hideScrollbar'
->
+> & {
+  audioOffset?: number // NEW: Skip N seconds from buffer start during playback
+}
 
 import { perfLogger } from '../../utils/PerformanceLogger'
 
@@ -40,6 +42,7 @@ export type TrackOptions = {
     color?: string
   }
   options?: Omit<SingleTrackOptions, 'media'> & { media?: unknown }
+  audioOffset?: number // NEW: Skip N seconds from buffer start during playback
 }
 
 export type MultitrackOptions = {
@@ -203,6 +206,25 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
   private initWavesurfer(track: TrackOptions, index: number): WaveSurfer {
     perfLogger.log(15, track.id);
     const container = this.rendering.containers[index]
+
+    // NEW: Handle audioOffset by creating a new WebAudioPlayer with offset
+    if (track.audioOffset && this.audios[index] instanceof WebAudioPlayer) {
+      const originalPlayer = this.audios[index] as WebAudioPlayer;
+      // Create new player with offset, copy the buffer
+      const newPlayer = new WebAudioPlayer(this.audioContext, { offset: Math.abs(track.audioOffset) });
+      if (originalPlayer.getChannelData?.()) {
+        const channelData = originalPlayer.getChannelData();
+        if (channelData && channelData[0]) {
+          newPlayer.setBuffer(new AudioBuffer({ 
+            length: channelData[0].length, 
+            numberOfChannels: 1, 
+            sampleRate: this.audioContext.sampleRate 
+          }));
+          newPlayer.getChannelData()?.[0]?.set(channelData[0]);
+        }
+      }
+      this.audios[index] = newPlayer;
+    }
 
     // Create a wavesurfer instance
     const ws = WaveSurfer.create({
