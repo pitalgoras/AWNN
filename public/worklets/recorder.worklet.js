@@ -25,6 +25,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._processCount = 0;
     this._shouldStop = false;
     this._shouldStart = false;
+    this._targetStartReal = 0; // When to start recording (Real Time)
+    this._performanceStartFrame = 0; // When performance starts (for sync)
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
@@ -35,9 +37,14 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStart = true;
+        // Store target start time (1s before punchInUserTime)
+        if (event.data.punchInUserTime_Real !== undefined) {
+          this._targetStartReal = event.data.punchInUserTime_Real - 1.0;
+          this._performanceStartFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
+        }
         this.port.postMessage({
           type: 'DEBUG',
-          msg: 'START_RECORDING flag set',
+          msg: 'START_RECORDING flag set, targetStartReal: ' + this._targetStartReal,
         });
       }
     };
@@ -61,20 +68,17 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       }
     }
     
-    if (this._shouldStart) {
+    if (this._shouldStart && currentTime >= this._targetStartReal) {
       this._shouldStart = false;
       if (!this._isRecording) {
         this._isRecording = true;
         this._audioData = [];
-        
-        // Record from 1s before current frame (message received)
-        // Since message is sent at pre-roll start (1 bar before punch-in),
-        // this gives ~1s of head before punchInUserTime
-        this._recordingStartFrame = currentFrame - this._sampleRate;
+        this._recordingStartFrame = currentFrame; // Start recording NOW
         
         this.port.postMessage({
           type: 'RECORDING_STARTED',
           startTime: this._recordingStartFrame / sampleRate,
+          performanceStartFrame: this._performanceStartFrame,
           sampleRate: this._sampleRate,
           currentTime: currentTime,
         });
@@ -129,7 +133,9 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     });
 
     this._audioData = [];
-    return [combinedData, this._recordingStartFrame / sampleRate];
+    // Return performanceStartFrame (when punchInUserTime was reached)
+    // This is the sync point for playback
+    return [combinedData, this._performanceStartFrame / sampleRate];
   }
 }
 
