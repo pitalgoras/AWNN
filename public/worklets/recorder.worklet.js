@@ -66,8 +66,15 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       if (!this._isRecording) {
         this._isRecording = true;
         this._audioData = [];
-        // SIMPLIFIED: Record from 1s before punch-in (REAL TIME)
-        this._recordingStartFrame = currentFrame - this._sampleRate; // 1s before
+        
+        // Use recordingStartTime from main thread (if provided)
+        // This ensures exactly 1s of head before punchInUserTime
+        if (event.data.recordingStartTime !== undefined) {
+          this._recordingStartFrame = event.data.recordingStartTime * sampleRate;
+        } else {
+          // Fallback: 1s before current frame
+          this._recordingStartFrame = currentFrame - this._sampleRate;
+        }
         
         this.port.postMessage({
           type: 'RECORDING_STARTED',

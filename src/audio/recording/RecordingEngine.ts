@@ -262,8 +262,10 @@ export class RecordingEngine {
 
     // NO trimming - keep all audio data
     // NO latency subtraction - latency is RELATIVE between tracks
-    // startPos = punchInUserTime (where user pressed Record)
-    const startPos = this.punchInUserTime;
+    // TEMPORARY FIX: startPos = punchInUserTime - 1.0s (until WaveSurfer masking is implemented)
+    // WHY: Audio has ~1s head, but without masking, audio appears 1s late
+    // FUTURE: When masking is implemented, change back to startPos = punchInUserTime
+    const startPos = this.punchInUserTime - 1.0;
 
     // Decode audio without trimming
     let finalAudioBuffer: AudioBuffer | undefined;
@@ -340,9 +342,11 @@ export class RecordingEngine {
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
 
-    // FIXED: startPos = punchInUserTime (NO latency subtraction - latency is RELATIVE between tracks)
+    // TEMPORARY FIX: startPos = punchInUserTime - 1.0s (until WaveSurfer masking is implemented)
+    // WHY: Audio has ~1s head, but without masking, audio appears 1s late
+    // FUTURE: When masking is implemented, change back to startPos = punchInUserTime
     console.log('handleAudioWorkletStop: punchInUserTime =', this.punchInUserTime);
-    const startPos = this.punchInUserTime;
+    const startPos = this.punchInUserTime - 1.0;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -446,11 +450,19 @@ export class RecordingEngine {
       }
 
       if (this.useAudioWorklet) {
-        // AudioWorklet: just send START_RECORDING (no startFrame - calculated in worklet)
+        // AudioWorklet: send START_RECORDING with recordingStartTime
+        // Calculate desired start: 1s before punchInUserTime (in Real Time)
+        // This gives exactly 1s of head audio before punchInUserTime
+        const punchInUserTime_Real = punchInUserTime + secondsPerBar;
+        const recordingStartTime_Real = Math.max(0, punchInUserTime_Real - 1.0);
+        
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
-          this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
-          console.log('AudioWorklet: posted START_RECORDING message (worklet calculates startFrame)');
+          this.audioWorkletNode.port.postMessage({ 
+            type: 'START_RECORDING',
+            recordingStartTime: recordingStartTime_Real 
+          });
+          console.log('AudioWorklet: posted START_RECORDING with recordingStartTime', recordingStartTime_Real);
         }
       } else {
         // MediaRecorder: stop old recorder to recycle buffer

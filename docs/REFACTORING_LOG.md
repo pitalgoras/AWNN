@@ -412,6 +412,52 @@ After each fix, test:
 
 ---
 
+## Temporary Time Tweaks (May 2026)
+
+### Problem Identified
+Recording had **1 BAR** (~2.08s at 115 BPM) of pre-roll head instead of **1 SECOND**.
+
+### Root Cause
+- `startRecording()` sent `START_RECORDING` immediately (before pre-roll)
+- AudioWorklet recorded from `currentFrame - sampleRate` (1s before message)
+- If message received early in pre-roll → almost entire bar recorded
+
+### Fix Implemented (Commit: TBD)
+1. **Calculate `recordingStartTime_Real`** in `startRecording()`:
+   ```typescript
+   const punchInUserTime_Real = punchInUserTime + secondsPerBar;
+   const recordingStartTime_Real = Math.max(0, punchInUserTime_Real - 1.0);
+   ```
+   Send to AudioWorklet via `postMessage()`.
+
+2. **AudioWorklet uses `recordingStartTime`** from message:
+   ```javascript
+   if (event.data.recordingStartTime !== undefined) {
+     this._recordingStartFrame = event.data.recordingStartTime * sampleRate;
+   }
+   ```
+
+3. **Temporary UX fix**: `startPos = punchInUserTime - 1.0s`
+   - **Why**: Audio has ~1s head, but without WaveSurfer masking, audio appears 1s late
+   - **Where**: `handleAudioWorkletStop()` and `handleRecorderStop()`
+   - **Future**: When masking is implemented, change back to `startPos = punchInUserTime`
+
+### Comments Added to Code
+- `RecordingEngine.ts`: Comments explaining temporary fix with `// TEMPORARY FIX:` prefix
+- `recorder.worklet.js`: Comments explaining `recordingStartTime` usage
+
+### WaveSurfer Masking (Future Implementation)
+**Goal**: Hide first 1s of waveform visually while keeping audio in buffer.
+
+**Benefits**:
+1. Clip `startPosition = punchInUserTime` (correct timeline position)
+2. Audio plays in sync (1s head is "behind" clip start)
+3. Enable offset adjustment and fade-in features
+
+**Status**: Postponed until core recording is verified stable.
+
+---
+
 ## Git History (Relevant Commits)
 
 ```
