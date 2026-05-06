@@ -260,80 +260,35 @@ export class RecordingEngine {
     const audioUrl = URL.createObjectURL(audioBlob);
     console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
-    const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
-    const latencySec = latencyMs / 1000;
+    // NO trimming - keep all audio data
+    // NO latency subtraction - latency is RELATIVE between tracks
+    // startPos = punchInUserTime (where user pressed Record)
+    const startPos = this.punchInUserTime;
 
-    // Calculate how much to trim from the beginning of the continuous recording
-    const punchInOffsetSec = (this.punchInTime - this.recorderStartTime) / 1000;
-
-    let actualTrimSec = 0;
-    let startPos = 0;
-
-    if (this.expectedPreRoll > 0) {
-      // We had a count-in. We don't need the circular buffer from before the count-in.
-      const keepPreRollSec = 0.5;
-      actualTrimSec = punchInOffsetSec + Math.max(0, this.expectedPreRoll - keepPreRollSec);
-      startPos = this.recordingStartTransportTime + Math.max(0, this.expectedPreRoll - keepPreRollSec) - latencySec;
-    } else {
-      // No count-in (punch-in during playback). We use the circular buffer.
-      const keepPreRollSec = 1.5;
-      actualTrimSec = Math.max(0, punchInOffsetSec - keepPreRollSec);
-      startPos = this.recordingStartTransportTime - (punchInOffsetSec - actualTrimSec) - latencySec;
-    }
-
-    console.log('onstop', { 
-      expectedPreRoll: this.expectedPreRoll, 
-      latencyMs, 
-      latencySec, 
-      startPos, 
-      actualTrimSec, 
-      punchInOffsetSec 
-    });
-
+    // Decode audio without trimming
     let finalAudioBuffer: AudioBuffer | undefined;
     let finalAudioUrl = audioUrl;
     let finalAudioBlob = audioBlob;
     let peaks: number[][] | undefined;
 
-      try {
-        const arrayBuffer = await audioBlob.arrayBuffer();
-        // Match original pattern: use audioContextRef.current directly
-        const audioContext = this.config.audioContextRef?.current;
-        if (!audioContext) throw new Error('AudioContext not initialized');
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      const audioContext = this.config.audioContextRef?.current;
+      if (!audioContext) throw new Error('AudioContext not initialized');
       const originalBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
 
-      // Destructively trim the pre-roll
-      const sampleRate = originalBuffer.sampleRate;
-      const startSample = Math.floor(actualTrimSec * sampleRate);
-      const endSample = originalBuffer.length;
-      const newLength = Math.max(1, endSample - startSample);
+      finalAudioBuffer = originalBuffer;
 
-      const trimmedBuffer = audioContext.createBuffer(
-        originalBuffer.numberOfChannels,
-        newLength,
-        sampleRate
-      );
+      // Pre-calculate peaks
+      peaks = await calculatePeaksAsync(originalBuffer);
 
-      for (let channel = 0; channel < originalBuffer.numberOfChannels; channel++) {
-        const originalData = originalBuffer.getChannelData(channel);
-        const trimmedData = trimmedBuffer.getChannelData(channel);
-        for (let i = 0; i < newLength; i++) {
-          trimmedData[i] = originalData[startSample + i] || 0;
-        }
-      }
-
-      finalAudioBuffer = trimmedBuffer;
-
-      // Pre-calculate peaks to avoid main-thread spikes during WaveSurfer init
-      peaks = await calculatePeaksAsync(trimmedBuffer);
-
-      // Convert trimmed buffer back to WAV blob
-      const trimmedWav = audioBufferToWav(trimmedBuffer);
-      finalAudioBlob = new Blob([trimmedWav], { type: 'audio/wav' });
-      finalAudioUrl = URL.createObjectURL(finalAudioBlob);
+      // Convert to WAV
+      const wavBlob = new Blob([audioBufferToWav(originalBuffer)], { type: 'audio/wav' });
+      finalAudioBlob = wavBlob;
+      finalAudioUrl = URL.createObjectURL(wavBlob);
 
     } catch (e) {
-      console.error("Failed to decode and trim recorded audio", e);
+      console.error("Failed to decode recorded audio", e);
     }
 
     console.log('handleRecorderStop: creating phrase', { trackId, startPos, duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1 });
@@ -343,7 +298,7 @@ export class RecordingEngine {
       blob: finalAudioBlob,
       audioBuffer: finalAudioBuffer,
       peaks: peaks,
-      startPosition: startPos,
+      startPosition: startPos,  // NO latency subtraction - latency is RELATIVE
       duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1,
       createdAt: Date.now()
     });
@@ -376,37 +331,17 @@ export class RecordingEngine {
     }
 
     const sampleRate = audioContext.sampleRate;
-    let finalAudioData = audioData;
-
-    // Trim audio data to start from punchInUserTime
-    // The audio from AudioWorklet starts at recordingStartTransportTime (User Time)
-    // We want the clip to start at punchInUserTime (where user pressed Record)
-    const trimSec = this.punchInUserTime - this.recordingStartTransportTime;
     
-    if (trimSec > 0) {
-      // Audio starts before punchInUserTime, trim the beginning
-      const trimSamples = Math.floor(trimSec * sampleRate);
-      if (trimSamples > 0 && trimSamples < audioData.length) {
-        finalAudioData = audioData.slice(trimSamples);
-        console.log('handleAudioWorkletStop: trimmed', trimSec, 'seconds to start at punchInUserTime', {
-          originalLength: audioData.length,
-          trimmedLength: finalAudioData.length,
-          punchInUserTime: this.punchInUserTime,
-          recordingStartTransportTime: this.recordingStartTransportTime,
-        });
-      }
-    }
+    // NO trimming - keep all audio (including 1s pre-roll for offset/fade-in)
+    const finalAudioData = audioData;
 
     // Create AudioBuffer from Float32Array
     const totalLength = finalAudioData.length;
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
 
-    // Calculate startPos with latency compensation (timing evils #1 and #2)
-    // FIXED: Use punchInUserTime (where user pressed Record)
-    const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
-    const latencySec = latencyMs / 1000;
-    const startPos = this.punchInUserTime - latencySec;
+    // FIXED: startPos = punchInUserTime (NO latency subtraction - latency is RELATIVE between tracks)
+    const startPos = this.punchInUserTime;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -424,7 +359,6 @@ export class RecordingEngine {
       trackId,
       startPos,
       duration: audioBuffer.duration,
-      latencyMs,
       originalStartTransportTime: this.recordingStartTransportTime,
     });
 
