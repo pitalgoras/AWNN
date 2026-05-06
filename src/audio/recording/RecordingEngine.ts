@@ -341,6 +341,7 @@ export class RecordingEngine {
     audioBuffer.getChannelData(0).set(finalAudioData);
 
     // FIXED: startPos = punchInUserTime (NO latency subtraction - latency is RELATIVE between tracks)
+    console.log('handleAudioWorkletStop: punchInUserTime =', this.punchInUserTime);
     const startPos = this.punchInUserTime;
 
     // Pre-calculate peaks
@@ -382,8 +383,13 @@ export class RecordingEngine {
 
   async startRecording(trackId: string): Promise<void> {
     try {
-      console.log('startRecording: entry', { trackId, currentTime: this.config.currentTime });
+      // CRITICAL: Read currentTime directly from store to avoid stale config
+      const storeState = this.callbacks.getStoreState();
+      const currentTime = storeState?.currentTime || 0;
       
+      console.log('startRecording: entry', { trackId, currentTime: this.config.currentTime, storeTime: currentTime });
+      
+      // Use storeTime for punchIn calculation
       // Increment session ID to invalidate any pending handleRecorderStop calls
       this.recordingSessionId++;
       const currentSessionId = this.recordingSessionId;
@@ -405,21 +411,26 @@ export class RecordingEngine {
       
       const isCurrentlyPlaying = this.config.isPlaying;
       const preRollMode = this.config.preRollMode;
-
-      console.log('startRecording', { preRollMode, isCurrentlyPlaying, currentTime: this.config.currentTime });
-      perfLogger.log(21, preRollMode, this.config.currentTime);
-
+      
+      console.log('startRecording', { preRollMode, isCurrentlyPlaying, currentTime });
+      perfLogger.log(21, preRollMode, currentTime);
+      
       // If already playing, force no count-in regardless of preRollMode setting
       const effectivePreRollMode = isCurrentlyPlaying ? 'none' : preRollMode;
-
-      if (this.config.currentTime < 0) {
+      
+      if (currentTime < 0) {
         alert("Cannot start recording during the pre-roll (before Bar 1).");
         return;
       }
-
+      
       // Prevent punching in during the pre-roll (Bar 0)
-      const punchInUserTime = Math.max(0, this.config.currentTime);
+      // CRITICAL: Capture punchInUserTime BEFORE any async operations or seeks
+      const punchInUserTime = Math.max(0, currentTime);
       this.punchInUserTime = punchInUserTime; // Store for clip startPos
+      console.log('startRecording: punchInUserTime captured', { 
+        currentTime, 
+        punchInUserTime: this.punchInUserTime 
+      });
 
       const beatsPerSecond = this.config.bpm / 60;
       const secondsPerBeat = 1 / beatsPerSecond;
