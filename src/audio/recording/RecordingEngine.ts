@@ -450,19 +450,14 @@ export class RecordingEngine {
       }
 
       if (this.useAudioWorklet) {
-        // AudioWorklet: send START_RECORDING with recordingStartTime
-        // Calculate desired start: 1s before punchInUserTime (in Real Time)
-        // This gives exactly 1s of head audio before punchInUserTime
-        const punchInUserTime_Real = punchInUserTime + secondsPerBar;
-        const recordingStartTime_Real = Math.max(0, punchInUserTime_Real - 1.0);
-        
+        // AudioWorklet: just send START_RECORDING (no startTime)
+        // The worklet will record from currentFrame - sampleRate (1s before message)
+        // Since message is sent at pre-roll start (1 bar before punch-in),
+        // this naturally gives ~1s of head before punchInUserTime
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
-          this.audioWorkletNode.port.postMessage({ 
-            type: 'START_RECORDING',
-            recordingStartTime: recordingStartTime_Real 
-          });
-          console.log('AudioWorklet: posted START_RECORDING with recordingStartTime', recordingStartTime_Real);
+          this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
+          console.log('AudioWorklet: posted START_RECORDING message (worklet records from 1s before message)');
         }
       } else {
         // MediaRecorder: stop old recorder to recycle buffer

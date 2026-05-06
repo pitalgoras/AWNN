@@ -25,7 +25,6 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._processCount = 0;
     this._shouldStop = false;
     this._shouldStart = false;
-    this._recordingStartTime = 0; // Store recordingStartTime from main thread
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
@@ -36,10 +35,6 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStart = true;
-        // Store recordingStartTime for use in process()
-        if (event.data.recordingStartTime !== undefined) {
-          this._recordingStartTime = event.data.recordingStartTime;
-        }
         this.port.postMessage({
           type: 'DEBUG',
           msg: 'START_RECORDING flag set',
@@ -72,14 +67,10 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         this._isRecording = true;
         this._audioData = [];
         
-        // Use recordingStartTime from main thread (if provided)
-        // This ensures exactly 1s of head before punchInUserTime
-        if (this._recordingStartTime !== 0) {
-          this._recordingStartFrame = this._recordingStartTime * sampleRate;
-        } else {
-          // Fallback: 1s before current frame
-          this._recordingStartFrame = currentFrame - this._sampleRate;
-        }
+        // Record from 1s before current frame (message received)
+        // Since message is sent at pre-roll start (1 bar before punch-in),
+        // this gives ~1s of head before punchInUserTime
+        this._recordingStartFrame = currentFrame - this._sampleRate;
         
         this.port.postMessage({
           type: 'RECORDING_STARTED',
