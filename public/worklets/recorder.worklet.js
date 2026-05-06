@@ -17,15 +17,14 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this._isRecording = false;
-    this._audioData = []; // Array of {data, frame} for current recording
+    this._audioData = []; // Array of Float32Array for current recording
     this._rollingBuffer = []; // Circular buffer: {data, frame} - 2 seconds
     this._rollingBufferDuration = 2; // 2 seconds rolling buffer
-    this._recordingStartFrame = 0;
+    this._recordingStartFrame = 0; // REAL TIME frame when recording started
     this._sampleRate = sampleRate;
     this._processCount = 0;
     this._shouldStop = false;
     this._shouldStart = false;
-    this._startFrame = 0; // Frame to start recording from (for pre-roll)
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
@@ -36,13 +35,13 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStart = true;
-        this._startFrame = event.data.startFrame || 0; // Frame to start from (0 = now)
         this.port.postMessage({
           type: 'DEBUG',
           msg: 'START_RECORDING flag set',
-          startFrame: this._startFrame,
         });
       }
+    };
+  }
     };
   }
 
@@ -54,16 +53,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       this._shouldStop = false;
       if (this._isRecording) {
         this._isRecording = false;
-        const [audioData, startTime] = this._flush();
-        this.port.postMessage({
-          type: 'RECORDING_STOPPED',
-          stopTime: currentFrame / sampleRate,
-          currentTime: currentTime,
-          audioData: audioData,
-          sampleRate: this._sampleRate,
-          recordingStartTime: startTime,
-          length: audioData.length,
-        }, [audioData.buffer]);
+        this._flush();
       }
     }
     
@@ -72,16 +62,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       if (!this._isRecording) {
         this._isRecording = true;
         this._audioData = [];
-        this._recordingStartFrame = this._startFrame || currentFrame;
-        
-        // Retrieve audio from rolling buffer starting at _recordingStartFrame
-        if (this._startFrame && this._startFrame < currentFrame) {
-          // Pre-roll case: get audio from rolling buffer
-          const relevantEntries = this._rollingBuffer.filter(
-            entry => entry.frame >= this._startFrame && entry.frame <= currentFrame
-          );
-          this._audioData = [...relevantEntries];
-        }
+        // SIMPLIFIED: Record from 1s before punch-in (REAL TIME)
+        this._recordingStartFrame = currentFrame - this._sampleRate; // 1s before
         
         this.port.postMessage({
           type: 'RECORDING_STARTED',
@@ -115,19 +97,12 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       }
     }
     
-    // If recording, also store in _audioData (for live punch-in case)
+    // If recording, store in _audioData
     if (this._isRecording && inputs && inputs[0] && inputs[0][0]) {
       const channelData = inputs[0][0];
       const copy = new Float32Array(channelData.length);
       copy.set(channelData);
-      
-      // Only add if not already in _audioData (avoid duplicates from rolling buffer)
-      if (!this._startFrame || this._startFrame >= currentFrame) {
-        this._audioData.push({
-          data: copy,
-          frame: currentFrame,
-        });
-      }
+      this._audioData.push({ data: copy, frame: currentFrame });
     }
 
     return true;
@@ -136,7 +111,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   _flush() {
     if (this._audioData.length === 0) return [new Float32Array(0), 0];
 
-    // Combine all chunks into one Float32Array
+    // Combine all chunks into one Float32Array (NO filtering - keep all audio)
     const totalLength = this._audioData.reduce((sum, chunk) => sum + chunk.data.length, 0);
     const combinedData = new Float32Array(totalLength);
     let offset = 0;

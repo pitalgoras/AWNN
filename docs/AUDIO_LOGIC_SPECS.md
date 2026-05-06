@@ -19,12 +19,18 @@ To prevent accidental destructive edits during playback and mixing, the applicat
     *   **When stopped:** A 1-bar pre-roll is applied to recordings if the `preRollMode` is set to 'always' or 'recording'. The engine begins recording 1 bar earlier, and this pre-roll portion is "hard trimmed" upon stopping, ensuring the final clip starts exactly at the intended punch-in time. If `preRollMode` is 'none', recording starts immediately without a count-in.
     *   **When already playing:** If the user presses record while playback is already active, recording starts immediately at the current playhead position without any count-in, regardless of the `preRollMode` setting. This allows for seamless "punch-in" recording during playback without interrupting the flow.
 *   **~/ User Time vs. Real Time:** ~~The project "Real Time" starts at -1 bar (Bar 0), but "User Time" 0:0:0 corresponds to Bar 1 (labeled "1.1"). All phrase `startPosition` values are stored relative to User Time 0.~~
-*   **User Time vs. Real Time (Updated):**
+    *   **User Time vs. Real Time (Updated):**
     *   **Real Time:** Actual seconds from start of project. Bar 0 = 0s to `secondsPerBar`, Bar 1 = `secondsPerBar` to `2*secondsPerBar`.
     *   **User Time:** Shifted by `+secondsPerBar`. User Time 0 = Bar 1.1 = Real Time `secondsPerBar`.
-    *   **Bar 0 Purpose:** EXCLUSIVELY for pre-roll count-in. NOT a normal bar for recording. UI hides Bar 0 unless pre-roll is active.
+    *   **Bar 0 Purpose:** EXCLUSIVELY for pre-roll count-in. NOT a normal bar for recording.
     *   **Phrase Storage:** `startPosition` stored in User Time (so Bar 1.1 = position 0).
     *   **Timeline Rendering:** `TimelineGrid` hides Bar 0 during normal playback, reveals during pre-roll.
+    *   **Recording & Clip Placement:**
+        - **`punchInUserTime`** = User Time (where Record button was pressed).
+        - **Clip `startPosition`** = `punchInUserTime` (clip appears at punch-in position on timeline).
+        - **Audio Buffer** = Starts from `punchInUserTime - 1s` (Real Time frame), keeping 1s pre-roll audio.
+        - **NO Trimming:** Audio buffer keeps the 1s head (for future offset adjustment or fade-in).
+        - **WaveSurfer Masking:** First 1s of waveform is visually hidden (masked), but audio data is kept in buffer.
 *   **Tempo Control (BpmInput):**
     *   **Interaction:** Supports direct typing (3-digit), vertical scrubbing (drag-to-change), and arrow keys (Up/Down).
     *   **Responsiveness:** The UI prioritizes input responsiveness. Metronome regeneration is debounced (500ms) to prevent audio processing from interrupting the user's input flow.

@@ -34,6 +34,74 @@ Shared latency calibration logic (extracted from component).
 
 ---
 
+## AudioWorklet Recording (Shared Clock) - Current Implementation
+
+### Why AudioWorklet?
+- **MediaRecorder**: Uses its own clock, NOT synchronized with AudioContext
+- **AudioWorklet**: Runs on audio render thread, uses **same `currentTime`** as playback
+- From MDN: *"Returns a double that represents the ever-increasing context time of the audio block being processed. It is equal to the currentTime property of the BaseAudioContext the worklet belongs to."*
+
+### Implementation Files
+- **Processor**: `public/worklets/recorder.worklet.js`
+- **Engine Support**: `src/audio/recording/RecordingEngine.ts` (AudioWorklet mode)
+- **Fallback**: MediaRecorder if AudioWorklet not supported
+
+### How It Works (Simplified, No Trimming)
+```
+Audio Buffer (complete):
+[  1s pre-roll audio   ][  actual recording...        ]
+^                        ^ 
+|                        |
+punchInUserTime - 1s      punchInUserTime (User Time)
+
+Visual Clip (what user sees):
+                     [  actual recording...        ]
+                     ^
+                     |
+              punchInUserTime (startPosition)
+
+MASKED/HIDDEN: [  1s pre-roll] (kept in buffer for offset/fade-in)
+```
+
+1. **AudioWorklet** runs continuously during playback (2-second rolling buffer)
+2. **When user presses Record**: Audio buffer already has audio from 1s before punch-in
+3. **NO trimming** - Keep the 1s head in audio buffer
+4. **Clip `startPosition = punchInUserTime`** - Timeline position (User Time)
+5. **WaveSurfer masking** - Hide the first 1s of waveform visually
+6. **Purpose** - Allow future offset adjustment or fade-in using masked audio
+
+### Benefits
+1. **Shared jitter**: Playback and recording drift together → stay in sync
+2. **Sample-accurate timing**: `currentFrame / sampleRate` = exact AudioContext time
+3. **No separate clock compensation needed** for jitter (still need #1 and #2)
+4. **Startup delay eliminated** - Buffer has audio from before punch-in (timing evil #4)
+
+### Still Needed: Latency Compensation (#1 and #2)
+Even with AudioWorklet, we still apply:
+```typescript
+const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
+const latencySec = latencyMs / 1000;
+// NOTE: latency compensation is RELATIVE between tracks, NOT absolute timeline position
+// startPos = punchInUserTime (NOT subtracting latencySec)
+```
+
+### User Time vs Real Time (CRITICAL DISTINCTION)
+| Concept | User Time (Timeline) | Real Time (AudioContext) |
+|---------|----------------------|--------------------------|
+| **Definition** | Timeline position (Bar 1 = 0) | `audioContext.currentTime` (since creation) |
+| **Example** | `punchInUserTime = 0` (Bar 1) | `audioContext.currentTime = 6.93s` |
+| **Bar 0** | Negative (e.g., -2s) | N/A |
+| **Used For** | `startPosition`, timeline display | AudioWorklet frames, WebAudio API |
+| **Variable** | `punchInUserTime` | `currentFrame`, `startFrame` |
+
+**Key Rules**:
+- `punchInUserTime` is **User Time** → used for `startPosition` (where clip appears on timeline)
+- `startFrame` sent to AudioWorklet is **Real Time** (frame number = `currentFrame` or calculated from `audioContext.currentTime`)
+- Rolling buffer stores **Real Time** frames (`currentFrame`)
+- When retrieving from buffer: `startFrame` must be a valid **Real Time** frame (≥ 0 and ≤ `currentFrame`)
+
+---
+
 ## Problems Encountered
 
 ### Problem 1: AudioContext Synchronization Bug
@@ -106,10 +174,11 @@ Shared latency calibration logic (extracted from component).
 2. **Circular buffer for pre-roll**: Last N seconds of audio available when punch-in happens
 
 **Flow**:
-1. `initStream()` creates MediaStream + starts `continuousRecorder` with `timeslice=100`
-2. Audio chunks accumulate in `audioChunks[]` (circular buffer)
-3. `startRecording()` stops recorder (recycles buffer from beginning) + restarts it
-4. When user presses Stop, `handleRecorderStop` trims pre-roll from `audioChunks`
+1. AudioWorklet runs continuously during playback (2-second rolling buffer)
+2. Records from `currentFrame - sampleRate` (1s before punch-in)
+3. NO trimming - keep 1s pre-roll in buffer
+4. Clip `startPosition = punchInUserTime` (User Time)
+5. WaveSurfer masks first 1s visually (hidden, but audio kept for offset/fade-in)
 
 ### Bar 0 = Pre-Roll Only
 **Definition**: Bar 0 is "Real Time" 0 to `secondsPerBar`, NOT visible in normal UI.
@@ -242,38 +311,36 @@ startPos = this.recordingStartTransportTime - latencySec;
 
 ---
 
-### 3. Fix WaveSurfer Double-Destroy Bug
-**Location**: `src/hooks/useAudioEngine.ts` (lines ~161-168, ~599-625), `src/lib/multitrack/multitrack.ts`
+### 3. Add `~/` to Specs/Features That Were Replaced
+**Current**: `docs/AUDIO_LOGIC_SPECS.md` has some outdated info.
 
-**Problem**: Two `useEffect` cleanups both call `multitrack.destroy()` when `trackStructureHash` changes. The `Multitrack.destroy()` method has no guard against being called twice.
+**Needed**: Mark old sections with `~/` (strikethrough) when new understanding replaces them.
 
-**Fix**: Add a `_destroyed` flag to `Multitrack` class:
-```typescript
-private _destroyed = false;
-
-public destroy() {
-  if (this._destroyed) return;
-  this._destroyed = true;
-  // ... rest of destroy logic
-}
+**Example**:
+```
+~/ Bar 0 is a count-in bar visible in the timeline.
+Bar 0 is pre-roll ONLY, not visible in normal UI.
 ```
 
-**Status**: Postponed - not blocking recording functionality.
+**Status**: Postponed.
 
 ---
 
-### 4. Optimize Multitrack Re-initialization After Recording
-**Location**: `src/hooks/useAudioEngine.ts` (main useEffect depends on `trackStructureHash`)
+### 4. Fix WaveSurfer Masking for Pre-roll Audio
+**Location**: `src/lib/multitrack/multitrack.ts`, WaveSurfer region options
 
-**Problem**: When a new phrase is added (post-recording), `trackStructureHash` changes, triggering full destruction/recreation of ALL WaveSurfer instances. This causes:
-- Brief UI freeze (recreating many WaveSurfer instances)
-- Playback interruption (if playing during punch-in)
+**Requirement**: 
+- Clip `startPosition = punchInUserTime` (User Time, where user pressed Record)
+- Audio buffer has 1s pre-roll BEFORE `punchInUserTime` (kept in buffer, NOT trimmed)
+- **WaveSurfer Masking**: Hide the first 1s of waveform visually (but keep audio in buffer)
+- **Purpose**: Allow future offset adjustment or fade-in using masked audio
 
-**Fix**: Use the existing `multitrack.addTrack()` method (in `multitrack.ts` lines 639-671) for single-phrase additions instead of full re-init.
+**Implementation Research Needed**:
+- Does WaveSurfer support "offset" parameter (region starts at X, audio starts earlier)?
+- Can we use CSS `clip-path` or `overflow:hidden` for masking?
+- Or do we need custom rendering with `minPxPerSec`?
 
-**Note**: `addTrack()` is already implemented but not used in the current flow.
-
-**Status**: Postponed - not blocking recording functionality.
+**Status**: In Progress - see `.sisyphus/plans/simplified-recording-masking.md`
 
 ---
 
@@ -290,6 +357,30 @@ public destroy() {
 3. For "New Take": Start recording at same `startPosition` as existing phrase, replace on stop
 
 **Status**: Postponed - nice-to-have after core recording works.
+
+---
+
+### 6. Fix WaveSurfer Double-Destroy Bug
+**Location**: `src/hooks/useAudioEngine.ts` (lines ~161-168, ~599-625)
+
+**Problem**: Two `useEffect` cleanups both call `multitrack.destroy()` without guard.
+
+**Fix**: Add a `_destroyed` flag to `Multitrack` class to skip duplicate destroy calls.
+
+**Status**: Postponed - not blocking recording functionality.
+
+---
+
+### 7. Optimize Multitrack Re-initialization After Recording
+**Location**: `src/hooks/useAudioEngine.ts` (main useEffect depends on `trackStructureHash`)
+
+**Problem**: When a new phrase is added (post-recording), `trackStructureHash` changes, triggering full destruction/recreation of ALL WaveSurfer instances.
+
+**Fix**: Use the existing `multitrack.addTrack()` method (in `multitrack.ts` lines 639-671) for single-phrase additions instead of full re-init.
+
+**Note**: `addTrack()` is already implemented but not used in the current flow.
+
+**Status**: Postponed - not blocking recording functionality.
 
 ---
 
