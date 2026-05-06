@@ -394,10 +394,11 @@ export default function AudioEditorView() {
   };
 
   const handleStop = () => {
-    setIsPlaying(false);
     if (isRecording) {
       stopRecording();
+      return;
     }
+    setIsPlaying(false);
     seekTo(0);
   };
 
@@ -541,7 +542,7 @@ export default function AudioEditorView() {
                         onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
                         onPointerLeave={(e) => { e.stopPropagation(); if (muteLongPressTimer.current[track.id]) { clearTimeout(muteLongPressTimer.current[track.id]!); muteLongPressTimer.current[track.id] = null; } }}
                         className={cn(
-                          "w-7 h-7 rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
+                          "w-8 h-8 rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
                           track.isSolo 
                             ? "bg-yellow-500 text-yellow-950 shadow-[0_0_10px_rgba(234,179,8,0.4)]" 
                             : track.isMuted 
@@ -556,13 +557,13 @@ export default function AudioEditorView() {
                         <button 
                           onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
                           className={cn(
-                            "w-7 h-7 rounded flex items-center justify-center transition-colors",
+                            "w-8 h-8 rounded flex items-center justify-center transition-colors",
                             isRecording && selectedTrackId === track.id
                               ? "bg-red-500 text-white animate-pulse" 
                               : "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
                           )}
                         >
-                          <Mic className="w-3.5 h-3.5" />
+                          <Mic className="w-4 h-4" />
                         </button>
                       )}
                     </div>

@@ -15,7 +15,15 @@ export const LogIndex = {
   14: "Multitrack initAllAudios",
   15: "Multitrack initWavesurfer for Track {0}",
   16: "Multitrack addTrack {0}",
-  17: "Idle"
+  17: "Idle",
+  18: "Recording: startRecording entry, trackId={0}, sessionId={1}",
+  19: "Recording: activeTrackId set to {0}, sessionId={1}",
+  20: "Recording: initStream complete, sessionId={0}",
+  21: "Recording: preRollMode={0}, currentTime={1}",
+  22: "Recording: handleRecorderStop start, sessionId={0}, activeTrackId={1}",
+  23: "Recording: handleRecorderStop stale session, sessionId={0}, currentSessionId={1}",
+  24: "Recording: handleRecorderStop creating phrase, trackId={0}, startPos={1}",
+  25: "Recording: handleRecorderStop complete, sessionId={0}",
 };
 
 type LogEntry = [number, number, string | number | undefined, string | number | undefined];

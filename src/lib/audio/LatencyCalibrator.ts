@@ -135,7 +135,7 @@ export class LatencyCalibrator {
     source.connect(processor);
     processor.connect(ctx.destination);
 
-    let beepTime = 0;
+    const beepTime = 0;
     let isWaitingForBeep = false;
 
     processor.onaudioprocess = (e) => {

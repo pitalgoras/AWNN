@@ -132,72 +132,72 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                 {useSingleRow ? (
                   /* Same row as label button */
                   <div className="flex gap-1 flex-1">
-                    <button 
-                      onPointerDown={(e) => handleMutePointerDown(e, track.id)}
-                      onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
-                      className={cn(
-                        "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none flex-1",
-                        getToolbarBtnClass(true),
-                        track.isSolo 
-                          ? "bg-yellow-500 text-yellow-950 shadow-[0_0_10px_rgba(234,179,8,0.4)]" 
-                          : track.isMuted 
-                            ? "bg-red-500/20 text-red-400" 
-                            : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                      )}
-                      title="Tap to Mute, Hold to Solo"
-                    >
-                      {track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M')}
-                    </button>
-                    {!isMetronome && (
-                      <button 
-                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                     <button 
+                        onPointerDown={(e) => handleMutePointerDown(e, track.id)}
+                        onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
                         className={cn(
-                          "rounded flex items-center justify-center transition-colors flex-1",
+                          "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none flex-1",
                           getToolbarBtnClass(true),
-                          isRecording && selectedTrackId === track.id
-                            ? "bg-red-500 text-white animate-pulse" 
-                            : "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
+                          track.isSolo 
+                            ? "bg-yellow-500 text-yellow-950 shadow-[0_0_10px_rgba(234,179,8,0.4)]" 
+                            : track.isMuted 
+                              ? "bg-red-500/20 text-red-400" 
+                              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
                         )}
+                        title="Tap to Mute, Hold to Solo"
                       >
-                        <Mic className="w-3.5 h-3.5" />
+                        {track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M')}
                       </button>
-                    )}
+                      {!isMetronome && (
+                        <button 
+                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                          className={cn(
+                            "rounded flex items-center justify-center transition-colors flex-1",
+                            getToolbarBtnClass(true),
+                            isRecording && selectedTrackId === track.id
+                              ? "bg-red-500 text-white animate-pulse" 
+                              : "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
+                          )}
+                        >
+                          <Mic className="w-4 h-4" />
+                        </button>
+                      )}
                   </div>
                 ) : (
                   /* Two rows: label button (row 1), mute/record (row 2) */
                   <div className="flex gap-1 p-1">
-                    <button 
-                      onPointerDown={(e) => handleMutePointerDown(e, track.id)}
-                      onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
-                      className={cn(
-                        "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
-                        isCompact ? "w-8 h-8" : "flex-1",
-                        getToolbarBtnClass(true),
-                        track.isSolo 
-                          ? "bg-yellow-500 text-yellow-950 shadow-[0_0_10px_rgba(234,179,8,0.4)]" 
-                          : track.isMuted 
-                            ? "bg-red-500/20 text-red-400" 
-                            : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                      )}
-                      title="Tap to Mute, Hold to Solo"
-                    >
-                      {isMetronome ? <Activity className="w-3.5 h-3.5" /> : (track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M'))}
-                    </button>
-                    {!isMetronome && (
-                      <button 
-                        onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                     <button 
+                        onPointerDown={(e) => handleMutePointerDown(e, track.id)}
+                        onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
                         className={cn(
-                          "rounded flex items-center justify-center transition-colors",
+                          "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
                           isCompact ? "w-8 h-8" : "flex-1",
                           getToolbarBtnClass(true),
-                          isRecording && selectedTrackId === track.id
-                            ? "bg-red-500 text-white animate-pulse" 
-                            : "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
+                          track.isSolo 
+                            ? "bg-yellow-500 text-yellow-950 shadow-[0_0_10px_rgba(234,179,8,0.4)]" 
+                            : track.isMuted 
+                              ? "bg-red-500/20 text-red-400" 
+                              : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
                         )}
+                        title="Tap to Mute, Hold to Solo"
                       >
-                        <Mic className="w-3.5 h-3.5" />
+                        {isMetronome ? <Activity className="w-4 h-4" /> : (track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M'))}
                       </button>
-                    )}
+                      {!isMetronome && (
+                        <button 
+                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                          className={cn(
+                            "rounded flex items-center justify-center transition-colors",
+                            isCompact ? "w-8 h-8" : "flex-1",
+                            getToolbarBtnClass(true),
+                            isRecording && selectedTrackId === track.id
+                              ? "bg-red-500 text-white animate-pulse" 
+                              : "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
+                          )}
+                        >
+                          <Mic className="w-4 h-4" />
+                        </button>
+                      )}
                   </div>
                 )}
               </div>

@@ -39,6 +39,7 @@ export class RecordingEngine {
   private activeTrackId: string | null = null;
   private recorderStartTime = 0;
   private punchInTime = 0;
+  private punchInUserTime = 0; // User Time where user pressed Record (for clip startPos)
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
@@ -47,7 +48,6 @@ export class RecordingEngine {
   private audioWorkletNode: AudioWorkletNode | null = null;
   private mediaStreamSource: MediaStreamAudioSourceNode | null = null;
   private useAudioWorklet = false;
-  private audioWorkletData: Float32Array[] = []; // Stores Float32Arrays with timestamps
   private audioWorkletStartTime = 0;
 
   constructor(config: RecordingConfig, callbacks: RecordingCallbacks) {
@@ -152,12 +152,10 @@ export class RecordingEngine {
         if (data.type === 'RECORDING_STARTED') {
           console.log('AudioWorklet: Recording started at', data.startTime, 'contextTime:', data.currentTime);
           this.audioWorkletStartTime = data.startTime;
-        } else if (data.type === 'AUDIO_DATA') {
-          // Store the Float32Array (transferred from worklet)
-          this.audioWorkletData.push(data.audioData);
         } else if (data.type === 'RECORDING_STOPPED') {
           console.log('AudioWorklet: Recording stopped at', data.stopTime);
-          this.handleAudioWorkletStop();
+          // Pass audio data directly (no race condition)
+          this.handleAudioWorkletStop(data.audioData, data.recordingStartTime);
         } else if (data.type === 'DEBUG') {
           console.log('AudioWorklet DEBUG:', data);
         }
@@ -189,7 +187,6 @@ export class RecordingEngine {
 
     if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
       console.log('startContinuousRecorder: stopping existing recorder');
-      // Don't try to prevent onstop - just stop it, session ID will handle invalidation
       this.continuousRecorder.stop();
     }
 
@@ -216,13 +213,8 @@ export class RecordingEngine {
       console.error('MediaRecorder ERROR:', event);
     };
 
-    // Capture sessionId AND activeTrackId OUTSIDE the arrow function
-    const sessionId = this.recordingSessionId;
-    const trackId = this.activeTrackId;  // Capture trackId too!
-    mediaRecorder.onstop = () => {
-      console.log('onstop handler: calling handleRecorderStop with sessionId=' + sessionId + ', trackId=' + trackId);
-      this.handleRecorderStop(sessionId, trackId);
-    };
+    // DON'T set onstop here - will be set in startRecording()
+    // This prevents stale sessionId capture during initStream()
 
     this.recorderStartTime = performance.now();
     console.log('startContinuousRecorder: starting recorder with timeslice=100');
@@ -365,8 +357,8 @@ export class RecordingEngine {
   }
 
   // Handle AudioWorklet recording stop (shared clock with playback)
-  private async handleAudioWorkletStop(): Promise<void> {
-    if (this.audioWorkletData.length === 0) {
+  private async handleAudioWorkletStop(audioData?: Float32Array, recordingStartTime?: number): Promise<void> {
+    if (!audioData || audioData.length === 0) {
       console.warn('handleAudioWorkletStop: no data received');
       return;
     }
@@ -377,32 +369,44 @@ export class RecordingEngine {
       return;
     }
 
-    // Combine all Float32Arrays into one
-    const totalLength = this.audioWorkletData.reduce((sum, arr) => sum + arr.length, 0);
-    const combinedData = new Float32Array(totalLength);
-    let offset = 0;
-    this.audioWorkletData.forEach(arr => {
-      combinedData.set(arr, offset);
-      offset += arr.length;
-    });
-    this.audioWorkletData = [];
-
     const audioContext = this.config.audioContextRef?.current;
     if (!audioContext) {
       console.error('handleAudioWorkletStop: AudioContext not available');
       return;
     }
 
-    // Create AudioBuffer from Float32Array
     const sampleRate = audioContext.sampleRate;
+    let finalAudioData = audioData;
+
+    // Trim audio data to start from punchInUserTime
+    // The audio from AudioWorklet starts at recordingStartTransportTime (User Time)
+    // We want the clip to start at punchInUserTime (where user pressed Record)
+    const trimSec = this.punchInUserTime - this.recordingStartTransportTime;
+    
+    if (trimSec > 0) {
+      // Audio starts before punchInUserTime, trim the beginning
+      const trimSamples = Math.floor(trimSec * sampleRate);
+      if (trimSamples > 0 && trimSamples < audioData.length) {
+        finalAudioData = audioData.slice(trimSamples);
+        console.log('handleAudioWorkletStop: trimmed', trimSec, 'seconds to start at punchInUserTime', {
+          originalLength: audioData.length,
+          trimmedLength: finalAudioData.length,
+          punchInUserTime: this.punchInUserTime,
+          recordingStartTransportTime: this.recordingStartTransportTime,
+        });
+      }
+    }
+
+    // Create AudioBuffer from Float32Array
+    const totalLength = finalAudioData.length;
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
-    audioBuffer.getChannelData(0).set(combinedData);
+    audioBuffer.getChannelData(0).set(finalAudioData);
 
     // Calculate startPos with latency compensation (timing evils #1 and #2)
+    // FIXED: Use punchInUserTime (where user pressed Record)
     const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
     const latencySec = latencyMs / 1000;
-
-    const startPos = this.recordingStartTransportTime - latencySec;
+    const startPos = this.punchInUserTime - latencySec;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -420,7 +424,8 @@ export class RecordingEngine {
       trackId,
       startPos,
       duration: audioBuffer.duration,
-      latencyMs
+      latencyMs,
+      originalStartTransportTime: this.recordingStartTransportTime,
     });
 
     perfLogger.log(24, trackId, startPos);
@@ -464,25 +469,6 @@ export class RecordingEngine {
         console.log('startRecording: initStream complete, continuous recorder running');
       }
       
-      if (this.useAudioWorklet) {
-        // AudioWorklet: use message passing (more reliable than parameter changes)
-        console.log('startRecording: using AudioWorklet (shared clock)');
-        if (this.audioWorkletNode) {
-          this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
-          console.log('AudioWorklet: posted START_RECORDING message');
-        }
-      } else {
-        // MediaRecorder: stop old recorder to recycle buffer
-        console.log('startRecording: stopping continuous recorder to recycle buffer');
-        if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
-          this.continuousRecorder.stop();  // This fires onstop → handleRecorderStop (will be stale due to sessionId check)
-        }
-        
-        // Immediately restart with fresh recorder for this recording session
-        console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
-        this.startContinuousRecorder();  // Creates new recorder with current sessionId
-      }
-
       const isCurrentlyPlaying = this.config.isPlaying;
       const preRollMode = this.config.preRollMode;
 
@@ -499,6 +485,7 @@ export class RecordingEngine {
 
       // Prevent punching in during the pre-roll (Bar 0)
       const punchInUserTime = Math.max(0, this.config.currentTime);
+      this.punchInUserTime = punchInUserTime; // Store for clip startPos
 
       const beatsPerSecond = this.config.bpm / 60;
       const secondsPerBeat = 1 / beatsPerSecond;
@@ -506,6 +493,57 @@ export class RecordingEngine {
 
       // Recording starts 1 bar before punch-in if count-in is enabled
       const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
+
+      // For "none" + not playing: prime the buffer (wait 1s for 2s rolling buffer to fill)
+      if (!isCurrentlyPlaying && effectivePreRollMode === 'none' && this.useAudioWorklet) {
+        console.log('startRecording: priming buffer for "none" + not playing (waiting 1s)');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+
+      if (this.useAudioWorklet) {
+        // AudioWorklet: use message passing (more reliable than parameter changes)
+        console.log('startRecording: using AudioWorklet (shared clock)');
+        if (this.audioWorkletNode) {
+          // Calculate startFrame for pre-roll (AudioContext frame when recording should start)
+          const audioContext = this.config.audioContextRef?.current;
+          if (audioContext && effectivePreRollMode !== 'none') {
+            // Pre-roll case: recording starts secondsPerBar before punchInUserTime
+            const startCtxTime = audioContext.currentTime - secondsPerBar;
+            const startFrame = Math.floor(startCtxTime * audioContext.sampleRate);
+            this.audioWorkletNode.port.postMessage({ 
+              type: 'START_RECORDING',
+              startFrame: startFrame 
+            });
+            console.log('AudioWorklet: posted START_RECORDING message with startFrame', startFrame);
+          } else {
+            // Live punch-in: start from current frame (no pre-roll)
+            this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
+            console.log('AudioWorklet: posted START_RECORDING message (live punch-in)');
+          }
+        }
+      } else {
+        // MediaRecorder: stop old recorder to recycle buffer
+        console.log('startRecording: stopping continuous recorder to recycle buffer');
+        if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
+          // Clear any old onstop handler to prevent stale calls
+          this.continuousRecorder.onstop = null;
+          this.continuousRecorder.stop();  // This fires onstop → but handler is null, so nothing happens
+        }
+        
+        // NOW set up the onstop handler for the NEW recorder with current sessionId
+        const sessionId = currentSessionId;  // Capture current sessionId
+        const trackId = this.activeTrackId;
+        if (this.continuousRecorder) {
+          this.continuousRecorder.onstop = () => {
+            console.log('onstop handler: calling handleRecorderStop with sessionId=' + sessionId + ', trackId=' + trackId);
+            this.handleRecorderStop(sessionId, trackId);
+          };
+        }
+         
+        // Immediately restart with fresh recorder for this recording session
+        console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
+        this.startContinuousRecorder();  // Creates new recorder (onstop set above will fire when this new one stops)
+      }
 
       // Seek to pre-roll start (allow negative user time for pre-roll)
       // Only seek if we are NOT already playing (to avoid interrupting playback)
@@ -566,12 +604,8 @@ export class RecordingEngine {
     this.recordingCancelled = true;
     
     if (this.useAudioWorklet && this.audioWorkletNode) {
-      // AudioWorklet: set isRecording parameter to 0
-      const audioContext = this.config.audioContextRef?.current;
-      if (audioContext) {
-        this.audioWorkletNode.parameters.get('isRecording').setValueAtTime(0, audioContext.currentTime);
-      }
-      this.audioWorkletData = []; // Discard recorded data
+      // AudioWorklet: send STOP_RECORDING message to discard data
+      this.audioWorkletNode.port.postMessage({ type: 'STOP_RECORDING' });
     } else if (this.continuousRecorder && this.continuousRecorder.state !== 'inactive') {
       console.log('cancelRecording: stopping recorder');
       this.continuousRecorder.stop();
@@ -606,7 +640,6 @@ export class RecordingEngine {
     // AudioContext is managed by useAudioEngine, not here
 
     this.audioChunks = [];
-    this.audioWorkletData = [];
     this.activeTrackId = null;
   }
 }

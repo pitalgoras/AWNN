@@ -1,10 +1,11 @@
-import React, { useState, useMemo, useRef, useEffect } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { useStore, VoicingSegment } from '../store/useStore';
 import { cn } from '../lib/utils';
 import { Palette, AlignLeft, Edit3, Anchor, Wand2, ArrowLeftRight, Mic, VolumeX, Volume2 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
 import { getContrastColor } from '../lib/utils';
 import { useToolbarContext } from '../hooks/useToolbarContext';
+import { useAudioEngine } from '../hooks/useAudioEngine';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 
 const STANDARD_VOICINGS = [
@@ -36,7 +37,10 @@ export const LyricsBuilder: React.FC = () => {
     isRecording,
     setIsRecording,
     setSelectedTrackId,
+  selectedTrackId,
   } = useStore();
+
+  const { startRecording, stopRecording } = useAudioEngine();
 
   const [isEditMode, setIsEditMode] = useState(false);
   const [isPainting, setIsPainting] = useState(false);
@@ -72,9 +76,14 @@ export const LyricsBuilder: React.FC = () => {
   
   const containerRef = useRef<HTMLDivElement>(null);
   
-  // Handle record button click - toggles global recording state
-  const handleRecord = (trackId: string) => {
-    setIsRecording(!isRecording);
+  // Handle record button click
+  const handleRecord = async (trackId: string) => {
+    if (isRecording) {
+      stopRecording();
+    } else {
+      setSelectedTrackId(trackId);
+      startRecording(trackId);
+    }
   };
   
   // Use a PIXELS_PER_SECOND constant, same as VerticalHeatmap
@@ -382,7 +391,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                             >
                               M
                             </button>
-                            {v.trackId !== '1' && !isRecording && useStore.getState().selectedTrackId !== track?.id && (
+                            {v.trackId !== '1' && !isRecording && (
                               <button 
                                 onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
                                 className={cn(
@@ -393,6 +402,19 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                                 title="Record"
                               >
                                 R
+                              </button>
+                            )}
+                            {v.trackId !== '1' && isRecording && selectedTrackId === track.id && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
+                                className={cn(
+                                  "rounded flex items-center justify-center transition-colors",
+                                  smallBtnClass,
+                                  "bg-red-500 text-white animate-pulse"
+                                )}
+                                title="Stop Recording"
+                              >
+                                ■
                               </button>
                             )}
                           </>
@@ -511,19 +533,32 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                           >
                             M
                           </button>
-                          {v.trackId !== '1' && !isRecording && useStore.getState().selectedTrackId !== track?.id && (
-                            <button 
-                              onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
-                              className={cn(
-                                "rounded flex items-center justify-center transition-colors",
-                                smallBtnClass,
-                                "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
-                              )}
-                              title="Record"
-                            >
-                              R
-                            </button>
-                          )}
+                            {v.trackId !== '1' && !isRecording && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
+                                className={cn(
+                                  "rounded flex items-center justify-center transition-colors",
+                                  smallBtnClass,
+                                  "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
+                                )}
+                                title="Record"
+                              >
+                                R
+                              </button>
+                            )}
+                            {v.trackId !== '1' && isRecording && selectedTrackId === track.id && (
+                              <button 
+                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
+                                className={cn(
+                                  "rounded flex items-center justify-center transition-colors",
+                                  smallBtnClass,
+                                  "bg-red-500 text-white animate-pulse"
+                                )}
+                                title="Stop Recording"
+                              >
+                                ■
+                              </button>
+                            )}
                         </div>
                       )}
                     </div>

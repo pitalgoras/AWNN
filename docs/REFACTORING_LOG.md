@@ -242,7 +242,58 @@ startPos = this.recordingStartTransportTime - latencySec;
 
 ---
 
-### 3. Add `~/` to Specs/Features That Were Replaced
+### 3. Fix WaveSurfer Double-Destroy Bug
+**Location**: `src/hooks/useAudioEngine.ts` (lines ~161-168, ~599-625), `src/lib/multitrack/multitrack.ts`
+
+**Problem**: Two `useEffect` cleanups both call `multitrack.destroy()` when `trackStructureHash` changes. The `Multitrack.destroy()` method has no guard against being called twice.
+
+**Fix**: Add a `_destroyed` flag to `Multitrack` class:
+```typescript
+private _destroyed = false;
+
+public destroy() {
+  if (this._destroyed) return;
+  this._destroyed = true;
+  // ... rest of destroy logic
+}
+```
+
+**Status**: Postponed - not blocking recording functionality.
+
+---
+
+### 4. Optimize Multitrack Re-initialization After Recording
+**Location**: `src/hooks/useAudioEngine.ts` (main useEffect depends on `trackStructureHash`)
+
+**Problem**: When a new phrase is added (post-recording), `trackStructureHash` changes, triggering full destruction/recreation of ALL WaveSurfer instances. This causes:
+- Brief UI freeze (recreating many WaveSurfer instances)
+- Playback interruption (if playing during punch-in)
+
+**Fix**: Use the existing `multitrack.addTrack()` method (in `multitrack.ts` lines 639-671) for single-phrase additions instead of full re-init.
+
+**Note**: `addTrack()` is already implemented but not used in the current flow.
+
+**Status**: Postponed - not blocking recording functionality.
+
+---
+
+### 5. Undo Recording / New Take Enhancement
+**Location**: UI + Store actions needed
+
+**Requirements**:
+- **Undo Recording**: Remove last recorded phrase from track (user wants to discard a bad take)
+- **New Take**: Re-record over existing phrase (replace audio at same position)
+
+**Implementation**:
+1. Add UI buttons: "Undo Last Recording" and "New Take" (context menu on phrase?)
+2. Add store actions: `removeLastPhrase(trackId)`, `replacePhrase(trackId, phraseId, newPhrase)`
+3. For "New Take": Start recording at same `startPosition` as existing phrase, replace on stop
+
+**Status**: Postponed - nice-to-have after core recording works.
+
+---
+
+### 6. Add `~/` to Specs/Features That Were Replaced
 **Current**: `docs/AUDIO_LOGIC_SPECS.md` has some outdated info.
 
 **Needed**: Mark old sections with `~/` (strikethrough) when new understanding replaces them.

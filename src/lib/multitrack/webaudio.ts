@@ -18,7 +18,9 @@ class WebAudioPlayer {
   public crossOrigin: string | null = null
 
   constructor(audioContext: AudioContext | null = null) {
-    console.log('WebAudioPlayer constructor: audioContext =', audioContext);
+    if (audioContext) {
+      console.log('WebAudioPlayer constructor: using provided audioContext', audioContext.state);
+    }
     this.audioContext = audioContext || new AudioContext();
     console.log('WebAudioPlayer constructor: this.audioContext =', this.audioContext);
     

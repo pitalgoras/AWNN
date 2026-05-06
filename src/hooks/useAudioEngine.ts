@@ -134,7 +134,7 @@ const {
       recordingEngineRef.current = new RecordingEngine(config, callbacks);
     }
 
-    // Update RecordingEngine config
+    // Update RecordingEngine config (excluding isPlaying - handled separately)
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
@@ -166,7 +166,14 @@ const {
         metronomeEngineRef.current.cleanup();
       }
     };
-  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, isPlaying, setIsPlaying, setIsRecording, preRollMode, currentTime]);
+  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, preRollMode]);
+
+  // Separate effect to update isPlaying without destroying audioWorkletNode
+  useEffect(() => {
+    if (recordingEngineRef.current) {
+      recordingEngineRef.current.updateConfig({ isPlaying });
+    }
+  }, [isPlaying]);
 
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());

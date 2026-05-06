@@ -2,6 +2,7 @@
  * AudioWorklet processor for recording microphone audio
  * Uses AudioContext's clock (currentTime) for sample-accurate timing
  * Share the same clock as playback - symmetric jitter for better sync
+ * Maintains a 2-second rolling buffer for pre-roll support
  */
 class RecorderWorkletProcessor extends AudioWorkletProcessor {
   static get parameterDescriptors() {
@@ -16,12 +17,15 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
     this._isRecording = false;
-    this._audioData = []; // Array of Float32Array per channel
-    this._recordingStartTime = 0;
+    this._audioData = []; // Array of {data, frame} for current recording
+    this._rollingBuffer = []; // Circular buffer: {data, frame} - 2 seconds
+    this._rollingBufferDuration = 2; // 2 seconds rolling buffer
+    this._recordingStartFrame = 0;
     this._sampleRate = sampleRate;
     this._processCount = 0;
     this._shouldStop = false;
     this._shouldStart = false;
+    this._startFrame = 0; // Frame to start recording from (for pre-roll)
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
@@ -32,9 +36,11 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStart = true;
+        this._startFrame = event.data.startFrame || 0; // Frame to start from (0 = now)
         this.port.postMessage({
           type: 'DEBUG',
           msg: 'START_RECORDING flag set',
+          startFrame: this._startFrame,
         });
       }
     };
@@ -43,17 +49,21 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   process(inputs, outputs, parameters) {
     this._processCount++;
     
-    // Handle stop/start flags from messages (more reliable than parameters)
+    // Handle stop/start flags from messages
     if (this._shouldStop) {
       this._shouldStop = false;
       if (this._isRecording) {
         this._isRecording = false;
-        this._flush();
+        const [audioData, startTime] = this._flush();
         this.port.postMessage({
           type: 'RECORDING_STOPPED',
           stopTime: currentFrame / sampleRate,
           currentTime: currentTime,
-        });
+          audioData: audioData,
+          sampleRate: this._sampleRate,
+          recordingStartTime: startTime,
+          length: audioData.length,
+        }, [audioData.buffer]);
       }
     }
     
@@ -62,64 +72,69 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       if (!this._isRecording) {
         this._isRecording = true;
         this._audioData = [];
-        this._recordingStartTime = currentFrame / sampleRate;
+        this._recordingStartFrame = this._startFrame || currentFrame;
+        
+        // Retrieve audio from rolling buffer starting at _recordingStartFrame
+        if (this._startFrame && this._startFrame < currentFrame) {
+          // Pre-roll case: get audio from rolling buffer
+          const relevantEntries = this._rollingBuffer.filter(
+            entry => entry.frame >= this._startFrame && entry.frame <= currentFrame
+          );
+          this._audioData = [...relevantEntries];
+        }
+        
         this.port.postMessage({
           type: 'RECORDING_STARTED',
-          startTime: this._recordingStartTime,
+          startTime: this._recordingStartFrame / sampleRate,
           sampleRate: this._sampleRate,
           currentTime: currentTime,
         });
       }
     }
     
-    // Debug: log every 1000 process calls
-    if (this._processCount % 1000 === 0) {
-      const inputLen = (inputs && inputs[0] && inputs[0].length) ? inputs[0].length : 0;
-      this.port.postMessage({
-        type: 'DEBUG',
-        processCount: this._processCount,
-        isRecording: this._isRecording,
-        inputLength: inputLen,
-      });
-    }
-
-    // Defensive check: ensure inputs exist and have channels
-    if (!inputs || inputs.length === 0) {
-      return true;
-    }
-
-    const input = inputs[0]; // First input (MediaStreamSource)
-    if (!input || input.length === 0) {
-      return true; // No channels available yet
-    }
-
-    // Backup: also check parameter (in case message was missed)
-    const shouldRecord = parameters.isRecording[0] >= 0.5;
-    if (shouldRecord !== this._isRecording) {
-      this.port.postMessage({
-        type: 'DEBUG',
-        msg: 'Parameter change detected (backup check)',
-        shouldRecord,
-        isRecording: this._isRecording,
-      });
-    }
-    
-    if (this._isRecording && input[0]) {
-      // Store a copy of the audio data
-      const channelData = input[0]; // First channel (mono)
+    // Always capture to rolling buffer (when playing)
+    if (inputs && inputs[0] && inputs[0][0]) {
+      const channelData = inputs[0][0]; // First channel (mono)
       const copy = new Float32Array(channelData.length);
       copy.set(channelData);
-      this._audioData.push({
+      
+      // Add to rolling buffer
+      this._rollingBuffer.push({
         data: copy,
-        time: currentFrame / sampleRate, // AudioContext time for this buffer
+        frame: currentFrame,
       });
+      
+      // Trim old data (keep 2 seconds)
+      const maxFrames = this._rollingBufferDuration * sampleRate;
+      while (this._rollingBuffer.length > 0) {
+        if (currentFrame - this._rollingBuffer[0].frame > maxFrames) {
+          this._rollingBuffer.shift();
+        } else {
+          break;
+        }
+      }
+    }
+    
+    // If recording, also store in _audioData (for live punch-in case)
+    if (this._isRecording && inputs && inputs[0] && inputs[0][0]) {
+      const channelData = inputs[0][0];
+      const copy = new Float32Array(channelData.length);
+      copy.set(channelData);
+      
+      // Only add if not already in _audioData (avoid duplicates from rolling buffer)
+      if (!this._startFrame || this._startFrame >= currentFrame) {
+        this._audioData.push({
+          data: copy,
+          frame: currentFrame,
+        });
+      }
     }
 
     return true;
   }
 
   _flush() {
-    if (this._audioData.length === 0) return;
+    if (this._audioData.length === 0) return [new Float32Array(0), 0];
 
     // Combine all chunks into one Float32Array
     const totalLength = this._audioData.reduce((sum, chunk) => sum + chunk.data.length, 0);
@@ -131,16 +146,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       offset += chunk.data.length;
     });
 
-    // Send to main thread
-    this.port.postMessage({
-      type: 'AUDIO_DATA',
-      audioData: combinedData,
-      sampleRate: this._sampleRate,
-      startTime: this._recordingStartTime,
-      length: totalLength,
-    }, [combinedData.buffer]); // Transfer buffer, not copy
-
     this._audioData = [];
+    return [combinedData, this._recordingStartFrame / sampleRate];
   }
 }
 
