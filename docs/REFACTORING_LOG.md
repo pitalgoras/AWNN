@@ -291,6 +291,97 @@ startPos = this.recordingStartTransportTime - latencySec;
 
 ---
 
+### Problem 5: Recording Has 1 BAR Head (Not 1 Second)
+**Symptom**: Recording captures entire pre-roll bar (~2.08s at 115 BPM) + 1s head = 2+ seconds of head.
+
+**Root Cause**: 
+- `START_RECORDING` sent immediately (at pre-roll start)
+- AudioWorklet received it early, recorded from `currentFrame - sampleRate`
+- Result: Recording starts at beginning of pre-roll (too early)
+
+**Fix** (commit b32e74d):
+- AudioWorklet decides when to start using its own `currentTime`
+- Start recording when `currentTime >= targetStartReal` (1s before `punchInUserTime_Real`)
+- No delays from main thread
+
+---
+
+### Problem 6: Audio Out of Sync (Latency + Head)
+**Symptom**: Recorded audio plays 1s late (head plays before performance).
+
+**Root Cause**: 
+- Audio buffer has 1s head before `punchInUserTime`
+- Playback starts from buffer beginning → audio is 1s late
+- Latency compensation needed (bluetooth, USB, etc.)
+
+**Fix** (commit f4b742a):
+- **`audioOffset = -(headDuration + latencySec)`** calculated in `handleAudioWorkletStop()`
+- **`WebAudioPlayer` supports `offset` parameter** (skips first N seconds)
+- **`TrackOptions` updated** to include `audioOffset?` field
+- **`multitrack.ts` creates `WebAudioPlayer` with offset** when `audioOffset` exists
+
+**Result**: Audio plays IN SYNC with other tracks!
+
+---
+
+### Problem 7: AudioWorklet Event Reference Bug
+**Symptom**: `ReferenceError: event is not defined` in AudioWorklet.
+
+**Root Cause**: 
+- `event.data.recordingStartTime` accessed in `process()` method
+- `event` only defined in `onmessage` handler (different scope)
+
+**Fix** (commit ddff309):
+- Store `recordingStartTime` in class property `this._recordingStartTime`
+- Use `this._recordingStartTime` in `process()` method
+- Simplified: Removed `recordingStartTime` approach entirely, use `currentFrame - sampleRate`
+
+---
+
+## Recent Changes (audioOffset Implementation - May 2026)
+
+### What Changed
+1. ✅ **AudioWorklet decides start via `currentTime`** - No delays from main thread
+2. ✅ **`audioOffset = -(1.0s head + latencySec)`** - Calculated in `handleAudioWorkletStop()`
+3. ✅ **`startPosition = punchInUserTime`** - Correct visual position
+4. ✅ **`audioOffset` stored in phrase data** - Skip head during playback
+5. ✅ **`WebAudioPlayer` supports `offset` parameter** - Skip head + compensate latency
+6. ✅ **`multitrack.ts` uses `audioOffset`** - WaveSurfer creates player with offset
+
+### Files Modified
+- `public/worklets/recorder.worklet.js` - AudioWorklet decides start via `currentTime`
+- `src/audio/recording/RecordingEngine.ts` - Calculates `audioOffset`
+- `src/lib/multitrack/webaudio.ts` - `WebAudioPlayer` supports offset
+- `src/lib/multitrack/multitrack.ts` - Uses `audioOffset` for playback
+- `docs/RECORDING_LOGIC.md` - Updated with audioOffset approach
+- `docs/AUDIO_LOGIC_SPECS.md` - Updated with audioOffset approach
+- `docs/REFACTORING_LOG.md` - This file (updated)
+
+### Git Commits (branch: `backup-before-fixes`)
+```
+f4b742a feat: Add audioOffset support - WebAudioPlayer skip head + latency
+c57a68c feat: AudioWorklet decides start via currentTime, audioOffset with latency compensation
+b32e74d fix: Simplify AudioWorklet - remove recordingStartTime, use currentFrame - sampleRate
+ddff309 fix: AudioWorklet event reference bug - store recordingStartTime in class property
+3a3eb32 fix: Recording 1s head + temp startPos=punchInUserTime-1s + comments + docs
+a9a6976 fix: Read currentTime from store in startRecording() to avoid stale config
+9519804 Clean up useAudioEngine by removing unused refs and functions
+```
+
+### Testing Checklist (Updated)
+- [x] Recording creates clip with duration > 1 second (not 20ms)
+- [x] Clip appears at `punchInUserTime` (where Record was pressed)
+- [x] NO trimming of audio data
+- [x] `audioOffset` skips head + compensates latency
+- [x] Audio plays IN SYNC with other tracks!
+- [ ] WaveSurfer masks/hides first 1s of waveform (future)
+- [x] Multiple recordings at different positions work
+- [x] Pre-roll "always" → clip at Bar 1 (`punchInUserTime = 0`)
+- [x] Live punch-in → clip at current playhead position
+- [x] Latency compensation works (bluetooth, USB, etc.)
+
+---
+
 ## Postponed Changes
 
 ### 1. Rename Metronome Track ID from 'metronome' to '0'
