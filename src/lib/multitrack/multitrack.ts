@@ -224,6 +224,13 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
         }
       }
       this.audios[index] = newPlayer;
+      
+      // COMPREHENSIVE DEBUG LOGS
+      console.log('=== multitrack.ts: WebAudioPlayer created with offset ===');
+      console.log('multitrack: track.id =', track.id);
+      console.log('multitrack: track.audioOffset =', track.audioOffset);
+      console.log('multitrack: Math.abs(audioOffset) =', Math.abs(track.audioOffset));
+      console.log('multitrack: audioContext.currentTime =', this.audioContext.currentTime);
     }
 
     // Create a wavesurfer instance

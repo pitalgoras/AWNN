@@ -147,12 +147,24 @@ class WebAudioPlayer {
     // NEW: Use this._offset to skip head + compensate latency
     const offset = Math.max(0, Math.min(this.playedDuration + this._offset, duration - 0.001))
 
+    // COMPREHENSIVE DEBUG LOGS
+    console.log('=== WebAudioPlayer.playAt DEBUG ===')
+    console.log('WebAudioPlayer: startTime =', startTime)
+    console.log('WebAudioPlayer: offset =', this._offset)
+    console.log('WebAudioPlayer: playedDuration =', this.playedDuration)
+    console.log('WebAudioPlayer: offset calculation = playedDuration + offset =', this.playedDuration + this._offset)
+    console.log('WebAudioPlayer: final offset =', offset)
+    console.log('WebAudioPlayer: buffer.duration =', duration)
+    console.log('WebAudioPlayer: bufferNode will start at currentTime +', this.audioContext.currentTime, 'with offset =', offset)
+
     try {
       if (this.buffer) {
         if (offset < duration && offset >= 0) {
+          console.log('WebAudioPlayer: calling bufferNode.start(', startTime, offset, ')')
           this.bufferNode.start(startTime, offset)
         } else {
           // If we are at or past the end, don't start the buffer but emit ended
+          console.warn('WebAudioPlayer: offset out of range, not starting. offset=', offset, 'duration=', duration)
           setTimeout(() => this.emitEvent('ended'), 0)
         }
       } else if (this._src) {

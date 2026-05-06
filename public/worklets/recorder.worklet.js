@@ -41,11 +41,14 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         if (event.data.punchInUserTime_Real !== undefined) {
           this._targetStartReal = event.data.punchInUserTime_Real - 1.0;
           this._performanceStartFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
+          this.port.postMessage({
+            type: 'DEBUG',
+            msg: 'START_RECORDING received',
+            targetStartReal: this._targetStartReal,
+            performanceStartFrame: this._performanceStartFrame,
+            punchInUserTime_Real: event.data.punchInUserTime_Real,
+          });
         }
-        this.port.postMessage({
-          type: 'DEBUG',
-          msg: 'START_RECORDING flag set, targetStartReal: ' + this._targetStartReal,
-        });
       }
     };
   }
@@ -79,8 +82,9 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           type: 'RECORDING_STARTED',
           startTime: this._recordingStartFrame / sampleRate,
           performanceStartFrame: this._performanceStartFrame,
-          sampleRate: this._sampleRate,
           currentTime: currentTime,
+          targetStartReal: this._targetStartReal,
+          msg: 'Recording started at currentFrame=' + currentFrame + ', targetStartReal=' + this._targetStartReal,
         });
       }
     }

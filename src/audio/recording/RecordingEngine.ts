@@ -262,11 +262,11 @@ export class RecordingEngine {
 
     // NO trimming - keep all audio data
     // NO latency subtraction - latency is RELATIVE between tracks
-    // Calculate audioOffset: skip head + compensate latency during playback
-    const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
-    const latencySec = latencyMs / 1000;
+    // Calculate audioOffset: skip head + OUTPUT latency (for playback sync)
+    // Input latency (globalLatencyMs) handled SEPARATELY
+    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
     const headDuration = 1.0; // The head we captured
-    const audioOffset = -(headDuration + latencySec); // Negative: skip during playback
+    const audioOffset = -(headDuration + outputLatencySec); // Negative: skip during playback
     
     console.log('handleRecorderStop: audioOffset =', audioOffset, '(head + latency)');
     
@@ -349,15 +349,22 @@ export class RecordingEngine {
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
 
-    // Calculate audioOffset: skip head + compensate latency during playback
-    const latencyMs = this.config.globalLatencyMs + this.config.extraLatencyMs;
-    const latencySec = latencyMs / 1000;
+    // Calculate audioOffset: skip head + compensate OUTPUT latency (for playback sync)
+    // INPUT latency affects recording capture (handled separately)
+    // OUTPUT latency = when user HEARS the audio (use this for playback offset)
+    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
     const headDuration = 1.0; // The head we captured
-    const audioOffset = -(headDuration + latencySec); // Negative: skip during playback
+    const audioOffset = -(headDuration + outputLatencySec); // Negative: skip during playback
     
-    console.log('handleAudioWorkletStop: audioOffset =', audioOffset, '(head + latency)');
+    // COMPREHENSIVE DEBUG LOGS
+    console.log('=== handleAudioWorkletStop DEBUG ===');
+    console.log('handleAudioWorkletStop: audioOffset =', audioOffset, '(head + outputLatency)');
     console.log('handleAudioWorkletStop: punchInUserTime =', this.punchInUserTime);
-    
+    console.log('handleAudioWorkletStop: recordingStartTime (performanceStartFrame) =', recordingStartTime);
+    console.log('handleAudioWorkletStop: outputLatencySec =', outputLatencySec);
+    console.log('handleAudioWorkletStop: headDuration =', headDuration);
+    console.log('handleAudioWorkletStop: audioBuffer.duration =', audioBuffer.duration);
+    console.log('handleAudioWorkletStop: audioBuffer.length =', audioBuffer.length);
     // FIXED: startPos = punchInUserTime (correct visual position)
     const startPos = this.punchInUserTime;
 
