@@ -181,6 +181,59 @@ This document tracks the key technical decisions, bug fixes, and architectural s
 * **Loopback UX:** Moved Loopback Latency Test out of the global settings into Advanced Settings. Refactored the Loopback modal to be a non-blocking floating panel in the bottom-right corner, so the user can interactively adjust the slider while watching the timeline shift behind it.
  * **Chrome `goog` Constraints:** Modern browsers heavily process audio streams even when standard `false` properties are passed for AGC and noise suppression. Rebuilt the raw audio request object to use `{ exact: false }` for W3C properties *and* appended internal WebRTC flags (`googAutoGainControl`, `googNoiseSuppression`, `googHighpassFilter`, `googTypingNoiseDetection`) to forcefully bypass native browser limiters.
 
+## 21. audioOffset Implementation (2026-05-06)
+
+**Problem:** Recorded audio played out of sync with other tracks. Pre-roll recordings had 1+ BAR head (not 1s), and audioOffset wasn't implemented.
+
+**Root Causes:**
+1. **AudioWorklet timing:** `START_RECORDING` sent immediately (at pre-roll start), causing recording to start too early (entire pre-roll bar captured + 1s head)
+2. **Latency compensation:** Was subtracted from `startPos` (absolute), but should be RELATIVE between tracks
+3. **audioOffset missing:** No mechanism to skip the 1s head during playback
+
+**Decisions:**
+1. **AudioWorklet decides start via `currentTime`:** Let AudioWorklet use its own `currentTime` to decide when to start recording (1s before `punchInUserTime_Real`). No delays from main thread.
+2. **`audioOffset = -(headDuration + latencySec)`:** Store skip amount in phrase data. `WebAudioPlayer` uses this to skip head during playback.
+3. **`startPos = punchInUserTime`:** Clip appears at correct visual position (where user pressed Record).
+4. **NO trimming:** Keep 1s head in audio buffer for future offset adjustment or fade-in.
+
+**Implementation:**
+1. **`public/worklets/recorder.worklet.js`:**
+   - Store `punchInUserTime_Real` from main thread
+   - AudioWorklet starts recording when `currentTime >= targetStartReal` (1s before `punchInUserTime_Real`)
+   - Returns `performanceStartFrame` (when `punchInUserTime` was reached)
+
+2. **`src/audio/recording/RecordingEngine.ts`:**
+   - Calculate `audioOffset = -(1.0s head + latencySec)` in `handleAudioWorkletStop()` and `handleRecorderStop()`
+   - Set `startPos = punchInUserTime` (correct visual position)
+   - Store `audioOffset` in phrase data
+
+3. **`src/lib/multitrack/webaudio.ts`:**
+   - Add `offset` parameter to constructor
+   - `playAt()` uses `this._offset` to skip head during playback
+
+4. **`src/lib/multitrack/multitrack.ts`:**
+   - Add `audioOffset?` to `SingleTrackOptions` and `TrackOptions`
+   - When creating WaveSurfer instance, use `new WebAudioPlayer(audioContext, { offset: Math.abs(track.audioOffset) })` if offset exists
+
+5. **Documentation updates:**
+   - `docs/RECORDING_LOGIC.md` - Rewrote with audioOffset approach
+   - `docs/AUDIO_LOGIC_SPECS.md` - Updated with audioOffset
+   - `docs/REFACTORING_LOG.md` - Added Problem 5/6/7 sections
+
+**Git Commits (branch: `backup-before-fixes`):**
+```
+f4b742a feat: Add audioOffset support - WebAudioPlayer skip head + latency
+c57a68c feat: AudioWorklet decides start via currentTime, audioOffset with latency compensation
+b32e74d fix: Simplify AudioWorklet - remove recordingStartTime, use currentFrame - sampleRate
+ddff309 fix: AudioWorklet event reference bug - store recordingStartTime in class property
+3a3eb32 fix: Recording 1s head + temp startPos=punchInUserTime-1s + comments + docs
+a9a6976 fix: Read currentTime from store in startRecording() to avoid stale config
+```
+
+**Status:** ✅ Complete. Audio plays IN SYNC with other tracks!
+
+---
+
 ## 20. Voicing Label Algorithm Refinement (2026-05-03)
 **Problem:** When painting voicing labels on lyrics, duplicate tags appeared, and labels were added even when the same voicing already applied. The voicing tags should only exist when the voicing **changes**.
 
