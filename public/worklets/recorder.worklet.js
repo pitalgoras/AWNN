@@ -40,12 +40,10 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           msg: 'START_RECORDING flag set',
         });
       }
-    };
-  }
-    };
-  }
+     };
+   }
 
-  process(inputs, outputs, parameters) {
+   process(inputs, outputs, parameters) {
     this._processCount++;
     
     // Handle stop/start flags from messages
