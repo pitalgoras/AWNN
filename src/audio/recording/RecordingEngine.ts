@@ -435,25 +435,11 @@ export class RecordingEngine {
       }
 
       if (this.useAudioWorklet) {
-        // AudioWorklet: use message passing (more reliable than parameter changes)
+        // AudioWorklet: just send START_RECORDING (no startFrame - calculated in worklet)
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
-          // Calculate startFrame for pre-roll (AudioContext frame when recording should start)
-          const audioContext = this.config.audioContextRef?.current;
-          if (audioContext && effectivePreRollMode !== 'none') {
-            // Pre-roll case: recording starts secondsPerBar before punchInUserTime
-            const startCtxTime = audioContext.currentTime - secondsPerBar;
-            const startFrame = Math.floor(startCtxTime * audioContext.sampleRate);
-            this.audioWorkletNode.port.postMessage({ 
-              type: 'START_RECORDING',
-              startFrame: startFrame 
-            });
-            console.log('AudioWorklet: posted START_RECORDING message with startFrame', startFrame);
-          } else {
-            // Live punch-in: start from current frame (no pre-roll)
-            this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
-            console.log('AudioWorklet: posted START_RECORDING message (live punch-in)');
-          }
+          this.audioWorkletNode.port.postMessage({ type: 'START_RECORDING' });
+          console.log('AudioWorklet: posted START_RECORDING message (worklet calculates startFrame)');
         }
       } else {
         // MediaRecorder: stop old recorder to recycle buffer

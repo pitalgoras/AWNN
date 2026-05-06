@@ -51,7 +51,13 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       this._shouldStop = false;
       if (this._isRecording) {
         this._isRecording = false;
-        this._flush();
+        const [audioData, recordingStartTime] = this._flush();
+        // Send recorded data back to main thread
+        this.port.postMessage({
+          type: 'RECORDING_STOPPED',
+          audioData: audioData,
+          recordingStartTime: recordingStartTime,
+        });
       }
     }
     
