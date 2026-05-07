@@ -125,6 +125,7 @@ const {
           useStore.getState().addPhrase(trackId, phrase);
           // DIRECT update: also update multitrack so it gets the audioOffset immediately
           const track = useStore.getState().tracks.find(t => t.id === trackId);
+          console.log('useAudioEngine: after store update, track.audioOffset=', track?.audioOffset, 'phrase.audioOffset=', phrase.audioOffset);
           if (track && phrase.audioOffset !== undefined) {
             console.log('useAudioEngine: directly updating multitrack track', trackId, 'with audioOffset=', phrase.audioOffset);
             // Update track.audioOffset so multitrack can use it
