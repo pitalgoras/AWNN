@@ -17,13 +17,14 @@ class WebAudioPlayer {
   public paused = true
   public crossOrigin: string | null = null
   private _offset = 0 // NEW: Offset to skip (for audioOffset feature)
-
+  private _id: string = Math.random().toString(36).substr(2, 6) // Unique ID for debugging
+  
   constructor(audioContext: AudioContext | null = null, options?: { offset?: number }) {
     if (audioContext) {
-      console.log('WebAudioPlayer constructor: using provided audioContext', audioContext.state);
+      console.log('WebAudioPlayer constructor [ID:' + this._id + ']: using provided audioContext', audioContext.state);
     }
     this.audioContext = audioContext || new AudioContext();
-    console.log('WebAudioPlayer constructor: this.audioContext =', this.audioContext);
+    console.log('WebAudioPlayer constructor [ID:' + this._id + ']: this.audioContext =', this.audioContext);
     
     this.gainNode = this.audioContext.createGain()
     this.gainNode.connect(this.audioContext.destination)
@@ -31,9 +32,9 @@ class WebAudioPlayer {
     // NEW: Store offset from options
     if (options?.offset !== undefined) {
       this._offset = options.offset;
-      console.log('WebAudioPlayer: offset set to', this._offset);
+      console.log('WebAudioPlayer [ID:' + this._id + ']: offset set to', this._offset);
     } else {
-      console.warn('WebAudioPlayer: created WITHOUT offset! Stack:', new Error().stack);
+      console.warn('WebAudioPlayer [ID:' + this._id + ']: created WITHOUT offset! Stack:', new Error().stack);
     }
   }
 
@@ -119,6 +120,7 @@ class WebAudioPlayer {
 
   async play() {
     // FIXED: playAt will use this._offset when no offset passed
+    console.log('WebAudioPlayer [ID:' + this._id + ']: play() called, _offset=', this._offset);
     return this.playAt(this.audioContext.currentTime)
   }
 
