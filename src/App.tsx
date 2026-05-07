@@ -233,6 +233,18 @@ export default function App() {
       }
     });
   }, [tracks, selectedPhraseId, isReady, multitrackRef]);
+  
+  // Update multitrack tracks when audioOffset changes (for playback sync)
+  useEffect(() => {
+    if (!isReady || !multitrackRef.current) return;
+    
+    tracks.forEach(track => {
+      if (track.audioOffset !== undefined) {
+        // Cast to any to avoid type mismatch between Track and TrackOptions
+        multitrackRef.current?.addTrack(track as any);
+      }
+    });
+  }, [tracks, isReady, multitrackRef]);
 
   const handleContainerClick = (e: React.MouseEvent) => {
     if (!containerRef.current || !multitrackRef.current) return;
