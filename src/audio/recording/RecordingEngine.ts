@@ -261,19 +261,17 @@ export class RecordingEngine {
     console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
     // NO trimming - keep all audio data
-    // Calculate audioOffset: skip pre-roll + head + latencies (for playback sync)
-    // This ensures audio is in sync between tracks regardless of pre-roll mode
+    // Calculate audioOffset: skip recHeadstart + latencies (for playback sync)
+    // Pre-roll is NOT in the buffer (fixed: AudioWorklet starts 1s before punch-in)
     const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
     const headDuration = 1.0; // The recHeadstart we captured
-    const preRollDuration = (this.config.preRollMode !== 'none') ? this.config.bpm ? (60 / this.config.bpm * this.config.timeSignature[0]) : 2.0 : 0;
     const inputLatencySec = this.config.globalLatencyMs / 1000; // Input latency compensation
     
-    // audioOffset = -(pre-roll + recHeadstart + output latency + input latency)
-    // All这些值 are skipped during playback so audio aligns to punch-in time
-    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
+    // audioOffset = -(recHeadstart + output latency + input latency)
+    // Pre-roll is NOT in buffer, so don't skip it
+    const audioOffset = -(headDuration + outputLatencySec + inputLatencySec);
     
     console.log('handleAudioWorkletStop: audioOffset breakdown:', {
-      preRollDuration,
       headDuration,
       outputLatencySec,
       inputLatencySec,
@@ -418,24 +416,44 @@ export class RecordingEngine {
 
   async startRecording(trackId: string): Promise<void> {
     try {
-      // FIXED: Read AudioContext.currentTime directly (not store time which drifts during scroll)
+      // FIXED: Calculate punchInUserTime correctly
+      // When playing: use AudioContext.currentTime (audio clock, aligned with scrolling)
+      // When stopped: use store currentTime (playhead position, since AudioContext is monotonic)
       const audioCtx = this.config.audioContextRef?.current;
-      const currentTimeReal = audioCtx?.currentTime || 0; // Real Time (audio clock)
+      const storeState = this.callbacks.getStoreState();
+      const isCurrentlyPlaying = this.config.isPlaying;
+      
+      let punchInUserTime: number;
+      
+      if (isCurrentlyPlaying) {
+        // Playing: AudioContext.currentTime is accurate (scrolling aligned)
+        const currentTimeReal = audioCtx?.currentTime || 0;
+        const beatsPerSecond = this.config.bpm / 60;
+        const secondsPerBeat = 1 / beatsPerSecond;
+        const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
+        punchInUserTime = Math.max(0, currentTimeReal - secondsPerBar);
+      } else {
+        // Stopped: use store currentTime (playhead position)
+        punchInUserTime = Math.max(0, storeState?.currentTime || 0);
+      }
       
       // Calculate secondsPerBar for time conversions
       const beatsPerSecond = this.config.bpm / 60;
       const secondsPerBeat = 1 / beatsPerSecond;
       const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
       
-      // Convert Real Time to User Time (timeline: Bar 1 = 0)
-      const punchInUserTime = Math.max(0, currentTimeReal - secondsPerBar);
+      // FIXED: punchInUserTime_Real ALWAYS = punchInUserTime + secondsPerBar (User Time → Real Time)
+      const punchInUserTime_Real = punchInUserTime + secondsPerBar;
+      
       const currentTime = punchInUserTime; // For compatibility with rest of function
       
       console.log('startRecording: entry', { 
         trackId, 
-        currentTimeReal, // Real Time (AudioContext)
-        punchInUserTime, // User Time (timeline)
-        storeTime: this.config.currentTime // Log store time for comparison
+        punchInUserTime,
+        punchInUserTime_Real,
+        isCurrentlyPlaying,
+        storeTime: storeState?.currentTime,
+        audioCtxTime: audioCtx?.currentTime
       });
       
       // Use storeTime for punchIn calculation
@@ -458,7 +476,6 @@ export class RecordingEngine {
         console.log('startRecording: initStream complete, continuous recorder running');
       }
       
-      const isCurrentlyPlaying = this.config.isPlaying;
       const preRollMode = this.config.preRollMode;
       
       console.log('startRecording', { preRollMode, isCurrentlyPlaying, currentTime });
@@ -472,25 +489,24 @@ export class RecordingEngine {
         return;
       }
       
-      // Store punchInUserTime for clip startPos (already calculated from AudioContext.currentTime)
+      // Store punchInUserTime for clip startPos
       this.punchInUserTime = punchInUserTime;
       console.log('startRecording: punchInUserTime captured', { 
-        currentTimeReal: currentTimeReal,
-        punchInUserTime: this.punchInUserTime 
+        punchInUserTime: this.punchInUserTime,
+        punchInUserTime_Real
       });
-
+      
       // For "none" + not playing: prime the buffer (wait 1s for 2s rolling buffer to fill)
       if (!isCurrentlyPlaying && effectivePreRollMode === 'none' && this.useAudioWorklet) {
         console.log('startRecording: priming buffer for "none" + not playing (waiting 1s)');
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
-
+      
       if (this.useAudioWorklet) {
         // AudioWorklet: send START_RECORDING with punchInUserTime_Real
         // AudioWorklet will start recording 1s before punchInUserTime (recHeadstart)
         // Let AudioWorklet decide when to start using its own currentTime
-        const punchInUserTime_Real = currentTimeReal; // Already Real Time from AudioContext
-        
+        // FIXED: Use the correctly calculated punchInUserTime_Real (not currentTimeReal)
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
           this.audioWorkletNode.port.postMessage({ 
