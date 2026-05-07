@@ -361,23 +361,25 @@ export class RecordingEngine {
     const totalLength = finalAudioData.length;
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
-
-    // Calculate audioOffset: skip head + compensate OUTPUT latency (for playback sync)
-    // INPUT latency affects recording capture (handled separately)
-    // OUTPUT latency = when user HEARS the audio (use this for playback offset)
-    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
-    const headDuration = 1.0; // The head we captured
-    const audioOffset = -(headDuration + outputLatencySec); // Negative: skip during playback
     
-    // COMPREHENSIVE DEBUG LOGS
-    console.log('=== handleAudioWorkletStop DEBUG ===');
-    console.log('handleAudioWorkletStop: audioOffset =', audioOffset, '(head + outputLatency)');
-    console.log('handleAudioWorkletStop: punchInUserTime =', this.punchInUserTime);
-    console.log('handleAudioWorkletStop: recordingStartTime (performanceStartFrame) =', recordingStartTime);
-    console.log('handleAudioWorkletStop: outputLatencySec =', outputLatencySec);
-    console.log('handleAudioWorkletStop: headDuration =', headDuration);
-    console.log('handleAudioWorkletStop: audioBuffer.duration =', audioBuffer.duration);
-    console.log('handleAudioWorkletStop: audioBuffer.length =', audioBuffer.length);
+    // Calculate audioOffset: skip pre-roll + recHeadstart + latencies (for playback sync)
+    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025;
+    const headDuration = 1.0;
+    const inputLatencySec = this.config.globalLatencyMs / 1000;
+    const preRollDuration = (this.config.preRollMode !== 'none' && !this.config.isPlaying) 
+      ? (60 / this.config.bpm) * this.config.timeSignature[0] 
+      : 0;
+    
+    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
+    
+    console.log('handleAudioWorkletStop: audioOffset breakdown:', {
+      preRollDuration,
+      headDuration,
+      outputLatencySec,
+      inputLatencySec,
+      total: audioOffset
+    });
+    
     // FIXED: startPos = punchInUserTime (correct visual position)
     const startPos = this.punchInUserTime;
 
