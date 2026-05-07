@@ -25,6 +25,8 @@ export interface RecordingCallbacks {
   onAddPhrase: (trackId: string, phrase: any) => void;
   onSeekTo: (time: number, allowNegative?: boolean) => void;
   getStoreState: () => any;
+  // NEW: Direct callback to update track audioOffset in multitrack
+  onSetTrackAudioOffset?: (trackId: string, audioOffset: number) => void;
 }
 
 export class RecordingEngine {
