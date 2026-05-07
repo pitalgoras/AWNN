@@ -261,14 +261,24 @@ export class RecordingEngine {
     console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
     // NO trimming - keep all audio data
-    // NO latency subtraction - latency is RELATIVE between tracks
-    // Calculate audioOffset: skip head + OUTPUT latency (for playback sync)
-    // Input latency (globalLatencyMs) handled SEPARATELY
+    // Calculate audioOffset: skip pre-roll + head + latencies (for playback sync)
+    // This ensures audio is in sync between tracks regardless of pre-roll mode
     const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
-    const headDuration = 1.0; // The head we captured
-    const audioOffset = -(headDuration + outputLatencySec); // Negative: skip during playback
+    const headDuration = 1.0; // The recHeadstart we captured
+    const preRollDuration = (this.config.preRollMode !== 'none') ? this.config.bpm ? (60 / this.config.bpm * this.config.timeSignature[0]) : 2.0 : 0;
+    const inputLatencySec = this.config.globalLatencyMs / 1000; // Input latency compensation
     
-    console.log('handleRecorderStop: audioOffset =', audioOffset, '(head + latency)');
+    // audioOffset = -(pre-roll + recHeadstart + output latency + input latency)
+    // All这些值 are skipped during playback so audio aligns to punch-in time
+    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
+    
+    console.log('handleAudioWorkletStop: audioOffset breakdown:', {
+      preRollDuration,
+      headDuration,
+      outputLatencySec,
+      inputLatencySec,
+      total: audioOffset
+    });
     
     // FIXED: startPos = punchInUserTime (correct visual position)
     const startPos = this.punchInUserTime;
@@ -408,11 +418,25 @@ export class RecordingEngine {
 
   async startRecording(trackId: string): Promise<void> {
     try {
-      // CRITICAL: Read currentTime directly from store to avoid stale config
-      const storeState = this.callbacks.getStoreState();
-      const currentTime = storeState?.currentTime || 0;
+      // FIXED: Read AudioContext.currentTime directly (not store time which drifts during scroll)
+      const audioCtx = this.config.audioContextRef?.current;
+      const currentTimeReal = audioCtx?.currentTime || 0; // Real Time (audio clock)
       
-      console.log('startRecording: entry', { trackId, currentTime: this.config.currentTime, storeTime: currentTime });
+      // Calculate secondsPerBar for time conversions
+      const beatsPerSecond = this.config.bpm / 60;
+      const secondsPerBeat = 1 / beatsPerSecond;
+      const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
+      
+      // Convert Real Time to User Time (timeline: Bar 1 = 0)
+      const punchInUserTime = Math.max(0, currentTimeReal - secondsPerBar);
+      const currentTime = punchInUserTime; // For compatibility with rest of function
+      
+      console.log('startRecording: entry', { 
+        trackId, 
+        currentTimeReal, // Real Time (AudioContext)
+        punchInUserTime, // User Time (timeline)
+        storeTime: this.config.currentTime // Log store time for comparison
+      });
       
       // Use storeTime for punchIn calculation
       // Increment session ID to invalidate any pending handleRecorderStop calls
@@ -448,21 +472,12 @@ export class RecordingEngine {
         return;
       }
       
-      // Prevent punching in during the pre-roll (Bar 0)
-      // CRITICAL: Capture punchInUserTime BEFORE any async operations or seeks
-      const punchInUserTime = Math.max(0, currentTime);
-      this.punchInUserTime = punchInUserTime; // Store for clip startPos
+      // Store punchInUserTime for clip startPos (already calculated from AudioContext.currentTime)
+      this.punchInUserTime = punchInUserTime;
       console.log('startRecording: punchInUserTime captured', { 
-        currentTime, 
+        currentTimeReal: currentTimeReal,
         punchInUserTime: this.punchInUserTime 
       });
-
-      const beatsPerSecond = this.config.bpm / 60;
-      const secondsPerBeat = 1 / beatsPerSecond;
-      const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
-
-      // Recording starts 1 bar before punch-in if count-in is enabled
-      const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
 
       // For "none" + not playing: prime the buffer (wait 1s for 2s rolling buffer to fill)
       if (!isCurrentlyPlaying && effectivePreRollMode === 'none' && this.useAudioWorklet) {
@@ -472,9 +487,9 @@ export class RecordingEngine {
 
       if (this.useAudioWorklet) {
         // AudioWorklet: send START_RECORDING with punchInUserTime_Real
-        // AudioWorklet will start recording 1s before punchInUserTime
+        // AudioWorklet will start recording 1s before punchInUserTime (recHeadstart)
         // Let AudioWorklet decide when to start using its own currentTime
-        const punchInUserTime_Real = punchInUserTime + secondsPerBar;
+        const punchInUserTime_Real = currentTimeReal; // Already Real Time from AudioContext
         
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
@@ -508,12 +523,15 @@ export class RecordingEngine {
         this.startContinuousRecorder();  // Creates new recorder (onstop set above will fire when this new one stops)
       }
 
+      // Calculate record start time (for seeking to pre-roll start)
+      const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
+      
       // Seek to pre-roll start (allow negative user time for pre-roll)
       // Only seek if we are NOT already playing (to avoid interrupting playback)
       if (!isCurrentlyPlaying) {
         this.callbacks.onSeekTo(recordStartUserTime, true);
       }
-
+      
       this.recordingStartTransportTime = recordStartUserTime;
       this.expectedPreRoll = effectivePreRollMode !== 'none' ? secondsPerBar : 0;
       this.punchInTime = performance.now();
