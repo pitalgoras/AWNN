@@ -238,10 +238,31 @@ export default function App() {
   useEffect(() => {
     if (!isReady || !multitrackRef.current) return;
     
+    console.log('useEffect audioOffset: checking tracks...');
     tracks.forEach(track => {
       if (track.audioOffset !== undefined) {
-        // Cast to any to avoid type mismatch between Track and TrackOptions
-        multitrackRef.current?.addTrack(track as any);
+        console.log('useEffect audioOffset: updating track', track.id, 'audioOffset=', track.audioOffset);
+        // Convert Track to TrackOptions (multitrack expects this)
+        const trackOptions = {
+          id: track.id,
+          name: track.name,
+          color: track.color,
+          isMuted: track.isMuted,
+          isSolo: track.isSolo,
+          volume: track.volume,
+          pan: track.pan,
+          offset: track.offset,
+          audioOffset: track.audioOffset,
+          phrases: track.phrases.map(p => ({
+            url: p.url,
+            audioBuffer: p.audioBuffer,
+            peaks: p.peaks,
+            startPosition: p.startPosition,
+            duration: p.duration,
+            audioOffset: p.audioOffset,
+          })),
+        } as any;
+        multitrackRef.current?.addTrack(trackOptions);
       }
     });
   }, [tracks, isReady, multitrackRef]);
