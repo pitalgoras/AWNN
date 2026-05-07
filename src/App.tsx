@@ -240,6 +240,7 @@ export default function App() {
     
     console.log('useEffect audioOffset: checking tracks...');
     tracks.forEach(track => {
+      console.log('useEffect audioOffset: track', track.id, 'audioOffset=', track.audioOffset, 'phrases count=', track.phrases.length);
       if (track.audioOffset !== undefined) {
         console.log('useEffect audioOffset: updating track', track.id, 'audioOffset=', track.audioOffset);
         // Convert Track to TrackOptions (multitrack expects this)

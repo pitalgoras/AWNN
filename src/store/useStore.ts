@@ -257,6 +257,10 @@ export const useStore = create<AppState>()(
             // FIXED: Update track.audioOffset so multitrack can use it
             if (newPhrase.audioOffset !== undefined) {
               track.audioOffset = newPhrase.audioOffset;
+              console.log('store: set track.audioOffset =', newPhrase.audioOffset, 'for track', trackId);
+            } else if (phrase.audioOffset !== undefined) {
+              track.audioOffset = phrase.audioOffset;
+              console.log('store: set track.audioOffset =', phrase.audioOffset, 'for track', trackId, '(from phrase)');
             }
           }
         }),

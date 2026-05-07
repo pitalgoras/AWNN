@@ -121,8 +121,39 @@ const {
           setIsRecording(recording);
         },
         onAddPhrase: (trackId, phrase) => {
-          console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration });
+          console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, audioOffset: phrase.audioOffset });
           useStore.getState().addPhrase(trackId, phrase);
+          // DIRECT update: also update multitrack so it gets the audioOffset immediately
+          const track = useStore.getState().tracks.find(t => t.id === trackId);
+          if (track && phrase.audioOffset !== undefined) {
+            console.log('useAudioEngine: directly updating multitrack track', trackId, 'with audioOffset=', phrase.audioOffset);
+            // Update track.audioOffset so multitrack can use it
+            track.audioOffset = phrase.audioOffset;
+            // Directly call addTrack on multitrack
+            if (multitrackRef.current) {
+              // Convert Track to TrackOptions
+              const trackOptions = {
+                id: track.id,
+                name: track.name,
+                color: track.color,
+                isMuted: track.isMuted,
+                isSolo: track.isSolo,
+                volume: track.volume,
+                pan: track.pan,
+                offset: track.offset,
+                audioOffset: track.audioOffset,
+                phrases: track.phrases.map(p => ({
+                  url: p.url,
+                  audioBuffer: p.audioBuffer,
+                  peaks: p.peaks,
+                  startPosition: p.startPosition,
+                  duration: p.duration,
+                  audioOffset: p.audioOffset,
+                })),
+              } as any;
+              multitrackRef.current.addTrack(trackOptions);
+            }
+          }
         },
         onSeekTo: (time, allowNegative) => {
           console.log('callback: seekTo', { time, allowNegative });
