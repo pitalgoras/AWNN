@@ -32,6 +32,8 @@ class WebAudioPlayer {
     if (options?.offset !== undefined) {
       this._offset = options.offset;
       console.log('WebAudioPlayer: offset set to', this._offset);
+    } else {
+      console.warn('WebAudioPlayer: created WITHOUT offset! Stack:', new Error().stack);
     }
   }
 
