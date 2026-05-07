@@ -116,6 +116,7 @@ class WebAudioPlayer {
   }
 
   async play() {
+    // FIXED: playAt will use this._offset when no offset passed
     return this.playAt(this.audioContext.currentTime)
   }
 
