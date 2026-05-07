@@ -416,44 +416,33 @@ export class RecordingEngine {
 
   async startRecording(trackId: string): Promise<void> {
     try {
-      // FIXED: Calculate punchInUserTime correctly
-      // When playing: use AudioContext.currentTime (audio clock, aligned with scrolling)
-      // When stopped: use store currentTime (playhead position, since AudioContext is monotonic)
-      const audioCtx = this.config.audioContextRef?.current;
+      // Step 1: Calculate punchInUserTime (User Time)
       const storeState = this.callbacks.getStoreState();
       const isCurrentlyPlaying = this.config.isPlaying;
+      
+      const beatsPerSecond = this.config.bpm / 60;
+      const secondsPerBeat = 1 / beatsPerSecond;
+      const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
       
       let punchInUserTime: number;
       
       if (isCurrentlyPlaying) {
-        // Playing: AudioContext.currentTime is accurate (scrolling aligned)
+        // Playing: AudioContext.currentTime is accurate (aligned with scrolling)
+        const audioCtx = this.config.audioContextRef?.current;
         const currentTimeReal = audioCtx?.currentTime || 0;
-        const beatsPerSecond = this.config.bpm / 60;
-        const secondsPerBeat = 1 / beatsPerSecond;
-        const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
         punchInUserTime = Math.max(0, currentTimeReal - secondsPerBar);
       } else {
         // Stopped: use store currentTime (playhead position)
         punchInUserTime = Math.max(0, storeState?.currentTime || 0);
       }
       
-      // Calculate secondsPerBar for time conversions
-      const beatsPerSecond = this.config.bpm / 60;
-      const secondsPerBeat = 1 / beatsPerSecond;
-      const secondsPerBar = secondsPerBeat * this.config.timeSignature[0];
-      
-      // FIXED: punchInUserTime_Real ALWAYS = punchInUserTime + secondsPerBar (User Time → Real Time)
-      const punchInUserTime_Real = punchInUserTime + secondsPerBar;
-      
       const currentTime = punchInUserTime; // For compatibility with rest of function
       
       console.log('startRecording: entry', { 
         trackId, 
         punchInUserTime,
-        punchInUserTime_Real,
         isCurrentlyPlaying,
-        storeTime: storeState?.currentTime,
-        audioCtxTime: audioCtx?.currentTime
+        storeTime: storeState?.currentTime
       });
       
       // Use storeTime for punchIn calculation
@@ -492,8 +481,7 @@ export class RecordingEngine {
       // Store punchInUserTime for clip startPos
       this.punchInUserTime = punchInUserTime;
       console.log('startRecording: punchInUserTime captured', { 
-        punchInUserTime: this.punchInUserTime,
-        punchInUserTime_Real
+        punchInUserTime: this.punchInUserTime
       });
       
       // For "none" + not playing: prime the buffer (wait 1s for 2s rolling buffer to fill)
@@ -502,11 +490,51 @@ export class RecordingEngine {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
+      // Calculate record start time (for seeking to pre-roll start)
+      const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
+      
+      // Seek to pre-roll start (allow negative user time for pre-roll)
+      // Only seek if we are NOT already playing (to avoid interrupting playback)
+      if (!isCurrentlyPlaying) {
+        this.callbacks.onSeekTo(recordStartUserTime, true);
+      }
+      
+      this.recordingStartTransportTime = recordStartUserTime;
+      this.expectedPreRoll = effectivePreRollMode !== 'none' ? secondsPerBar : 0;
+      this.punchInTime = performance.now();
+      this.recordingCancelled = false;
+      
+      // Set recording mode FIRST so engine knows to allow negative seeks/scrolls
+      // This would need to be passed via callbacks if multitrack needs it
+      
+      // Coordinated start time for perfect sync
+      const audioContext = this.config.audioContextRef?.current;
+      if (!audioContext) throw new Error('AudioContext not initialized');
+      
+      // FIXED: Calculate punchInUserTime_Real NOW (just before playback starts)
+      // This ensures audioContext.currentTime is accurate
+      let punchInUserTime_Real: number;
+      
+      if (isCurrentlyPlaying) {
+        // Playing: currentTime IS the Real Time
+        punchInUserTime_Real = audioContext.currentTime;
+      } else {
+        // Stopped: Calculate when punch-in will occur after playback starts
+        // Playhead starts from recordStartUserTime, need to travel to punchInUserTime
+        const timeUntilPunchIn = (punchInUserTime - recordStartUserTime) - 1.0; // -1.0 for recHeadstart
+        punchInUserTime_Real = audioContext.currentTime + Math.max(0, timeUntilPunchIn);
+      }
+      
+      console.log('startRecording: punchInUserTime_Real calculated', {
+        punchInUserTime_Real,
+        audioCtxTime: audioContext.currentTime,
+        timeUntilPunchIn: punchInUserTime - recordStartUserTime
+      });
+      
       if (this.useAudioWorklet) {
         // AudioWorklet: send START_RECORDING with punchInUserTime_Real
         // AudioWorklet will start recording 1s before punchInUserTime (recHeadstart)
         // Let AudioWorklet decide when to start using its own currentTime
-        // FIXED: Use the correctly calculated punchInUserTime_Real (not currentTimeReal)
         console.log('startRecording: using AudioWorklet (shared clock)');
         if (this.audioWorkletNode) {
           this.audioWorkletNode.port.postMessage({ 
@@ -538,38 +566,18 @@ export class RecordingEngine {
         console.log('startRecording: restarting continuous recorder for new session', currentSessionId);
         this.startContinuousRecorder();  // Creates new recorder (onstop set above will fire when this new one stops)
       }
-
-      // Calculate record start time (for seeking to pre-roll start)
-      const recordStartUserTime = effectivePreRollMode !== 'none' ? punchInUserTime - secondsPerBar : punchInUserTime;
       
-      // Seek to pre-roll start (allow negative user time for pre-roll)
-      // Only seek if we are NOT already playing (to avoid interrupting playback)
-      if (!isCurrentlyPlaying) {
-        this.callbacks.onSeekTo(recordStartUserTime, true);
-      }
-      
-      this.recordingStartTransportTime = recordStartUserTime;
-      this.expectedPreRoll = effectivePreRollMode !== 'none' ? secondsPerBar : 0;
-      this.punchInTime = performance.now();
-      this.recordingCancelled = false;
-
-      // Set recording mode FIRST so engine knows to allow negative seeks/scrolls
-      // This would need to be passed via callbacks if multitrack needs it
-
-      // Coordinated start time for perfect sync
-      const audioContext = this.config.audioContextRef?.current;
-      if (!audioContext) throw new Error('AudioContext not initialized');
       const recorderStartCtxTime = audioContext.currentTime;
       const playbackStartCtxTime = recorderStartCtxTime + 0.15;
       const startDelay = playbackStartCtxTime - recorderStartCtxTime;
-
+      
       // Store the expected pre-roll duration (1 bar + the start delay)
       this.expectedPreRoll = (effectivePreRollMode !== 'none' ? secondsPerBar : 0) + startDelay;
-
+      
       // Start Playback
       this.callbacks.onSetIsPlaying(true);
       this.callbacks.onSetIsRecording(true);
-
+      
     } catch (err) {
       console.error("Error accessing microphone:", err);
       alert("Could not access microphone.");
