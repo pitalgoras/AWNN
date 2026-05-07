@@ -123,37 +123,33 @@ const {
         onAddPhrase: (trackId, phrase) => {
           console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, audioOffset: phrase.audioOffset });
           useStore.getState().addPhrase(trackId, phrase);
-          // DIRECT update: also update multitrack so it gets the audioOffset immediately
+          // DIRECT: Also update multitrack immediately so it gets the audioOffset
           const track = useStore.getState().tracks.find(t => t.id === trackId);
-          console.log('useAudioEngine: after store update, track.audioOffset=', track?.audioOffset, 'phrase.audioOffset=', phrase.audioOffset);
-          if (track && phrase.audioOffset !== undefined) {
-            console.log('useAudioEngine: directly updating multitrack track', trackId, 'with audioOffset=', phrase.audioOffset);
-            // Update track.audioOffset so multitrack can use it
+          if (track && multitrackRef.current && phrase.audioOffset !== undefined) {
+            console.log('useAudioEngine: DIRECT update multitrack track', trackId, 'with audioOffset=', phrase.audioOffset);
+            // Update track.audioOffset
             track.audioOffset = phrase.audioOffset;
-            // Directly call addTrack on multitrack
-            if (multitrackRef.current) {
-              // Convert Track to TrackOptions
-              const trackOptions = {
-                id: track.id,
-                name: track.name,
-                color: track.color,
-                isMuted: track.isMuted,
-                isSolo: track.isSolo,
-                volume: track.volume,
-                pan: track.pan,
-                offset: track.offset,
-                audioOffset: track.audioOffset,
-                phrases: track.phrases.map(p => ({
-                  url: p.url,
-                  audioBuffer: p.audioBuffer,
-                  peaks: p.peaks,
-                  startPosition: p.startPosition,
-                  duration: p.duration,
-                  audioOffset: p.audioOffset,
-                })),
-              } as any;
-              multitrackRef.current.addTrack(trackOptions);
-            }
+            // Convert Track to TrackOptions (multitrack expects this)
+            const trackOptions = {
+              id: track.id,
+              name: track.name,
+              color: track.color,
+              isMuted: track.isMuted,
+              isSolo: track.isSolo,
+              volume: track.volume,
+              pan: track.pan,
+              offset: track.offset,
+              audioOffset: track.audioOffset,
+              phrases: track.phrases.map(p => ({
+                url: p.url,
+                audioBuffer: p.audioBuffer,
+                peaks: p.peaks,
+                startPosition: p.startPosition,
+                duration: p.duration,
+                audioOffset: p.audioOffset,
+              })),
+            } as any;
+            multitrackRef.current.addTrack(trackOptions);
           }
         },
         onSeekTo: (time, allowNegative) => {
