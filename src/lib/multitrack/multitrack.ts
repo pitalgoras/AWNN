@@ -178,8 +178,16 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
   private initAudio(track: TrackOptions): Promise<HTMLAudioElement | WebAudioPlayer> {
     perfLogger.log(2, track.trackId || track.id);
-    const audio = (track.options?.media as HTMLAudioElement | WebAudioPlayer) || new WebAudioPlayer(this.audioContext)
-
+    
+    // FIXED: Create WebAudioPlayer with audioOffset if available
+    let audio: HTMLAudioElement | WebAudioPlayer;
+    if (track.audioOffset) {
+      // Create with offset (absolute value since offset is negative)
+      audio = new WebAudioPlayer(this.audioContext, { offset: Math.abs(track.audioOffset) });
+    } else {
+      audio = (track.options?.media as HTMLAudioElement | WebAudioPlayer) || new WebAudioPlayer(this.audioContext);
+    }
+    
     audio.crossOrigin = 'anonymous'
 
     if (track.audioBuffer && audio instanceof WebAudioPlayer && track.url) {

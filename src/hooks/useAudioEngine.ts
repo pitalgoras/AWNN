@@ -329,15 +329,15 @@ const {
           url: SILENT_WAV,
           startPosition: 0,
           volume: 0,
-          options: {
-            waveColor: t.color,
-            progressColor: t.color,
-            height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
-            pixelRatio,
-            sampleRate,
-            media: new WebAudioPlayer(audioContextRef.current),
-          } as unknown as TrackOptions['options']
-        });
+            options: {
+              waveColor: t.color,
+              progressColor: t.color,
+              height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
+              pixelRatio,
+              sampleRate,
+              // FIXED: Don't create WebAudioPlayer here - let multitrack handle it with audioOffset
+            } as unknown as TrackOptions['options']
+          });
       } else {
         t.phrases.forEach(p => {
           // Metronome phrases are already in Real Time (starting from 0)
@@ -362,7 +362,7 @@ const {
               height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
               pixelRatio,
               sampleRate,
-              media: new WebAudioPlayer(audioContextRef.current),
+              // FIXED: Don't create WebAudioPlayer here - let multitrack handle it with audioOffset
             } as unknown as TrackOptions['options']
           });
         });

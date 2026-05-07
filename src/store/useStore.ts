@@ -16,6 +16,7 @@ export interface Phrase {
   endCue?: number;
   createdAt: number;
   name?: string;
+  audioOffset?: number; // NEW: Skip N seconds from buffer start during playback
 }
 
 export interface EnvelopeNode {
@@ -33,6 +34,7 @@ export interface Track {
   volume: number;
   pan: number;
   offset: number; // Latency compensation / manual nudge in seconds
+  audioOffset?: number; // NEW: Skip N seconds from buffer start during playback
   phrases: Phrase[];
   envelope: EnvelopeNode[];
 }
@@ -246,11 +248,16 @@ export const useStore = create<AppState>()(
           const track = state.tracks.find(t => t.id === trackId);
           if (track) {
             const takeNumber = track.phrases.length + 1;
-            track.phrases.push({ 
+            const newPhrase = { 
               ...phrase, 
               id: Math.random().toString(36).substr(2, 9),
               name: `Take ${takeNumber}`
-            });
+            };
+            track.phrases.push(newPhrase);
+            // FIXED: Update track.audioOffset so multitrack can use it
+            if (newPhrase.audioOffset !== undefined) {
+              track.audioOffset = newPhrase.audioOffset;
+            }
           }
         }),
         updatePhrase: (trackId, phraseId, updates) => set((state) => {
