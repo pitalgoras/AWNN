@@ -261,17 +261,22 @@ export class RecordingEngine {
     console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
     // NO trimming - keep all audio data
-    // Calculate audioOffset: skip recHeadstart + latencies (for playback sync)
-    // Pre-roll is NOT in the buffer (fixed: AudioWorklet starts 1s before punch-in)
+    // Calculate audioOffset: skip pre-roll + recHeadstart + latencies (for playback sync)
+    // Pre-roll audio might be in buffer if AudioWorklet started too early
     const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
     const headDuration = 1.0; // The recHeadstart we captured
     const inputLatencySec = this.config.globalLatencyMs / 1000; // Input latency compensation
     
-    // audioOffset = -(recHeadstart + output latency + input latency)
-    // Pre-roll is NOT in buffer, so don't skip it
-    const audioOffset = -(headDuration + outputLatencySec + inputLatencySec);
+    // Pre-roll duration: if pre-roll was active when recording started
+    const preRollDuration = (this.config.preRollMode !== 'none' && !this.config.isPlaying) 
+      ? (60 / this.config.bpm) * this.config.timeSignature[0] 
+      : 0;
+    
+    // audioOffset = -(pre-roll + recHeadstart + output latency + input latency)
+    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
     
     console.log('handleAudioWorkletStop: audioOffset breakdown:', {
+      preRollDuration,
       headDuration,
       outputLatencySec,
       inputLatencySec,
