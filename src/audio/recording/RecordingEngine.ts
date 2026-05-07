@@ -519,16 +519,18 @@ export class RecordingEngine {
         // Playing: currentTime IS the Real Time
         punchInUserTime_Real = audioContext.currentTime;
       } else {
-        // Stopped: Calculate when punch-in will occur after playback starts
-        // Playhead starts from recordStartUserTime, need to travel to punchInUserTime
-        const timeUntilPunchIn = (punchInUserTime - recordStartUserTime) - 1.0; // -1.0 for recHeadstart
-        punchInUserTime_Real = audioContext.currentTime + Math.max(0, timeUntilPunchIn);
+        // Stopped: Playback will start after a short delay (seek + onSetIsPlaying)
+        const startupDelay = 0.15; // Approximate delay until playback starts
+        const timeFromPlaybackStartToPunchIn = punchInUserTime - recordStartUserTime;
+        // punchInUserTime_Real = when punch-in will occur in AudioContext time
+        punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn;
       }
       
       console.log('startRecording: punchInUserTime_Real calculated', {
         punchInUserTime_Real,
         audioCtxTime: audioContext.currentTime,
-        timeUntilPunchIn: punchInUserTime - recordStartUserTime
+        timeFromPlaybackStartToPunchIn: punchInUserTime - recordStartUserTime,
+        isCurrentlyPlaying
       });
       
       if (this.useAudioWorklet) {
