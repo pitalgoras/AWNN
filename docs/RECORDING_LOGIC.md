@@ -1,179 +1,82 @@
-# Recording Logic & Features (audioOffset Approach)
+# Recording Logic & Features
 
-## Current Recording Logic (audioOffset for Sync)
+## Terminology
 
-### The Concept
-```
-Audio Buffer (complete):
-[  1s pre-roll audio   ][  actual recording...        ]
-^                        ^ 
-|                        |
-punchInUserTime - 1s      punchInUserTime (User Time)
-
-Visual Clip (what user sees):
-                      [  actual recording...        ]
-                      ^
-                      |
-               punchInUserTime (startPosition)
-
-Playback (with audioOffset):
-                      [  actual recording...        ]
-                      ^
-                      |
-            Audio starts here (offset skips the 1s head)
-```
-
-1. ✅ **NO trimming** - Keep the 1s head in audio buffer
-2. ✅ **Clip `startPosition = punchInUserTime`** - Timeline position (User Time)
-3. ✅ **`audioOffset = -(1.0s head + latencySec)`** - Skip head during playback
-4. ✅ **Purpose** - Audio stays IN SYNC with other tracks!
-5. ✅ **Latency compensation = relative** - Between tracks, NOT absolute timeline position
-
-### How audioOffset Works
-
-**Formula**: `audioOffset = -(headDuration + latencySec)`
-- `headDuration = 1.0s` (the pre-roll head we captured)
-- `latencySec = (globalLatencyMs + extraLatencyMs) / 1000`
-
-**Example**: 
-- `globalLatencyMs = 131ms`, `extraLatencyMs = 0`
-- `latencySec = 0.131s`
-- `audioOffset = -(1.0 + 0.131) = -1.131s`
-
-**Result**: When timeline reaches `punchInUserTime`, playback skips 1.131s into the buffer → audio is IN SYNC!
+| Term | Definition |
+|------|-------------|
+| **Rolling buffer** | 2-second continuous capture in AudioWorklet, always active during playback |
+| **Capture** | The AudioWorklet's act of recording into rolling buffer |
+| **Recording** | Final saved audio (includes head if present) |
+| **Head** | Audio already in rolling buffer (~1s) when user presses Record - VALID pre-punch-in audio |
+| **Pre-roll** | 1 bar (2s at 120 BPM) of PLAYBACK before punch-in - for timing, NOT recording |
 
 ---
 
-## Simplified Approach (ALL Cases Same)
+## States Table
 
-| Case | AudioWorklet Start | Clip startPosition | audioOffset |
-|------|-------------------|------------------|-------------|
-| Pre-roll "always" | `punchInUserTime_Real - 1s` | `punchInUserTime` | `-(1.0s + latency)` |
-| Live punch-in (playing) | `punchInUserTime_Real - 1s` | `punchInUserTime` | `-(1.0s + latency)` |
-| "none" + not playing | `currentFrame` (no buffer) | `punchInUserTime` | `-(1.0s + latency)` |
+| # | Pre-roll mode | State when Record pressed | Head? | startPosition | audioOffset |
+|---|--------------|--------------------------|------|---------------|-------------|
+| 1 | always | STOPPED | YES | punchInTime - headLength | NO |
+| 2 | always | PLAYING | YES | punchInTime - headLength | NO |
+| 3 | none | STOPPED | YES | punchInTime - headLength | NO |
+| 4 | none | PLAYING | YES | punchInTime - headLength | NO |
 
-**The simplification**: 
-1. AudioWorklet decides when to start using its own `currentTime`
-2. Start recording 1s before `punchInUserTime_Real`
-3. `audioOffset` handles sync during playback
+**For ALL states:**
+- `startPosition = punchInTime - headLength`
+- `audioOffset = NO` (not needed - WaveSurfer plays from startPosition which matches audio position)
+
+### Where:
+- **headLength**: Duration of audio already captured in rolling buffer when Record pressed
+- When Stopped: Rolling buffer always has ~1s of audio → head captured
+- When Playing: Recording starts early → rolling buffer provides head from recent audio
 
 ---
 
-## User Time vs Real Time (CRITICAL DISTINCTION)
+## How It Works
+
+### Recording Flow
+1. Rolling buffer captures continuously during playback
+2. User presses Record at punchInTime
+3. Recording captures from rolling buffer which has headLength of audio BEFORE punchInTime
+4. Saved audio buffer = [head][actual recording...]
+5. Visual clip starts at `punchInTime` in timeline
+
+### Playback Flow
+1. User plays timeline
+2. WaveSurfer reaches startPosition (punchInTime - headLength)
+3. Audio starts from buffer position 0 = headLength offset from punchInTime
+4. Audio plays IN SYNC with timeline!
+
+### Key Insight
+Visual position + audio buffer position work together:
+- `startPosition` tells WaveSurfer where to show the clip
+- `startPosition` also tells WaveSurfer where to START audio in the buffer
+- No separate offset calculation needed!
+
+---
+
+## User Time vs Real Time
 
 | Concept | User Time (Timeline) | Real Time (AudioContext) |
 |---------|----------------------|--------------------------|
 | **Definition** | Timeline position (Bar 1 = 0) | `audioContext.currentTime` (since creation) |
-| **Example** | `punchInUserTime = 0` (Bar 1) | `audioContext.currentTime = 6.93s` |
-| **Bar 0** | Negative (e.g., -2s) | N/A |
 | **Used For** | `startPosition`, timeline display | AudioWorklet frames, WebAudio API |
-| **Variable** | `punchInUserTime` | `currentFrame`, `startFrame` |
 
-**Key Rules**:
-- `punchInUserTime` is **User Time** → used for `startPosition` (where clip appears on timeline)
-- AudioWorklet uses **Real Time** frames (`currentFrame`, `currentTime`) for sync
-- Rolling buffer stores **Real Time** frames (`currentFrame`)
-- `audioOffset` is calculated in **User Time** (seconds to skip during playback)
+- `punchInUserTime` is **User Time** → used for `startPosition`
+- AudioWorklet uses **Real Time** for capture timing
 
 ---
 
-## 4 Timing Evils (How We Fight Them)
+## Implementation
 
-1. **Input Latency** → `globalLatencyMs` (handled)
-2. **Output Latency** → `outputLatency` (handled)
-3. **Recording/Playback Jitter** → AudioWorklet shared clock (already addressed)
-4. **UI Delays/Startup Delay** → **Rolling buffer** (AudioWorklet, 2 seconds) - Fight by capturing continuously!
+### RecordingEngine.ts
+- Calculate `punchInUserTime` when Record pressed
+- Set `startPosition = punchInUserTime - headLength` for all states
+- Set `audioOffset = 0` (not needed)
 
-### Rolling Buffer Purpose
-- **Fights startup delay** (Evil #4): By capturing continuously during playback, when user presses Record, the buffer already has audio from before the button press → no startup latency.
-- **Stores Real Time frames** in AudioWorklet processor
-- **Retrieval**: On `START_RECORDING`, AudioWorklet starts recording at `currentFrame` when `currentTime >= targetStartReal`
-
----
-
-## AudioWorklet Implementation
-
-### How It Works (audioOffset Approach)
-```
-Audio Buffer (complete):
-[  1s pre-roll audio   ][  actual recording...        ]
-^                        ^ 
-|                        |
-Recording starts here      punchInUserTime_Real
-
-Playback (with audioOffset):
-                      [  actual recording...        ]
-                      ^
-                      |
-            Audio starts here (offset = -1.131s)
-```
-
-1. **AudioWorklet** runs continuously during playback (2-second rolling buffer)
-2. **When user presses Record**: `START_RECORDING` sent with `punchInUserTime_Real`
-3. **AudioWorklet decides when to start**: Uses its own `currentTime` to start 1s before `punchInUserTime_Real`
-4. **NO trimming** - Keep the 1s head in audio buffer
-5. **Clip `startPosition = punchInUserTime`** - Timeline position (User Time)
-6. **`audioOffset = -(1.0s + latencySec)`** - Skip head during playback
-7. **Result**: Audio plays IN SYNC with other tracks!
-
-### Benefits
-1. **Shared jitter**: Playback and recording drift together → stay in sync
-2. **Sample-accurate timing**: `currentFrame / sampleRate` = exact AudioContext time
-3. **No separate clock compensation needed** for jitter (still need #1 and #2)
-4. **Startup delay eliminated** - Buffer has audio from before punch-in (timing evil #4)
-5. **AudioOffset handles sync** - Skip head + compensate latency during playback
-
----
-
-## Future Features
-
-### 1. WaveSurfer Masking (Hide Pre-roll Visually)
-**Location**: `src/lib/multitrack/multitrack.ts`
-
-**Requirement**: 
-- Hide the first 1s of waveform visually (the pre-roll head)
-- Audio data remains in buffer (for offset/fade-in)
-- Clip still appears at `punchInUserTime` (correct visual position)
-
-**Implementation**:
-1. Add CSS mask/gradient to first 1s of waveform region
-2. OR use WaveSurfer region with opacity
-
-**Status**: Postponed - audioOffset already handles sync!
-
----
-
-### 2. Offset Adjustment (UI Nudge)
-**Location**: UI + Store actions
-
-**Requirement**: 
-- Use the masked 1s audio to adjust clip timing
-- Allow nudging the clip's audio relative to its visual position
-- Example: If clip starts 50ms late, adjust `audioOffset` to `-1.05s`
-
-**Implementation**:
-1. Store `audioOffset` in phrase data (already done!)
-2. UI: Drag handle to adjust offset
-3. Update `WebAudioPlayer.offset` dynamically
-
-**Status**: Postponed - core sync works with fixed offset!
-
----
-
-### 3. Fade-In (Using Masked Audio)
-**Location**: Audio processing + WaveSurfer rendering
-
-**Requirement**: 
-- Apply fade to the first 1s (which is masked visually)
-- User can choose fade duration (0.5s, 1s, etc.)
-- Uses the masked audio (no need to re-record)
-
-**Implementation**:
-1. In `handleAudioWorkletStop()`: Apply linear fade-in to first N samples
-2. Or apply via WaveSurfer region rendering (CSS opacity gradient?)
-3. Store fade-in duration in phrase data
-
-**Status**: Postponed - nice-to-have after core recording works.
+### multitrack.ts / WebAudioPlayer
+- Use `startPosition` from track as both visual position AND playback start position
+- No audioOffset passed = plays from buffer start = matches headLength offset automatically
 
 ---
 
@@ -181,39 +84,7 @@ Playback (with audioOffset):
 
 | File | Purpose |
 |------|---------|
-| `public/worklets/recorder.worklet.js` | AudioWorklet rolling buffer (2s), decides start via `currentTime` |
-| `src/audio/recording/RecordingEngine.ts` | `punchInUserTime`, `startPos = punchInUserTime`, `audioOffset` calculation |
-| `src/lib/multitrack/multitrack.ts` | Uses `audioOffset` in WaveSurfer via `WebAudioPlayer` |
-| `src/lib/multitrack/webaudio.ts` | `WebAudioPlayer` supports `offset` parameter |
-| `docs/AUDIO_LOGIC_SPECS.md` | Updated with User/Real Time distinction |
-| `docs/REFACTORING_LOG.md` | Documents AudioWorklet approach, audioOffset feature |
-| `docs/RECORDING_LOGIC.md` | This file - Clean summary |
-
----
-
-## Testing Checklist
-
-- [x] Recording creates clip with duration > 1 second (not 20ms)
-- [x] Clip appears at `punchInUserTime` (where Record was pressed)
-- [x] NO trimming of audio data
-- [x] `audioOffset` skips head + compensates latency
-- [x] Audio plays IN SYNC with other tracks!
-- [ ] WaveSurfer masks/hides first 1s of waveform (future)
-- [x] Multiple recordings at different positions work
-- [x] Pre-roll "always" → clip at `punchInUserTime` (Bar 1 = 0)
-- [x] Live punch-in → clip at current playhead position
-- [x] Latency compensation works (bluetooth, USB, etc.)
-
----
-
-## Git History (Relevant Commits)
-
-```
-f4b742a feat: Add audioOffset support - WebAudioPlayer skip head + latency
-c57a68c feat: AudioWorklet decides start via currentTime, audioOffset with latency compensation
-b32e74d fix: Simplify AudioWorklet - remove recordingStartTime, use currentFrame - sampleRate
-ddff309 fix: AudioWorklet event reference bug - store recordingStartTime in class property
-3a3eb32 fix: Recording 1s head + temp startPos=punchInUserTime-1s + comments + docs
-a9a6976 fix: Read currentTime from store in startRecording() to avoid stale config
-9519804 Clean up useAudioEngine by removing unused refs and functions
-```
+| `public/worklets/recorder.worklet.js` | AudioWorklet rolling buffer (2s) |
+| `src/audio/recording/RecordingEngine.ts` | startPosition logic |
+| `src/lib/multitrack/multitrack.ts` | Track management |
+| `src/lib/multitrack/webaudio.ts` | WebAudioPlayer (no offset) |

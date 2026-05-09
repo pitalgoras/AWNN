@@ -33,9 +33,8 @@ class WebAudioPlayer {
     if (options?.offset !== undefined) {
       this._offset = options.offset;
       console.log('WebAudioPlayer [ID:' + this._id + ']: offset set to', this._offset);
-    } else {
-      console.warn('WebAudioPlayer [ID:' + this._id + ']: created WITHOUT offset! Stack:', new Error().stack);
     }
+    // No warning for tracks without offset - this is normal for initial placeholder tracks
   }
 
   addEventListener(event: string, listener: () => void, options?: { once?: boolean }) {

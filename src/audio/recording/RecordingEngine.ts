@@ -1,6 +1,15 @@
 /**
  * RecordingEngine - Encapsulates all recording logic
  * Extracted from useAudioEngine.ts for modularity
+ * 
+ * Recording Logic (user time = timeline position):
+ * - Rolling buffer captures 1s of audio BEFORE recording starts (when pressed from stop)
+ * - This "head" contains audio from the rolling buffer (garbage, should be skipped)
+ * - When recording WHILE PLAYING: no head captured (recording starts at punch-in time)
+ * 
+ * startPosition calculation:
+ * - From STOP (any preRoll): headLength = 1s, startPos = punchInUserTime - 1
+ * - While PLAYING: headLength = 0, startPos = punchInUserTime
  */
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
@@ -45,6 +54,8 @@ export class RecordingEngine {
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
+  private recordingStartedWhilePlaying = false; // Track state when recording started
+  private headLength = 1.0; // Duration of rolling buffer head (from STOP, always captures ~1s)
 
   // AudioWorklet recording (shared clock with playback)
   private audioWorkletNode: AudioWorkletNode | null = null;
@@ -275,7 +286,7 @@ export class RecordingEngine {
       : 0;
     
     // audioOffset = -(pre-roll + recHeadstart + output latency + input latency)
-    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
+    const audioOffset = 0; // No trimming - keep buffer as-is, position via startPosition
     
     console.log('handleAudioWorkletStop: audioOffset breakdown:', {
       preRollDuration,
@@ -285,8 +296,11 @@ export class RecordingEngine {
       total: audioOffset
     });
     
-    // FIXED: startPos = punchInUserTime (correct visual position)
-    const startPos = this.punchInUserTime;
+    // FIXED: startPos based on recording state
+    // From STOP: always has rolling buffer head (~1s), skip it → startPos = punchInTime - headLength
+    // While PLAYING: no head → startPos = punchInTime
+    const headLength = this.recordingStartedWhilePlaying ? 0 : this.headLength;
+    const startPos = this.punchInUserTime - headLength;
 
     // Decode audio without trimming
     let finalAudioBuffer: AudioBuffer | undefined;
@@ -372,7 +386,7 @@ export class RecordingEngine {
       ? (60 / this.config.bpm) * this.config.timeSignature[0] 
       : 0;
     
-    const audioOffset = -(preRollDuration + headDuration + outputLatencySec + inputLatencySec);
+    const audioOffset = 0; // No trimming - keep buffer as-is, position via startPosition
     
     console.log('handleAudioWorkletStop: audioOffset breakdown:', {
       preRollDuration,
@@ -382,8 +396,11 @@ export class RecordingEngine {
       total: audioOffset
     });
     
-    // FIXED: startPos = punchInUserTime (correct visual position)
-    const startPos = this.punchInUserTime;
+    // FIXED: startPos based on recording state
+    // From STOP: always has rolling buffer head (~1s), skip it → startPos = punchInTime - headLength
+    // While PLAYING: no head → startPos = punchInTime
+    const headLength = this.recordingStartedWhilePlaying ? 0 : this.headLength;
+    const startPos = this.punchInUserTime - headLength;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -428,6 +445,7 @@ export class RecordingEngine {
       // Step 1: Calculate punchInUserTime (User Time)
       const storeState = this.callbacks.getStoreState();
       const isCurrentlyPlaying = this.config.isPlaying;
+      this.recordingStartedWhilePlaying = isCurrentlyPlaying;
       
       const beatsPerSecond = this.config.bpm / 60;
       const secondsPerBeat = 1 / beatsPerSecond;

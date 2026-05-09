@@ -15,22 +15,15 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 *   **Drag-to-Delete:** Nodes can be deleted by dragging them vertically far outside (60px+) the track boundaries.
 
 ## 3. Recording, Pre-roll & Tempo Logic
-*   **Pre-roll (Count-in) Behavior:**
-    *   **When stopped:** A 1-bar pre-roll is applied to recordings if the `preRollMode` is set to 'always' or 'recording'. The AudioWorklet starts recording 1 second before `punchInUserTime` (using its own `currentTime`), and this pre-roll portion is kept in the audio buffer. If `preRollMode` is 'none', recording starts immediately without a count-in.
-    *   **When already playing:** If the user presses record while playback is already active, recording starts immediately at the current playhead position without any count-in, regardless of the `preRollMode` setting. This allows for seamless "punch-in" recording during playback without interrupting the flow.
-*   **User Time vs. Real Time (Updated):**
-    *   **Real Time:** Actual seconds from start of project. Bar 0 = 0s to `secondsPerBar`, Bar 1 = `secondsPerBar` to `2*secondsPerBar`.
-    *   **User Time:** Shifted by `+secondsPerBar`. User Time 0 = Bar 1.1 = Real Time `secondsPerBar`.
-    *   **Bar 0 Purpose:** EXCLUSIVELY for pre-roll count-in. NOT a normal bar for recording.
-    *   **Phrase Storage:** `startPosition` stored in User Time (so Bar 1.1 = position 0).
-    *   **Timeline Rendering:** `TimelineGrid` hides Bar 0 during normal playback, reveals during pre-roll.
-*   **Recording & Clip Placement (audioOffset Approach):**
-        - **`punchInUserTime`** = User Time (where Record button was pressed).
-        - **Clip `startPosition`** = `punchInUserTime` (clip appears at punch-in position on timeline).
-        - **Audio Buffer** = Starts from `punchInUserTime_Real - 1s` (Real Time frame), keeping 1s pre-roll audio.
-        - **NO Trimming:** Audio buffer keeps the 1s head (for offset adjustment or fade-in).
-        - **`audioOffset = -(1.0s head + latencySec)`** - Skip head during playback for sync!
-        - **WaveSurfer Masking (Future):** First 1s of waveform is visually hidden (masked), but audio data is kept in buffer.
+*   **Pre-roll (Count-in) Behavior (UPDATED):**
+    *   **Rolling Buffer:** Always captures ~2s of audio during playback
+    *   **Head:** Audio already in rolling buffer when Record pressed (~1s) - VALID pre-punch-in audio
+    *   **Pre-roll Mode:** Affects PLAYBACK timing (when to start), NOT recording capture
+*   **Recording Logic (UPDATED):**
+    *   **All states:** `startPosition = punchInTime - headLength`, `audioOffset = NO`
+    *   **Rolling buffer** always captures during playback → HEAD is ALWAYS present (~1s)
+    *   **WaveSurfer plays from startPosition** → matches audio position in buffer directly
+    *   **NO audioOffset needed** - the visual position already accounts for the head!
 *   **Tempo Control (BpmInput):**
     *   **Interaction:** Supports direct typing (3-digit), vertical scrubbing (drag-to-change), and arrow keys (Up/Down).
     *   **Responsiveness:** The UI prioritizes input responsiveness. Metronome regeneration is debounced (500ms) to prevent audio processing from interrupting the user's input flow.
