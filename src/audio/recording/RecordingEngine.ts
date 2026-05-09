@@ -54,8 +54,7 @@ export class RecordingEngine {
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
-  private recordingStartedWhilePlaying = false; // Track state when recording started
-  private headLength = 1.0; // Duration of rolling buffer head (from STOP, always captures ~1s)
+  private headLength = 1.0; // Duration of rolling buffer head (always captures ~1s)
 
   // AudioWorklet recording (shared clock with playback)
   private audioWorkletNode: AudioWorkletNode | null = null;
@@ -296,10 +295,9 @@ export class RecordingEngine {
       total: audioOffset
     });
     
-    // FIXED: startPos based on recording state
-    // From STOP: always has rolling buffer head (~1s), skip it → startPos = punchInTime - headLength
-    // While PLAYING: no head → startPos = punchInTime
-    const headLength = this.recordingStartedWhilePlaying ? 0 : this.headLength;
+    // FIXED: startPosition based on headLength (ALL states have head)
+    // Rolling buffer always captures ~headLength before recording starts
+    const headLength = this.headLength;
     const startPos = this.punchInUserTime - headLength;
 
     // Decode audio without trimming
@@ -396,10 +394,9 @@ export class RecordingEngine {
       total: audioOffset
     });
     
-    // FIXED: startPos based on recording state
-    // From STOP: always has rolling buffer head (~1s), skip it → startPos = punchInTime - headLength
-    // While PLAYING: no head → startPos = punchInTime
-    const headLength = this.recordingStartedWhilePlaying ? 0 : this.headLength;
+    // FIXED: startPosition based on headLength (ALL states have head)
+    // Rolling buffer always captures ~headLength before recording starts
+    const headLength = this.headLength;
     const startPos = this.punchInUserTime - headLength;
 
     // Pre-calculate peaks
@@ -445,7 +442,6 @@ export class RecordingEngine {
       // Step 1: Calculate punchInUserTime (User Time)
       const storeState = this.callbacks.getStoreState();
       const isCurrentlyPlaying = this.config.isPlaying;
-      this.recordingStartedWhilePlaying = isCurrentlyPlaying;
       
       const beatsPerSecond = this.config.bpm / 60;
       const secondsPerBeat = 1 / beatsPerSecond;
