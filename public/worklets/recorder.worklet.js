@@ -26,6 +26,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._shouldStop = false;
     this._shouldStart = false;
     this._targetStartReal = 0; // When to start recording (Real Time)
+    this._targetPlaybackReal = 0; // When playback should start (for none mode)
+    this._captureImmediately = false; // If true, start recording immediately (none mode)
     this._performanceStartFrame = 0; // When performance starts (for sync)
     
     this.port.onmessage = (event) => {
@@ -37,14 +39,27 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStart = true;
-        // Store target start time (1s before punchInUserTime)
+        this._captureImmediately = event.data.captureImmediately || false;
+        
         if (event.data.punchInUserTime_Real !== undefined) {
-          this._targetStartReal = event.data.punchInUserTime_Real - 1.0;
+          // For none mode (captureImmediately): recording starts immediately
+          // playback starts delayed (targetPlaybackReal = punchInTime - 1s)
+          if (this._captureImmediately) {
+            // Start recording immediately (next process() call)
+            this._targetStartReal = 0;
+            this._targetPlaybackReal = event.data.punchInUserTime_Real - 1.0;
+          } else {
+            // For pre-roll/always: delay both recording and playback
+            this._targetStartReal = event.data.punchInUserTime_Real - 1.0;
+            this._targetPlaybackReal = this._targetStartReal;
+          }
           this._performanceStartFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
           this.port.postMessage({
             type: 'DEBUG',
             msg: 'START_RECORDING received',
             targetStartReal: this._targetStartReal,
+            targetPlaybackReal: this._targetPlaybackReal,
+            captureImmediately: this._captureImmediately,
             performanceStartFrame: this._performanceStartFrame,
             punchInUserTime_Real: event.data.punchInUserTime_Real,
           });
@@ -82,9 +97,10 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           type: 'RECORDING_STARTED',
           startTime: this._recordingStartFrame / sampleRate,
           performanceStartFrame: this._performanceStartFrame,
+          targetPlaybackReal: this._targetPlaybackReal,
           currentTime: currentTime,
           targetStartReal: this._targetStartReal,
-          msg: 'Recording started at currentFrame=' + currentFrame + ', targetStartReal=' + this._targetStartReal,
+          msg: 'Recording started at currentFrame=' + currentFrame + ', targetStartReal=' + this._targetStartReal + ', targetPlaybackReal=' + this._targetPlaybackReal,
         });
       }
     }

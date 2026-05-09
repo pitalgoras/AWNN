@@ -51,6 +51,7 @@ export function useAudioEngine() {
   // Engine refs for modular audio architecture
   const metronomeEngineRef = useRef<MetronomeEngine | null>(null);
   const recordingEngineRef = useRef<RecordingEngine | null>(null);
+  const wasPlayingRef = useRef(false);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
 const { 
@@ -1034,7 +1035,22 @@ const {
         }
       }
     } else {
-      setIsPlaying(!isPlaying);
+      const newPlayingState = !isPlaying;
+      
+      // Start AudioWorklet early when going from stopped to playing
+      if (!wasPlayingRef.current && newPlayingState) {
+        console.log('playPause: transitioning from stopped to playing, initializing AudioWorklet early');
+        recordingEngineRef.current?.initializeForPlayback();
+      }
+      
+      // Stop AudioWorklet when going from playing to stopped
+      if (wasPlayingRef.current && !newPlayingState) {
+        console.log('playPause: transitioning from playing to stopped, stopping AudioWorklet');
+        recordingEngineRef.current?.stopForPlayback();
+      }
+      
+      wasPlayingRef.current = newPlayingState;
+      setIsPlaying(newPlayingState);
     }
   }, [isPlaying, setIsPlaying, setIsRecording]);
 
