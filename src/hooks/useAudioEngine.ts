@@ -148,7 +148,9 @@ const {
                 peaks: p.peaks,
                 startPosition: p.startPosition,
                 duration: p.duration,
+                headLength: p.headLength,
                 anchoredFrame: p.anchoredFrame,
+                originalAnchoredFrame: p.originalAnchoredFrame,
               })),
             } as any;
             multitrackRef.current.addTrack(trackOptions);
@@ -385,6 +387,9 @@ const {
             startPosition: realStartPosition,
             startCue: p.startCue,
             endCue: p.endCue,
+            headLength: p.headLength,
+            anchoredFrame: p.anchoredFrame,
+            originalAnchoredFrame: p.originalAnchoredFrame,
             volume: t.isMuted ? 0 : t.volume,
             draggable: true,
             options: {

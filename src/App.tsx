@@ -260,7 +260,9 @@ export default function App() {
             peaks: p.peaks,
             startPosition: p.startPosition,
             duration: p.duration,
+            headLength: p.headLength,
             anchoredFrame: p.anchoredFrame,
+            originalAnchoredFrame: p.originalAnchoredFrame,
           })),
         } as any;
         multitrackRef.current?.addTrack(trackOptions);
@@ -1473,6 +1475,9 @@ export default function App() {
                               peaks,
                               startPosition: useStore.getState().currentTime,
                               duration: audioBuffer.duration,
+                              headLength: useStore.getState().headLength,
+                              anchoredFrame: 0,
+                              originalAnchoredFrame: 0,
                               createdAt: Date.now()
                             });
                           } catch (err) {

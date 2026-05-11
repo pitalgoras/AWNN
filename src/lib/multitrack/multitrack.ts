@@ -42,7 +42,9 @@ export type TrackOptions = {
     color?: string
   }
   options?: Omit<SingleTrackOptions, 'media'> & { media?: unknown }
-  anchoredFrame?: number // NEW: Frame offset from UserTime 0
+  headLength?: number // Per-clip head length for sync
+  anchoredFrame?: number // Frame offset from UserTime 0
+  originalAnchoredFrame?: number // Original anchor for Reset/Undo
 }
 
 export type MultitrackOptions = {

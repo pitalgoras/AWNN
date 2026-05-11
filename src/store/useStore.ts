@@ -11,12 +11,14 @@ export interface Phrase {
   peaks?: number[][]; // Pre-calculated peaks for WaveSurfer
   startPosition: number;
   originalStartPosition?: number;
+  headLength: number; // Head length used when this clip was recorded
+  anchoredFrame?: number; // Frame offset from UserTime 0 (ground truth)
+  originalAnchoredFrame?: number; // Original anchor for Reset/Undo
   duration: number;
   startCue?: number;
   endCue?: number;
   createdAt: number;
   name?: string;
-  anchoredFrame?: number; // NEW: Frame offset from UserTime 0 (for stable sync)
 }
 
 export interface EnvelopeNode {
@@ -289,6 +291,16 @@ export const useStore = create<AppState>()(
           if (Math.abs(delta) < 0.0001) return;
 
           phrase.startPosition = newPosition;
+          // UN-ANCHOR: Clear anchoredFrame when moved so audio plays at new position
+          // Only keep anchor if returning to original position (within tolerance)
+          if (phrase.originalAnchoredFrame !== undefined && phrase.originalAnchoredFrame !== 0) {
+            const originalStartPos = (phrase.originalAnchoredFrame / (44100)) - phrase.headLength;
+            if (Math.abs(newPosition - originalStartPos) > 0.01) {
+              // Moved to different position - clear anchor
+              phrase.anchoredFrame = 0;
+            }
+            // If within tolerance of original position, keep anchor
+          }
           // Shift envelope nodes that are within the phrase's time range
           track.envelope.forEach(node => {
             if (node.time >= oldPosition - 0.01 && node.time <= oldPosition + phrase.duration + 0.01) {

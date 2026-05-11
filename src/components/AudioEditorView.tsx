@@ -1055,6 +1055,9 @@ export default function AudioEditorView() {
                               peaks,
                               startPosition: useStore.getState().currentTime,
                               duration: audioBuffer.duration,
+                              headLength: useStore.getState().headLength,
+                              anchoredFrame: 0,
+                              originalAnchoredFrame: 0,
                               createdAt: Date.now()
                             });
                           } catch (err) {

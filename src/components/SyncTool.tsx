@@ -22,18 +22,19 @@ export const SyncTool: React.FC = () => {
   const [scrollTop, setScrollTop] = useState(0);
   const toolRef = useRef<HTMLDivElement>(null);
   
-  // Find selected phrase and calculate its visual row index
-  let selectedPhrase: { id: string; name: string; startPosition: number; duration: number; originalStartPosition?: number } | null = null;
-  let selectedTrack: { id: string; phrases: { id: string; name: string; startPosition: number; duration: number }[] } | null = null;
+// Find selected phrase and calculate its visual row index
+  type PhraseWithSync = { id: string; name: string; startPosition: number; duration: number; originalStartPosition?: number; headLength: number; anchoredFrame?: number; originalAnchoredFrame?: number };
+  let selectedPhrase: PhraseWithSync | null = null;
+  let selectedTrack: { id: string; phrases: PhraseWithSync[] } | null = null;
   let trackIndex = -1;
-  
+
   const trackList = tracks || [];
   for (let i = 0; i < trackList.length; i++) {
     const t = trackList[i];
     for (const p of (t.phrases || [])) {
       if (p.id === selectedPhraseId) {
-        selectedPhrase = p as { id: string; name: string; startPosition: number; duration: number; originalStartPosition?: number };
-        selectedTrack = t as { id: string; phrases: { id: string; name: string; startPosition: number; duration: number }[] };
+        selectedPhrase = p as PhraseWithSync;
+        selectedTrack = t as { id: string; phrases: PhraseWithSync[] };
         trackIndex = i;
         break;
       }
@@ -130,7 +131,7 @@ export const SyncTool: React.FC = () => {
       className="absolute z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 flex flex-col gap-3 transition-all duration-100 min-w-[360px]"
       style={{ left, top }}
     >
-      {/* Row 1: Name and Latency Compensation */}
+      {/* Row 1: Name and Head Length */}
       <div className="flex items-center gap-3">
         <div className="flex flex-col gap-1">
           <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Phrase Name</div>
@@ -151,6 +152,25 @@ export const SyncTool: React.FC = () => {
 
         <div className="w-px h-8 bg-gray-600 mx-1"></div>
 
+        <div className="flex flex-col gap-1">
+          <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Head (s)</div>
+          <input 
+            type="number"
+            min="0"
+            max="1"
+            step="0.1"
+            value={selectedPhrase.headLength}
+            onChange={(e) => {
+              const val = parseFloat(e.target.value);
+              if (!isNaN(val)) {
+                updatePhrase(selectedTrack.id, selectedPhrase.id, { headLength: val });
+              }
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-xs text-white focus:outline-none focus:border-indigo-500 w-14 text-right"
+          />
+        </div>
+
         <div className="flex flex-col gap-1 flex-1">
           <div className="text-[10px] text-gray-300 font-medium mb-1">Nudge Clip Position:</div>
           <div className="flex items-center gap-1">
@@ -166,17 +186,26 @@ export const SyncTool: React.FC = () => {
 
       {/* Row 2: Actions */}
       <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
-        {selectedPhrase.originalStartPosition !== undefined && (
+        {selectedPhrase.originalAnchoredFrame !== undefined && selectedPhrase.originalAnchoredFrame !== 0 && (
           <>
             <button 
-              onClick={() => updatePhrasePosition(selectedTrack.id, selectedPhrase.id, selectedPhrase.originalStartPosition!)} 
+              onClick={() => {
+                // Reset: restore anchor and calculate new startPosition using clip's headLength
+                const originalAnchoredFrame = selectedPhrase.originalAnchoredFrame;
+                const sampleRate = 44100; // TODO: get from audioContext
+                const newStartPosition = (originalAnchoredFrame / sampleRate) - selectedPhrase.headLength;
+                updatePhrase(selectedTrack.id, selectedPhrase.id, {
+                  anchoredFrame: originalAnchoredFrame,
+                  startPosition: Math.max(0, newStartPosition)
+                });
+              }} 
               className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-[10px] text-white transition-colors" 
               title="Reset to original recorded position"
             >
               Reset
             </button>
             
-            {selectedPhrase.startPosition < selectedPhrase.originalStartPosition && (
+            {selectedPhrase.startPosition < selectedPhrase.originalStartPosition! && (
               <button 
                 onClick={() => {
                   const latencySec = selectedPhrase.originalStartPosition! - selectedPhrase.startPosition;

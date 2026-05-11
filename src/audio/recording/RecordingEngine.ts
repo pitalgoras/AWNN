@@ -370,7 +370,10 @@ export class RecordingEngine {
       audioBuffer: finalAudioBuffer,
       peaks: peaks,
       startPosition: startPos,
+      originalStartPosition: startPos, // Store original for "Undo" restore
+      headLength: this.headLength,
       anchoredFrame: 0, // MediaRecorder fallback: no anchored frame
+      originalAnchoredFrame: 0,
       duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1,
       createdAt: Date.now()
     });
@@ -456,7 +459,10 @@ export class RecordingEngine {
       audioBuffer: audioBuffer,
       peaks: peaks,
       startPosition: startPos,
+      originalStartPosition: startPos, // Store original for "Undo" restore
+      headLength: this.headLength,
       anchoredFrame: anchoredFrame,
+      originalAnchoredFrame: anchoredFrame,
       duration: audioBuffer.duration,
       createdAt: Date.now()
     });
