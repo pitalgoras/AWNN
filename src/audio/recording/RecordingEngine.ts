@@ -24,6 +24,7 @@ export interface RecordingConfig {
   preRollMode: string;
   isPlaying: boolean;
   currentTime: number;
+  headLength: number; // Rolling buffer head length
   audioContextRef: React.RefObject<AudioContext | null>;
   useAudioWorklet?: boolean; // Use AudioWorklet for recording (shared clock with playback)
 }
@@ -54,7 +55,10 @@ export class RecordingEngine {
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
-  private headLength = 1.0; // Duration of rolling buffer head (always captures ~1s)
+  // Rolling buffer head length from config (defaults to 1s)
+  private get headLength(): number {
+    return this.config.headLength || 1.0;
+  }
 
   // AudioWorklet recording (shared clock with playback)
   private audioWorkletNode: AudioWorkletNode | null = null;
@@ -209,6 +213,7 @@ export class RecordingEngine {
         channelCount: 1,
         processorOptions: {
           sampleRate: audioContext.sampleRate,
+          headLength: this.headLength,
         }
       });
 

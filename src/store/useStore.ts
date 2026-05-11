@@ -89,6 +89,7 @@ interface AppState {
   moveLocked: boolean;
   envelopeLocked: boolean;
   rawRecordingMode: boolean;
+  headLength: number; // Rolling buffer head length in seconds (0-1)
   preRollMode: 'always' | 'recording' | 'none';
   waveformQuality: 'low' | 'medium' | 'high';
   isReady: boolean;
@@ -134,6 +135,7 @@ interface AppState {
   setMoveLocked: (locked: boolean) => void;
   setEnvelopeLocked: (locked: boolean) => void;
   setRawRecordingMode: (mode: boolean) => void;
+  setHeadLength: (length: number) => void;
   setPreRollMode: (mode: 'always' | 'recording' | 'none') => void;
   setWaveformQuality: (quality: 'low' | 'medium' | 'high') => void;
   setIsReady: (isReady: boolean) => void;
@@ -171,6 +173,7 @@ const defaultSettings = {
   moveLocked: true,
   envelopeLocked: true,
   rawRecordingMode: true,
+  headLength: 1.0, // Default 1 second rolling buffer head
   preRollMode: 'always' as const,
   waveformQuality: 'low' as const,
   isReady: false,
@@ -221,6 +224,7 @@ export const useStore = create<AppState>()(
         setMoveLocked: (locked) => set({ moveLocked: locked }),
         setEnvelopeLocked: (locked) => set({ envelopeLocked: locked }),
         setRawRecordingMode: (mode) => set({ rawRecordingMode: mode }),
+        setHeadLength: (length) => set({ headLength: Math.max(0, Math.min(1, length)) }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
         setIsReady: (isReady) => set({ isReady }),

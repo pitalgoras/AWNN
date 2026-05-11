@@ -18,8 +18,16 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     super();
     this._isRecording = false;
     this._audioData = []; // Array of Float32Array for current recording
-    this._rollingBuffer = []; // Circular buffer: {data, frame} - 2 seconds
-    this._rollingBufferDuration = 2; // 2 seconds rolling buffer
+    
+    // Get headLength from processor options (passed from RecordingEngine)
+    let headLength = 1.0;
+    try {
+      const opts = (globalThis as any).processorOptions;
+      if (opts?.headLength !== undefined) {
+        headLength = opts.headLength;
+      }
+    } catch (e) {}
+    this._rollingBufferDuration = headLength;
     this._recordingStartFrame = 0; // REAL TIME frame when recording started
     this._sampleRate = sampleRate;
     this._processCount = 0;
@@ -29,6 +37,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._targetPlaybackReal = 0; // When playback should start (for none mode)
     this._captureImmediately = false; // If true, start recording immediately (none mode)
     this._performanceStartFrame = 0; // When performance starts (for sync)
+    
+    this._rollingBuffer = []; // Initialize rolling buffer
     
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {

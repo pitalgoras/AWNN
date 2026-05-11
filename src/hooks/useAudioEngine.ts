@@ -108,6 +108,7 @@ const {
         preRollMode,
         isPlaying,
         currentTime,
+        headLength: useStore.getState().headLength,
         audioContextRef,
         useAudioWorklet,
       };
@@ -173,6 +174,7 @@ const {
         timeSignature: timeSignature || [4, 4],
         preRollMode,
         currentTime,
+        headLength: useStore.getState().headLength,
         isPlaying,
         useAudioWorklet,
       });

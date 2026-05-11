@@ -969,6 +969,23 @@ export default function App() {
                     <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-transform", useStore.getState().rawRecordingMode ? "left-5" : "left-1")} />
                   </button>
                 </div>
+
+                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
+                  <div className="pr-4">
+                    <div className="text-sm font-bold text-zinc-100">Head Length</div>
+                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Rolling buffer head duration before punch-in. New clips use this value.</div>
+                  </div>
+                  <input 
+                    type="number" 
+                    min="0" max="1" step="0.1"
+                    value={useStore.getState().headLength}
+                    onChange={(e) => {
+                      const val = parseFloat(e.target.value);
+                      if (!isNaN(val)) useStore.getState().setHeadLength(val);
+                    }}
+                    className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+                  />
+                </div>
               </div>
 
               <div>
