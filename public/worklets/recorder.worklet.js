@@ -27,7 +27,9 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         headLength = opts.headLength;
       }
     } catch (e) {}
-    this._rollingBufferDuration = headLength;
+    // Rolling buffer should always be larger than headLength to work properly
+    // Use at least 2 seconds or headLength + 1 second buffer
+    this._rollingBufferDuration = Math.max(2.0, headLength + 1.0);
     this._recordingStartFrame = 0; // REAL TIME frame when recording started
     this._sampleRate = sampleRate;
     this._processCount = 0;
