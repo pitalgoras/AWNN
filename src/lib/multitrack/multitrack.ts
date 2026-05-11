@@ -12,7 +12,7 @@ type SingleTrackOptions = Omit<
   WaveSurferOptions,
   'container' | 'minPxPerSec' | 'duration' | 'cursorColor' | 'cursorWidth' | 'interact' | 'hideScrollbar'
 > & {
-  audioOffset?: number // NEW: Skip N seconds from buffer start during playback
+  anchoredFrame?: number // NEW: Frame offset from UserTime 0
 }
 
 import { perfLogger } from '../../utils/PerformanceLogger'
@@ -42,7 +42,7 @@ export type TrackOptions = {
     color?: string
   }
   options?: Omit<SingleTrackOptions, 'media'> & { media?: unknown }
-  audioOffset?: number // NEW: Skip N seconds from buffer start during playback
+  anchoredFrame?: number // NEW: Frame offset from UserTime 0
 }
 
 export type MultitrackOptions = {
@@ -180,8 +180,8 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     perfLogger.log(2, track.trackId || track.id);
     
     let audio: HTMLAudioElement | WebAudioPlayer;
-    if (track.audioOffset) {
-      audio = new WebAudioPlayer(this.audioContext, { offset: Math.abs(track.audioOffset) });
+    if (track.anchoredFrame !== undefined && track.anchoredFrame !== 0) {
+      audio = new WebAudioPlayer(this.audioContext, { anchoredFrame: track.anchoredFrame });
     } else {
       audio = (track.options?.media as HTMLAudioElement | WebAudioPlayer) || new WebAudioPlayer(this.audioContext);
     }
@@ -213,11 +213,11 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     perfLogger.log(15, track.id);
     const container = this.rendering.containers[index]
 
-    // NEW: Handle audioOffset by creating a new WebAudioPlayer with offset
-    if (track.audioOffset && this.audios[index] instanceof WebAudioPlayer) {
+    // NEW: Handle anchoredFrame by creating a new WebAudioPlayer
+    if (track.anchoredFrame && this.audios[index] instanceof WebAudioPlayer) {
       const originalPlayer = this.audios[index] as WebAudioPlayer;
-      // Create new player with offset, copy the buffer
-      const newPlayer = new WebAudioPlayer(this.audioContext, { offset: Math.abs(track.audioOffset) });
+      // Create new player with anchoredFrame
+      const newPlayer = new WebAudioPlayer(this.audioContext, { anchoredFrame: track.anchoredFrame });
       if (originalPlayer.getChannelData?.()) {
         const channelData = originalPlayer.getChannelData();
         if (channelData && channelData[0]) {
@@ -232,10 +232,9 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
       this.audios[index] = newPlayer;
       
       // COMPREHENSIVE DEBUG LOGS
-      console.log('=== multitrack.ts: WebAudioPlayer created with offset ===');
+      console.log('=== multitrack.ts: WebAudioPlayer created with anchoredFrame ===');
       console.log('multitrack: track.id =', track.id);
-      console.log('multitrack: track.audioOffset =', track.audioOffset);
-      console.log('multitrack: Math.abs(audioOffset) =', Math.abs(track.audioOffset));
+      console.log('multitrack: track.anchoredFrame =', track.anchoredFrame);
       console.log('multitrack: audioContext.currentTime =', this.audioContext.currentTime);
     }
 

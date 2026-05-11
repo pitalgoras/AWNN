@@ -221,7 +221,8 @@ export class RecordingEngine {
         } else if (data.type === 'RECORDING_STOPPED') {
           console.log('AudioWorklet: Recording stopped at', data.stopTime);
           // Pass audio data directly (no race condition)
-          this.handleAudioWorkletStop(data.audioData, data.recordingStartTime, data.targetPlaybackReal);
+          // Now passing performanceStartFrame (absolute frame from worklet)
+          this.handleAudioWorkletStop(data.audioData, data.performanceStartFrame);
         } else if (data.type === 'DEBUG') {
           console.log('AudioWorklet DEBUG:', data);
         }
@@ -327,32 +328,8 @@ export class RecordingEngine {
     console.log('handleRecorderStop: audioBlob created', { size: audioBlob.size, type: audioBlob.type });
 
     // NO trimming - keep all audio data
-    // Calculate audioOffset: skip pre-roll + recHeadstart + latencies (for playback sync)
-    // Pre-roll audio might be in buffer if AudioWorklet started too early
-    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025; // Default 25ms
-    const headDuration = 1.0; // The recHeadstart we captured
-    const inputLatencySec = this.config.globalLatencyMs / 1000; // Input latency compensation
-    
-    // Pre-roll duration: if pre-roll was active when recording started
-    const preRollDuration = (this.config.preRollMode !== 'none' && !this.config.isPlaying) 
-      ? (60 / this.config.bpm) * this.config.timeSignature[0] 
-      : 0;
-    
-    // audioOffset = -(pre-roll + recHeadstart + output latency + input latency)
-    const audioOffset = -(headDuration + outputLatencySec);
-    
-    console.log('handleAudioWorkletStop: audioOffset breakdown:', {
-      preRollDuration,
-      headDuration,
-      outputLatencySec,
-      inputLatencySec,
-      audioOffset
-    });
-    
-    // FIXED: startPosition based on headLength (ALL states have head)
-    // Rolling buffer always captures ~headLength before recording starts
     const headLength = this.headLength;
-    const startPos = this.punchInUserTime - headLength;
+    const startPos = this.punchInUserTime; // For MediaRecorder: start at actual punch-in time
 
     // Decode audio without trimming
     let finalAudioBuffer: AudioBuffer | undefined;
@@ -387,8 +364,8 @@ export class RecordingEngine {
       blob: finalAudioBlob,
       audioBuffer: finalAudioBuffer,
       peaks: peaks,
-      startPosition: startPos, // CORRECT visual position
-      audioOffset: audioOffset, // NEW: Skip head + compensate latency
+      startPosition: startPos,
+      anchoredFrame: 0, // MediaRecorder fallback: no anchored frame
       duration: finalAudioBuffer ? finalAudioBuffer.duration : 0.1,
       createdAt: Date.now()
     });
@@ -402,7 +379,7 @@ export class RecordingEngine {
   }
 
   // Handle AudioWorklet recording stop (shared clock with playback)
-  private async handleAudioWorkletStop(audioData?: Float32Array, recordingStartTime?: number, targetPlaybackReal?: number): Promise<void> {
+  private async handleAudioWorkletStop(audioData?: Float32Array, performanceStartFrame?: number): Promise<void> {
     if (!audioData || audioData.length === 0) {
       console.warn('handleAudioWorkletStop: no data received');
       return;
@@ -422,7 +399,7 @@ export class RecordingEngine {
 
     const sampleRate = audioContext.sampleRate;
     
-    // NO trimming - keep all audio (including 1s pre-roll for offset/fade-in)
+    // NO trimming - keep all audio
     const finalAudioData = audioData;
 
     // Create AudioBuffer from Float32Array
@@ -430,28 +407,23 @@ export class RecordingEngine {
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
     
-    // Calculate audioOffset: skip pre-roll + recHeadstart + latencies (for playback sync)
-    const outputLatencySec = this.config.audioContextRef?.current?.outputLatency || 0.025;
-    const headDuration = 1.0;
-    const inputLatencySec = this.config.globalLatencyMs / 1000;
-    const preRollDuration = (this.config.preRollMode !== 'none' && !this.config.isPlaying) 
-      ? (60 / this.config.bpm) * this.config.timeSignature[0] 
+    // Calculate anchoredFrame: frame offset from UserTime 0
+    // anchoredFrame = performanceStartFrame - (userTime_at_recording × sampleRate)
+    // This anchors the audio to UserTime 0 at the moment of recording
+    const userTimeAtRecording = this.punchInUserTime;
+    const anchoredFrame = performanceStartFrame 
+      ? performanceStartFrame - Math.floor(userTimeAtRecording * sampleRate)
       : 0;
     
-    const audioOffset = -(headDuration + outputLatencySec);
-    
-    console.log('handleAudioWorkletStop: audioOffset breakdown:', {
-      preRollDuration,
-      headDuration,
-      outputLatencySec,
-      inputLatencySec,
-      audioOffset
+    console.log('handleAudioWorkletStop: anchoredFrame calculation:', {
+      performanceStartFrame,
+      userTimeAtRecording,
+      anchoredFrame
     });
     
-    // FIXED: startPosition based on headLength (ALL states have head)
-    // Rolling buffer always captures ~headLength before recording starts
-    const headLength = this.headLength;
-    const startPos = this.punchInUserTime - headLength;
+    // startPosition: where clip appears visually on timeline
+    // For now, use punchInUserTime (later can be derived from anchoredFrame + currentPlaybackPosition)
+    const startPos = this.punchInUserTime;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -478,8 +450,8 @@ export class RecordingEngine {
       blob: wavBlob,
       audioBuffer: audioBuffer,
       peaks: peaks,
-      startPosition: startPos, // CORRECT visual position
-      audioOffset: audioOffset, // NEW: Skip head + compensate latency during playback
+      startPosition: startPos,
+      anchoredFrame: anchoredFrame,
       duration: audioBuffer.duration,
       createdAt: Date.now()
     });

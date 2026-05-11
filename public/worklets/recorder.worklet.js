@@ -141,7 +141,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
 
   _flush() {
     if (this._audioData.length === 0) return [new Float32Array(0), 0];
-
+    
     // Combine all chunks into one Float32Array (NO filtering - keep all audio)
     const totalLength = this._audioData.reduce((sum, chunk) => sum + chunk.data.length, 0);
     const combinedData = new Float32Array(totalLength);
@@ -151,11 +151,11 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       combinedData.set(chunk.data, offset);
       offset += chunk.data.length;
     });
-
+    
     this._audioData = [];
     // Return performanceStartFrame (when punchInUserTime was reached)
     // This is the sync point for playback
-    return [combinedData, this._performanceStartFrame / sampleRate];
+    return [combinedData, this._performanceStartFrame];
   }
 }
 

@@ -16,10 +16,10 @@ class WebAudioPlayer {
   private buffer: AudioBuffer | null = null
   public paused = true
   public crossOrigin: string | null = null
-  private _offset = 0 // NEW: Offset to skip (for audioOffset feature)
+  private _anchoredFrame = 0 // NEW: Frame offset from UserTime 0 at recording
   private _id: string = Math.random().toString(36).substr(2, 6) // Unique ID for debugging
   
-  constructor(audioContext: AudioContext | null = null, options?: { offset?: number }) {
+  constructor(audioContext: AudioContext | null = null, options?: { anchoredFrame?: number }) {
     if (audioContext) {
       console.log('WebAudioPlayer constructor [ID:' + this._id + ']: using provided audioContext', audioContext.state);
     }
@@ -29,10 +29,10 @@ class WebAudioPlayer {
     this.gainNode = this.audioContext.createGain()
     this.gainNode.connect(this.audioContext.destination)
     
-    // NEW: Store offset from options
-    if (options?.offset !== undefined) {
-      this._offset = options.offset;
-      console.log('WebAudioPlayer [ID:' + this._id + ']: offset set to', this._offset);
+    // NEW: Store anchoredFrame from options (frame offset from UserTime 0)
+    if (options?.anchoredFrame !== undefined) {
+      this._anchoredFrame = options.anchoredFrame;
+      console.log('WebAudioPlayer [ID:' + this._id + ']: anchoredFrame set to', this._anchoredFrame);
     }
     // No warning for tracks without offset - this is normal for initial placeholder tracks
   }
@@ -118,8 +118,8 @@ class WebAudioPlayer {
   }
 
   async play() {
-    // FIXED: playAt will use this._offset when no offset passed
-    console.log('WebAudioPlayer [ID:' + this._id + ']: play() called, _offset=', this._offset);
+    // FIXED: playAt will use anchoredFrame for offset
+    console.log('WebAudioPlayer [ID:' + this._id + ']: play() called, anchoredFrame=', this._anchoredFrame);
     return this.playAt(this.audioContext.currentTime)
   }
 
@@ -148,15 +148,22 @@ class WebAudioPlayer {
     this.bufferNode.connect(this.gainNode)
 
     const duration = this.buffer?.duration || 0
-    // NEW: Use this._offset to skip head + compensate latency
-    const offset = Math.max(0, Math.min(this.playedDuration + this._offset, duration - 0.001))
+    // NEW: Use anchoredFrame to calculate offset from UserTime 0
+    // offset = anchoredFrame / sampleRate - (currentPlaybackPosition)
+    // anchoredFrame is the frame when punch-in occurred relative to UserTime 0
+    const currentPlaybackFrame = this.audioContext.currentTime * this.buffer.sampleRate;
+    const frameOffset = this._anchoredFrame !== 0 
+      ? (this._anchoredFrame / this.buffer.sampleRate) - this.playedDuration
+      : 0;
+    const offset = Math.max(0, Math.min(frameOffset, duration - 0.001))
 
     // COMPREHENSIVE DEBUG LOGS
     console.log('=== WebAudioPlayer.playAt DEBUG ===')
     console.log('WebAudioPlayer: startTime =', startTime)
-    console.log('WebAudioPlayer: offset =', this._offset)
+    console.log('WebAudioPlayer: anchoredFrame =', this._anchoredFrame)
+    console.log('WebAudioPlayer: currentPlaybackFrame =', currentPlaybackFrame)
+    console.log('WebAudioPlayer: frameOffset =', frameOffset)
     console.log('WebAudioPlayer: playedDuration =', this.playedDuration)
-    console.log('WebAudioPlayer: offset calculation = playedDuration + offset =', this.playedDuration + this._offset)
     console.log('WebAudioPlayer: final offset =', offset)
     console.log('WebAudioPlayer: buffer.duration =', duration)
     console.log('WebAudioPlayer: bufferNode will start at currentTime +', this.audioContext.currentTime, 'with offset =', offset)

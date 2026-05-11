@@ -234,15 +234,15 @@ export default function App() {
     });
   }, [tracks, selectedPhraseId, isReady, multitrackRef]);
   
-  // Update multitrack tracks when audioOffset changes (for playback sync)
+  // Update multitrack tracks when anchoredFrame changes (for playback sync)
   useEffect(() => {
     if (!isReady || !multitrackRef.current) return;
     
-    console.log('useEffect audioOffset: checking tracks...');
+    console.log('useEffect anchoredFrame: checking tracks...');
     tracks.forEach(track => {
-      console.log('useEffect audioOffset: track', track.id, 'audioOffset=', track.audioOffset, 'phrases count=', track.phrases.length);
-      if (track.audioOffset !== undefined) {
-        console.log('useEffect audioOffset: updating track', track.id, 'audioOffset=', track.audioOffset);
+      console.log('useEffect anchoredFrame: track', track.id, 'anchoredFrame=', track.anchoredFrame, 'phrases count=', track.phrases.length);
+      if (track.anchoredFrame !== undefined) {
+        console.log('useEffect anchoredFrame: updating track', track.id, 'anchoredFrame=', track.anchoredFrame);
         // Convert Track to TrackOptions (multitrack expects this)
         const trackOptions = {
           id: track.id,
@@ -253,14 +253,14 @@ export default function App() {
           volume: track.volume,
           pan: track.pan,
           offset: track.offset,
-          audioOffset: track.audioOffset,
+          anchoredFrame: track.anchoredFrame,
           phrases: track.phrases.map(p => ({
             url: p.url,
             audioBuffer: p.audioBuffer,
             peaks: p.peaks,
             startPosition: p.startPosition,
             duration: p.duration,
-            audioOffset: p.audioOffset,
+            anchoredFrame: p.anchoredFrame,
           })),
         } as any;
         multitrackRef.current?.addTrack(trackOptions);

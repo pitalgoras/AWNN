@@ -122,14 +122,14 @@ const {
           setIsRecording(recording);
         },
         onAddPhrase: (trackId, phrase) => {
-          console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, audioOffset: phrase.audioOffset });
+          console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, anchoredFrame: phrase.anchoredFrame });
           useStore.getState().addPhrase(trackId, phrase);
-          // DIRECT: Also update multitrack immediately so it gets the audioOffset
+          // DIRECT: Also update multitrack immediately so it gets the anchoredFrame
           const track = useStore.getState().tracks.find(t => t.id === trackId);
-          if (track && multitrackRef.current && phrase.audioOffset !== undefined) {
-            console.log('useAudioEngine: DIRECT update multitrack track', trackId, 'with audioOffset=', phrase.audioOffset);
-            // Update track.audioOffset
-            track.audioOffset = phrase.audioOffset;
+          if (track && multitrackRef.current && phrase.anchoredFrame !== undefined) {
+            console.log('useAudioEngine: DIRECT update multitrack track', trackId, 'with anchoredFrame=', phrase.anchoredFrame);
+            // Update track.anchoredFrame
+            track.anchoredFrame = phrase.anchoredFrame;
             // Convert Track to TrackOptions (multitrack expects this)
             const trackOptions = {
               id: track.id,
@@ -140,14 +140,14 @@ const {
               volume: track.volume,
               pan: track.pan,
               offset: track.offset,
-              audioOffset: track.audioOffset,
+              anchoredFrame: track.anchoredFrame,
               phrases: track.phrases.map(p => ({
                 url: p.url,
                 audioBuffer: p.audioBuffer,
                 peaks: p.peaks,
                 startPosition: p.startPosition,
                 duration: p.duration,
-                audioOffset: p.audioOffset,
+                anchoredFrame: p.anchoredFrame,
               })),
             } as any;
             multitrackRef.current.addTrack(trackOptions);

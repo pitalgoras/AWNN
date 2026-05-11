@@ -16,7 +16,7 @@ export interface Phrase {
   endCue?: number;
   createdAt: number;
   name?: string;
-  audioOffset?: number; // NEW: Skip N seconds from buffer start during playback
+  anchoredFrame?: number; // NEW: Frame offset from UserTime 0 (for stable sync)
 }
 
 export interface EnvelopeNode {
@@ -34,7 +34,7 @@ export interface Track {
   volume: number;
   pan: number;
   offset: number; // Latency compensation / manual nudge in seconds
-  audioOffset?: number; // NEW: Skip N seconds from buffer start during playback
+  anchoredFrame?: number; // NEW: Frame offset from UserTime 0 (for stable sync)
   phrases: Phrase[];
   envelope: EnvelopeNode[];
 }
@@ -254,13 +254,13 @@ export const useStore = create<AppState>()(
               name: `Take ${takeNumber}`
             };
             track.phrases.push(newPhrase);
-            // FIXED: Update track.audioOffset so multitrack can use it
-            if (newPhrase.audioOffset !== undefined) {
-              track.audioOffset = newPhrase.audioOffset;
-              console.log('store: set track.audioOffset =', newPhrase.audioOffset, 'for track', trackId);
-            } else if (phrase.audioOffset !== undefined) {
-              track.audioOffset = phrase.audioOffset;
-              console.log('store: set track.audioOffset =', phrase.audioOffset, 'for track', trackId, '(from phrase)');
+            // FIXED: Update track.anchoredFrame so multitrack can use it
+            if (newPhrase.anchoredFrame !== undefined) {
+              track.anchoredFrame = newPhrase.anchoredFrame;
+              console.log('store: set track.anchoredFrame =', newPhrase.anchoredFrame, 'for track', trackId);
+            } else if (phrase.anchoredFrame !== undefined) {
+              track.anchoredFrame = phrase.anchoredFrame;
+              console.log('store: set track.anchoredFrame =', phrase.anchoredFrame, 'for track', trackId, '(from phrase)');
             }
           }
         }),
