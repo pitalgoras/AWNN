@@ -180,14 +180,15 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
   private initAudio(track: TrackOptions): Promise<HTMLAudioElement | WebAudioPlayer> {
     perfLogger.log(2, track.trackId || track.id);
-    
+
     let audio: HTMLAudioElement | WebAudioPlayer;
     if (track.anchoredFrame !== undefined && track.anchoredFrame !== 0) {
-      audio = new WebAudioPlayer(this.audioContext, { anchoredFrame: track.anchoredFrame });
+      audio = new WebAudioPlayer(this.audioContext, { anchoredFrame: track.anchoredFrame, headLength: track.headLength || 1.0 });
     } else {
-      audio = (track.options?.media as HTMLAudioElement | WebAudioPlayer) || new WebAudioPlayer(this.audioContext);
+      // Tracks without anchoredFrame (e.g. metronome) should play from the start with no head offset
+      audio = (track.options?.media as HTMLAudioElement | WebAudioPlayer) || new WebAudioPlayer(this.audioContext, { headLength: 0 });
     }
-    
+
     audio.crossOrigin = 'anonymous'
 
     if (track.audioBuffer && audio instanceof WebAudioPlayer && track.url) {
@@ -215,38 +216,13 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     perfLogger.log(15, track.id);
     const container = this.rendering.containers[index]
 
-    // NEW: Handle anchoredFrame by creating a new WebAudioPlayer
-    if (track.anchoredFrame && this.audios[index] instanceof WebAudioPlayer) {
-      const originalPlayer = this.audios[index] as WebAudioPlayer;
-      // Create new player with anchoredFrame
-      const newPlayer = new WebAudioPlayer(this.audioContext, { anchoredFrame: track.anchoredFrame });
-      if (originalPlayer.getChannelData?.()) {
-        const channelData = originalPlayer.getChannelData();
-        if (channelData && channelData[0]) {
-          newPlayer.setBuffer(new AudioBuffer({ 
-            length: channelData[0].length, 
-            numberOfChannels: 1, 
-            sampleRate: this.audioContext.sampleRate 
-          }));
-          newPlayer.getChannelData()?.[0]?.set(channelData[0]);
-        }
-      }
-      this.audios[index] = newPlayer;
-      
-      // COMPREHENSIVE DEBUG LOGS
-      console.log('=== multitrack.ts: WebAudioPlayer created with anchoredFrame ===');
-      console.log('multitrack: track.id =', track.id);
-      console.log('multitrack: track.anchoredFrame =', track.anchoredFrame);
-      console.log('multitrack: audioContext.currentTime =', this.audioContext.currentTime);
-    }
-
     // Create a wavesurfer instance
     const ws = WaveSurfer.create({
       ...track.options,
       container,
       url: track.url,
       minPxPerSec: 0,
-      media: this.audios[index] as HTMLMediaElement,
+      media: this.audios[index] as unknown as HTMLMediaElement,
       peaks:
         (track.peaks
           ? track.peaks.map((p) => (p instanceof Float32Array ? new Float32Array(p) : p))
@@ -355,7 +331,7 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
       const envelope = ws.registerPlugin(
         EnvelopePlugin.create({
           ...this.options.envelopeOptions,
-          volume: track.volume,
+          volume: track.volume ?? 1,
         }),
       )
 
@@ -390,9 +366,6 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
         envelope.setPoints(newPoints)
       }
 
-      let prevFadeInEnd = track.fadeInEnd
-      let prevFadeOutStart = track.fadeOutStart
-
       this.subscriptions.push(
         envelope.on('volume-change', (volume) => {
           this.emit('volume-change', { id: track.id, volume })
@@ -400,15 +373,15 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
         envelope.on('points-change', (points) => {
           const fadeIn = points.find((point) => point.id === 'fadeInEnd')
-          if (fadeIn && fadeIn.time !== prevFadeInEnd) {
+          if (fadeIn && fadeIn.time !== this.prevFadeInEnd) {
             this.emit('fade-in-change', { id: track.id, fadeInEnd: fadeIn.time })
-            prevFadeInEnd = fadeIn.time
+            this.prevFadeInEnd = fadeIn.time
           }
 
           const fadeOut = points.find((point) => point.id === 'fadeOutStart')
-          if (fadeOut && fadeOut.time !== prevFadeOutStart) {
+          if (fadeOut && fadeOut.time !== this.prevFadeOutStart) {
             this.emit('fade-out-change', { id: track.id, fadeOutStart: fadeOut.time })
-            prevFadeOutStart = fadeOut.time
+            this.prevFadeOutStart = fadeOut.time
           }
 
           this.emit('envelope-points-change', { id: track.id, points })
@@ -438,6 +411,9 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
     return ws
   }
+
+  private prevFadeInEnd: number = 0
+  private prevFadeOutStart: number = 0
 
   private initAllWavesurfers() {
     const wavesurfers = this.tracks.map((track, index) => {
@@ -582,11 +558,11 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
     // Schedule all tracks to start slightly in the future to ensure perfect sync
     const startAt = startTime || (this.audioContext ? this.audioContext.currentTime + 0.1 : 0);
-    
+
     this.startSync(startAt)
 
     const indexes = this.findCurrentTracks()
-    
+
     indexes.forEach((index) => {
       const audio = this.audios[index] as WebAudioPlayer;
       if (audio && typeof audio.playAt === 'function') {
@@ -628,7 +604,7 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
   }
 
   public isPlaying() {
-    return this._isPlaying;
+    return this._isPlaying
   }
 
   public getCurrentTime() {
@@ -680,6 +656,7 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     }
 
     if (index !== -1) {
+      // Replace existing track
       this.tracks[index] = track
 
       this.initAudio(track).then((audio) => {
@@ -703,6 +680,8 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
           this.emit('canplay')
         })
       })
+    } else {
+      console.warn('multitrack: addTrack could not find track to replace:', track.id)
     }
   }
 
@@ -744,8 +723,8 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     if (!track || duration === undefined) return
 
     const newStartPosition = value
-    if (track.startPosition === newStartPosition) return;
-    
+    if (track.startPosition === newStartPosition) return
+
     const minStart = this.options.dragBounds ? 0 : -duration - 1
     const maxStart = this.maxDuration - duration
 
@@ -773,7 +752,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
   let durations: number[] = []
   let mainWidth = 0
   let currentOptions = { ...options }
-  
+
   const getPreRollDuration = () => {
     if (currentOptions.preRollDuration !== undefined) return currentOptions.preRollDuration
     const bpm = currentOptions.bpm || 120
@@ -782,12 +761,12 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
   }
 
   let maxDuration = 1
-  
+
   // Create a common container for all tracks
   const scroll = document.createElement('div')
   scroll.className = 'multitrack-scroll-container'
   scroll.setAttribute('style', 'width: 100%; overflow-x: scroll; overflow-y: hidden; user-select: none; position: relative;')
-  
+
   // Initialize scrollLeft immediately if possible
   const initialPreRollPixels = getPreRollDuration() * pxPerSec;
   scroll.scrollLeft = initialPreRollPixels;
@@ -851,7 +830,6 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
       })
       dropArea.addEventListener('drop', (e) => {
         e.preventDefault()
-        dropArea.style.background = ''
       })
       container.appendChild(dropArea)
     }
@@ -886,15 +864,15 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
       pxPerSec = currentOptions.minPxPerSec || 50
       mainWidth = pxPerSec * maxDuration
       wrapper.style.width = `${mainWidth}px`
-      
+
       // Set initial scroll to hide pre-roll
       const preRollPixels = getPreRollDuration() * pxPerSec;
       if (!isRecording && scroll.scrollLeft < preRollPixels) {
         scroll.scrollLeft = preRollPixels;
       }
-      
+
       setContainerOffsets()
-      
+
       // Update cursor position to match new layout
       const position = maxDuration > 0 ? currentTime / maxDuration : 0;
       cursor.style.left = `${Math.min(100, position * 100)}%`;
@@ -909,7 +887,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
       const center = clientWidth / 2
       const minScroll = autoCenter ? center : clientWidth
       const pos = position * mainWidth
-      
+
       const preRollPixels = getPreRollDuration() * pxPerSec;
 
       // If position is in Bar 0 (pre-roll), scrollLeft should be 0
@@ -921,7 +899,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
           }
       } else {
           if (forceCenter || pos > scrollLeft + minScroll || pos < scrollLeft) {
-            const targetScroll = pos - center;
+            const targetScroll = pos - center
             scroll.scrollLeft = Math.max(isRecording ? 0 : preRollPixels, targetScroll);
           }
       }
@@ -946,7 +924,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
     addClickHandler: (onClick: (position: number) => void) => {
       scroll.addEventListener('click', (e) => {
         if (maxDuration <= 0) return
-        
+
         // If we clicked on a phrase or something else that should handle its own click, ignore
         if (e.target !== scroll && e.target !== wrapper) {
           // Check if target is a child of a track container
@@ -964,7 +942,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
         const rect = wrapper.getBoundingClientRect()
         const x = e.clientX - rect.left
         let position = x / (wrapper.offsetWidth || 1)
-        
+
         // Prevent seeking into pre-roll if not recording
         if (!isRecording) {
           const preRollPixels = getPreRollDuration() * pxPerSec
@@ -972,7 +950,7 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
             position = getPreRollDuration() / maxDuration
           }
         }
-        
+
         onClick(Math.max(0, Math.min(1, position)))
       })
     },

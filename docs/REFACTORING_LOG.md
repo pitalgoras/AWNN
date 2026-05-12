@@ -306,21 +306,24 @@ startPos = this.recordingStartTransportTime - latencySec;
 
 ---
 
-### Problem 6: Audio Out of Sync (Latency + Head)
-**Symptom**: Recorded audio plays 1s late (head plays before performance).
+### Problem 6: Audio Out of Sync — RESOLVED (anchorFrame approach)
 
-**Root Cause**: 
-- Audio buffer has 1s head before `punchInUserTime`
-- Playback starts from buffer beginning → audio is 1s late
-- Latency compensation needed (bluetooth, USB, etc.)
+**Symptom**: Recorded audio played out of sync with other tracks.
 
-**Fix** (commit f4b742a):
-- **`audioOffset = -(headDuration + latencySec)`** calculated in `handleAudioWorkletStop()`
-- **`WebAudioPlayer` supports `offset` parameter** (skips first N seconds)
-- **`TrackOptions` updated** to include `audioOffset?` field
-- **`multitrack.ts` creates `WebAudioPlayer` with offset** when `audioOffset` exists
+**Root Cause**:
+1. No mechanism to communicate the definitive audio start frame between worklet and main thread
+2. Previous `audioOffset` approach used time→frame conversions that lost precision to jitter
+3. `startPosition = punchInUserTime` did not account for the head buffer prefix
 
-**Result**: Audio plays IN SYNC with other tracks!
+**Fix** (anchorFrame approach):
+- **`anchoredFrame`** = `Math.floor(punchInUserTime_Real × sampleRate)` from AudioWorklet (punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn, in AudioContext clock frame space)
+- **`startPosition`** = `punchInUserTime − headLength` (direct UserTime computation, not derived from anchoredFrame — avoids drift from AudioContext clock delays)
+- **`playAt()`** plays entire buffer from position 0 — head + definitive recording sequentially
+- **Move/Undo** use `originalAnchoredFrame` as ground truth, adjusted by `delta × sampleRate`
+- **`_flush()`** trims rolling buffer head to exactly `headLength` seconds
+- **`startupDelay`** (150ms) + `bufferSafety` (100ms) named constants, editable in Dangerous Settings
+
+**Result**: Audio plays in perfect sync with other tracks. Frame-based math ensures jitter resistance.
 
 ---
 
@@ -338,47 +341,56 @@ startPos = this.recordingStartTransportTime - latencySec;
 
 ---
 
-## Recent Changes (audioOffset Implementation - May 2026)
+## Recent Changes (anchorFrame Migration — May 2026)
 
 ### What Changed
-1. ✅ **AudioWorklet decides start via `currentTime`** - No delays from main thread
-2. ✅ **`audioOffset = -(1.0s head + latencySec)`** - Calculated in `handleAudioWorkletStop()`
-3. ✅ **`startPosition = punchInUserTime`** - Correct visual position
-4. ✅ **`audioOffset` stored in phrase data** - Skip head during playback
-5. ✅ **`WebAudioPlayer` supports `offset` parameter** - Skip head + compensate latency
-6. ✅ **`multitrack.ts` uses `audioOffset`** - WaveSurfer creates player with offset
+1. ✅ **AudioWorklet mandatory** — `MediaRecorder` fallback removed entirely
+2. ✅ **`anchoredFrame`** = `Math.floor(punchInUserTime_Real × sampleRate)` — AudioContext clock frame via `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`
+3. ✅ **`startPosition = punchInUserTime − headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
+4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording)
+5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at recording time. Worklet `_flush()` trims rolling buffer to exactly `headLength` seconds.
+6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo
+7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
+8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
+9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants for recording timing, editable in Dangerous Settings
+10. ✅ **`syncedTrackIdsRef` removed** — App.tsx no longer gates `addTrack` behind a one-time-per-track check
 
 ### Files Modified
-- `public/worklets/recorder.worklet.js` - AudioWorklet decides start via `currentTime`
-- `src/audio/recording/RecordingEngine.ts` - Calculates `audioOffset`
-- `src/lib/multitrack/webaudio.ts` - `WebAudioPlayer` supports offset
-- `src/lib/multitrack/multitrack.ts` - Uses `audioOffset` for playback
-- `docs/RECORDING_LOGIC.md` - Updated with audioOffset approach
-- `docs/AUDIO_LOGIC_SPECS.md` - Updated with audioOffset approach
-- `docs/REFACTORING_LOG.md` - This file (updated)
+- `public/worklets/recorder.worklet.js` — returns `_anchoredFrame`, trims head to `headLength` in `_flush()`, uses `punchInUserTime_Real` directly
+- `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
+- `src/lib/multitrack/webaudio.ts` — simplified `playAt()`, duplicate gain connection fix
+- `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
+- `src/components/SyncTool.tsx` — Reset formula includes `secondsPerBar`
+- `src/hooks/useAudioEngine.ts` — async IIFE, fire-and-forget resume, `sampleRate` in store
+- `src/store/useStore.ts` — `sampleRate` state, `startupDelayMs`/`bufferSafetyMs` settings, `updatePhrasePosition` preserves anchor on move
+- `src/App.tsx` — removed `syncedTrackIdsRef` guard, added Dangerous Settings UI
 
-### Git Commits (branch: `backup-before-fixes`)
-```
-f4b742a feat: Add audioOffset support - WebAudioPlayer skip head + latency
-c57a68c feat: AudioWorklet decides start via currentTime, audioOffset with latency compensation
-b32e74d fix: Simplify AudioWorklet - remove recordingStartTime, use currentFrame - sampleRate
-ddff309 fix: AudioWorklet event reference bug - store recordingStartTime in class property
-3a3eb32 fix: Recording 1s head + temp startPos=punchInUserTime-1s + comments + docs
-a9a6976 fix: Read currentTime from store in startRecording() to avoid stale config
-9519804 Clean up useAudioEngine by removing unused refs and functions
-```
+### Replaced Approaches
+- ~~`audioOffset = -(headDuration + latencySec)`~~ → `anchoredFrame` + `headLength`
+- ~~`WebAudioPlayer.offset` param~~ → `playedDuration` offset (plays all audio)
+- ~~`startPosition = anchorFrame/sr − sPB − HL`~~ → `startPosition = punchInUserTime − headLength`
+- ~~`captureImmediately` flag~~ → unconditional `_recordingStartFrame = _anchoredFrame` in worklet
 
-### Testing Checklist (Updated)
+### Git Commits
+- `f4b742a` / `c57a68c` — old `audioOffset` approach (superseded by anchorFrame)
+- `b32e74d` / `ddff309` — AudioWorklet timing fixes (foundation kept, details replaced)
+- `a9a6976` / `9519804` — Store/UI fixes (mostly preserved)
+
+### Testing Checklist
 - [x] Recording creates clip with duration > 1 second (not 20ms)
-- [x] Clip appears at `punchInUserTime` (where Record was pressed)
-- [x] NO trimming of audio data
-- [x] `audioOffset` skips head + compensates latency
-- [x] Audio plays IN SYNC with other tracks!
-- [ ] WaveSurfer masks/hides first 1s of waveform (future)
-- [x] Multiple recordings at different positions work
+- [x] `anchoredFrame` = absolute AudioContext clock frame (from `punchInUserTime_Real`)
+- [x] `startPosition` = `punchInUserTime − headLength` (direct UserTime, no anchorFrame derivation)
+- [x] `playAt()` plays entire buffer from position 0
+- [x] Metronome plays correctly with `headLength = 0`
+- [x] AudioWorklet re-load works on second recording
 - [x] Pre-roll "always" → clip at Bar 1 (`punchInUserTime = 0`)
 - [x] Live punch-in → clip at current playhead position
 - [x] Latency compensation works (bluetooth, USB, etc.)
+- [x] `_flush()` trims rolling buffer to exactly `headLength` seconds
+- [ ] Pre-roll recording with 1-bar head (pending test)
+- [x] `syncedTrackIdsRef` removed — all recordings update multitrack engine
+- [x] `startupDelayMs` + `bufferSafetyMs` configurable in Dangerous Settings
+- [ ] "none" mode while playing — clip at correct playhead position (pending test)
 
 ---
 

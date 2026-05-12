@@ -18,30 +18,25 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     super();
     this._isRecording = false;
     this._audioData = []; // Array of Float32Array for current recording
-    
+
     // Get headLength from processor options (passed from RecordingEngine)
     let headLength = 1.0;
-    try {
-      const opts = (globalThis as any).processorOptions;
-      if (opts?.headLength !== undefined) {
-        headLength = opts.headLength;
-      }
-    } catch (e) {}
+    // Access processorOptions directly - no TypeScript syntax
+    if (this.processorOptions && this.processorOptions.headLength !== undefined) {
+      headLength = this.processorOptions.headLength;
+    }
     // Rolling buffer should always be larger than headLength to work properly
     // Use at least 2 seconds or headLength + 1 second buffer
     this._rollingBufferDuration = Math.max(2.0, headLength + 1.0);
-    this._recordingStartFrame = 0; // REAL TIME frame when recording started
+    this._recordingStartFrame = 0; // REAL TIME frame when actual audio capture began
     this._sampleRate = sampleRate;
     this._processCount = 0;
     this._shouldStop = false;
-    this._shouldStart = false;
-    this._targetStartReal = 0; // When to start recording (Real Time)
-    this._targetPlaybackReal = 0; // When playback should start (for none mode)
-    this._captureImmediately = false; // If true, start recording immediately (none mode)
-    this._performanceStartFrame = 0; // When performance starts (for sync)
-    
+    this._anchoredFrame = 0; // Shared-clock frame of punch-in point (from main thread)
+    this._headLength = headLength;
+
     this._rollingBuffer = []; // Initialize rolling buffer
-    
+
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
         this._shouldStop = true;
@@ -50,86 +45,60 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           msg: 'STOP_RECORDING flag set',
         });
       } else if (event.data.type === 'START_RECORDING') {
-        this._shouldStart = true;
-        this._captureImmediately = event.data.captureImmediately || false;
-        
+        this._shouldStop = false;
+
         if (event.data.punchInUserTime_Real !== undefined) {
-          // For none mode (captureImmediately): recording starts immediately
-          // playback starts delayed (targetPlaybackReal = punchInTime - 1s)
-          if (this._captureImmediately) {
-            // Start recording immediately (next process() call)
-            this._targetStartReal = 0;
-            this._targetPlaybackReal = event.data.punchInUserTime_Real - 1.0;
-          } else {
-            // For pre-roll/always: delay both recording and playback
-            this._targetStartReal = event.data.punchInUserTime_Real - 1.0;
-            this._targetPlaybackReal = this._targetStartReal;
-          }
-          this._performanceStartFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
+          // Receive anchor frame from main thread (AudioContext time based)
+          this._anchoredFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
+          // Capture starts at the anchor frame — rolling buffer provides the head
+          this._isRecording = true;
+          this._audioData = [];
+          this._recordingStartFrame = this._anchoredFrame;
+
           this.port.postMessage({
-            type: 'DEBUG',
-            msg: 'START_RECORDING received',
-            targetStartReal: this._targetStartReal,
-            targetPlaybackReal: this._targetPlaybackReal,
-            captureImmediately: this._captureImmediately,
-            performanceStartFrame: this._performanceStartFrame,
-            punchInUserTime_Real: event.data.punchInUserTime_Real,
+            type: 'RECORDING_STARTED',
+            startTime: this._recordingStartFrame / sampleRate,
+            anchoredFrame: this._anchoredFrame,
+            currentTime: currentTime,
+            msg: 'Recording: anchorFrame=' + this._anchoredFrame + ', recordingStartFrame=' + this._recordingStartFrame,
           });
         }
       }
     };
   }
 
-   process(inputs, outputs, parameters) {
+  process(inputs, outputs, parameters) {
     this._processCount++;
-    
-    // Handle stop/start flags from messages
+
+    // Handle stop flag from messages
     if (this._shouldStop) {
       this._shouldStop = false;
       if (this._isRecording) {
         this._isRecording = false;
-        const [audioData, recordingStartTime] = this._flush();
+        const flushed = this._flush();
         // Send recorded data back to main thread
         this.port.postMessage({
           type: 'RECORDING_STOPPED',
-          audioData: audioData,
-          recordingStartTime: recordingStartTime,
+          audioData: flushed[0],
+          anchoredFrame: flushed[1],
+          rollingOffset: flushed[2],
         });
       }
     }
-    
-    if (this._shouldStart && currentTime >= this._targetStartReal) {
-      this._shouldStart = false;
-      if (!this._isRecording) {
-        this._isRecording = true;
-        this._audioData = [];
-        this._recordingStartFrame = currentFrame; // Start recording NOW
-        
-        this.port.postMessage({
-          type: 'RECORDING_STARTED',
-          startTime: this._recordingStartFrame / sampleRate,
-          performanceStartFrame: this._performanceStartFrame,
-          targetPlaybackReal: this._targetPlaybackReal,
-          currentTime: currentTime,
-          targetStartReal: this._targetStartReal,
-          msg: 'Recording started at currentFrame=' + currentFrame + ', targetStartReal=' + this._targetStartReal + ', targetPlaybackReal=' + this._targetPlaybackReal,
-        });
-      }
-    }
-    
+
     // Always capture to rolling buffer (when playing)
     if (inputs && inputs[0] && inputs[0][0]) {
       const channelData = inputs[0][0]; // First channel (mono)
       const copy = new Float32Array(channelData.length);
       copy.set(channelData);
-      
+
       // Add to rolling buffer
       this._rollingBuffer.push({
         data: copy,
         frame: currentFrame,
       });
-      
-      // Trim old data (keep 2 seconds)
+
+      // Trim old data (keep rollingBufferDuration seconds)
       const maxFrames = this._rollingBufferDuration * sampleRate;
       while (this._rollingBuffer.length > 0) {
         if (currentFrame - this._rollingBuffer[0].frame > maxFrames) {
@@ -139,9 +108,11 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         }
       }
     }
-    
-    // If recording, store in _audioData
-    if (this._isRecording && inputs && inputs[0] && inputs[0][0]) {
+
+    // FIXED: If recording but current frame is before capture start, don't store audio
+    // This allows the rolling buffer to accumulate pre-roll audio during the delay
+    const isCapturing = this._isRecording && currentFrame >= this._recordingStartFrame;
+    if (isCapturing && inputs && inputs[0] && inputs[0][0]) {
       const channelData = inputs[0][0];
       const copy = new Float32Array(channelData.length);
       copy.set(channelData);
@@ -152,22 +123,76 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   }
 
   _flush() {
-    if (this._audioData.length === 0) return [new Float32Array(0), 0];
-    
-    // Combine all chunks into one Float32Array (NO filtering - keep all audio)
-    const totalLength = this._audioData.reduce((sum, chunk) => sum + chunk.data.length, 0);
-    const combinedData = new Float32Array(totalLength);
+    // Combine the rolling buffer (pre-roll) with the recorded data
+    // The rolling buffer provides the "head" audio before the punch-in point
+    // Trim the head to exactly headLength seconds
+    const allChunks = [];
+    let rollingOffset = 0;
+    const headCutoffFrame = this._recordingStartFrame - Math.floor(this._headLength * sampleRate);
+
+    if (this._rollingBuffer.length > 0) {
+      const recordStartFrame = this._recordingStartFrame;
+
+      // Include rolling buffer data only within the last headLength seconds before recording start
+      for (let i = 0; i < this._rollingBuffer.length; i++) {
+        const chunk = this._rollingBuffer[i];
+        const chunkEndFrame = chunk.frame + chunk.data.length;
+
+        if (chunkEndFrame <= headCutoffFrame) {
+          // Entirely before the head region — skip
+          continue;
+        }
+
+        if (chunk.frame < headCutoffFrame) {
+          // Partially overlaps the head region — trim the beginning
+          const offset = headCutoffFrame - chunk.frame;
+          if (offset > 0 && offset < chunk.data.length) {
+            allChunks.push(chunk.data.subarray(offset));
+            rollingOffset += chunk.data.length - offset;
+          }
+        } else if (chunk.frame < recordStartFrame) {
+          // Fully within the head region — include entirely
+          allChunks.push(chunk.data);
+          rollingOffset += chunk.data.length;
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Append the recorded audio data
+    if (this._audioData.length > 0) {
+      const totalRecordingLength = this._audioData.reduce((sum, chunk) => sum + chunk.data.length, 0);
+      const combinedRecording = new Float32Array(totalRecordingLength);
+      let offset = 0;
+      this._audioData.forEach(chunk => {
+        combinedRecording.set(chunk.data, offset);
+        offset += chunk.data.length;
+      });
+      allChunks.push(combinedRecording);
+    }
+
+    // Combine everything into one array
+    let totalLength = 0;
+    allChunks.forEach(c => totalLength += c.length);
+    const result = new Float32Array(totalLength);
     let offset = 0;
-    
-    this._audioData.forEach(chunk => {
-      combinedData.set(chunk.data, offset);
-      offset += chunk.data.length;
+    allChunks.forEach(c => { result.set(c, offset); offset += c.length; });
+
+    // FIXED: Return _anchoredFrame (the sync anchor from main thread) instead of _recordingStartFrame
+    // _anchoredFrame represents the timeline-relative frame number for the punch-in point
+    const returnAnchorFrame = this._anchoredFrame;
+    this.port.postMessage({
+      type: 'DEBUG',
+      msg: '_flush() returning',
+      recordingStartFrame: this._recordingStartFrame,
+      anchoredFrame: returnAnchorFrame,
+      rollingOffset: rollingOffset,
+      audioDataLength: result.length,
+      sampleRate: sampleRate,
     });
-    
     this._audioData = [];
-    // Return performanceStartFrame (when punchInUserTime was reached)
-    // This is the sync point for playback
-    return [combinedData, this._performanceStartFrame];
+    return [result, returnAnchorFrame, rollingOffset];
   }
 }
 

@@ -16,25 +16,28 @@ class WebAudioPlayer {
   private buffer: AudioBuffer | null = null
   public paused = true
   public crossOrigin: string | null = null
-  private _anchoredFrame = 0 // NEW: Frame offset from UserTime 0 at recording
+  private _anchoredFrame = 0 // Frame offset from UserTime 0 at recording
+  private _headLength = 1.0 // Head length in seconds (default 1s)
   private _id: string = Math.random().toString(36).substr(2, 6) // Unique ID for debugging
-  
-  constructor(audioContext: AudioContext | null = null, options?: { anchoredFrame?: number }) {
+
+  constructor(audioContext: AudioContext | null = null, options?: { anchoredFrame?: number; headLength?: number }) {
     if (audioContext) {
-      console.log('WebAudioPlayer constructor [ID:' + this._id + ']: using provided audioContext', audioContext.state);
+      console.log('WebAudioPlayer constructor: using provided audioContext', audioContext.state);
     }
     this.audioContext = audioContext || new AudioContext();
-    console.log('WebAudioPlayer constructor [ID:' + this._id + ']: this.audioContext =', this.audioContext);
-    
+    console.log('WebAudioPlayer constructor: audioContext ready');
+
     this.gainNode = this.audioContext.createGain()
     this.gainNode.connect(this.audioContext.destination)
-    
-    // NEW: Store anchoredFrame from options (frame offset from UserTime 0)
+
     if (options?.anchoredFrame !== undefined) {
       this._anchoredFrame = options.anchoredFrame;
-      console.log('WebAudioPlayer [ID:' + this._id + ']: anchoredFrame set to', this._anchoredFrame);
+      console.log('WebAudioPlayer: anchoredFrame set to', this._anchoredFrame);
     }
-    // No warning for tracks without offset - this is normal for initial placeholder tracks
+    if (options?.headLength !== undefined) {
+      this._headLength = options.headLength;
+      console.log('WebAudioPlayer: headLength set to', this._headLength);
+    }
   }
 
   addEventListener(event: string, listener: () => void, options?: { once?: boolean }) {
@@ -118,8 +121,6 @@ class WebAudioPlayer {
   }
 
   async play() {
-    // FIXED: playAt will use anchoredFrame for offset
-    console.log('WebAudioPlayer [ID:' + this._id + ']: play() called, anchoredFrame=', this._anchoredFrame);
     return this.playAt(this.audioContext.currentTime)
   }
 
@@ -136,7 +137,7 @@ class WebAudioPlayer {
     }
   }
 
-  async playAt(startTime: number) {
+async playAt(startTime: number) {
     if (!this.paused) return
     this.paused = false
 
@@ -148,34 +149,15 @@ class WebAudioPlayer {
     this.bufferNode.connect(this.gainNode)
 
     const duration = this.buffer?.duration || 0
-    // NEW: Use anchoredFrame to calculate offset from UserTime 0
-    // offset = anchoredFrame / sampleRate - (currentPlaybackPosition)
-    // anchoredFrame is the frame when punch-in occurred relative to UserTime 0
-    const currentPlaybackFrame = this.audioContext.currentTime * this.buffer.sampleRate;
-    const frameOffset = this._anchoredFrame !== 0 
-      ? (this._anchoredFrame / this.buffer.sampleRate) - this.playedDuration
-      : 0;
-    const offset = Math.max(0, Math.min(frameOffset, duration - 0.001))
-
-    // COMPREHENSIVE DEBUG LOGS
-    console.log('=== WebAudioPlayer.playAt DEBUG ===')
-    console.log('WebAudioPlayer: startTime =', startTime)
-    console.log('WebAudioPlayer: anchoredFrame =', this._anchoredFrame)
-    console.log('WebAudioPlayer: currentPlaybackFrame =', currentPlaybackFrame)
-    console.log('WebAudioPlayer: frameOffset =', frameOffset)
-    console.log('WebAudioPlayer: playedDuration =', this.playedDuration)
-    console.log('WebAudioPlayer: final offset =', offset)
-    console.log('WebAudioPlayer: buffer.duration =', duration)
-    console.log('WebAudioPlayer: bufferNode will start at currentTime +', this.audioContext.currentTime, 'with offset =', offset)
+    // Play entire buffer from start, advance with playedDuration for seeking
+    const offset = Math.max(0, Math.min(this.playedDuration, duration - 0.001))
 
     try {
       if (this.buffer) {
         if (offset < duration && offset >= 0) {
-          console.log('WebAudioPlayer: calling bufferNode.start(', startTime, offset, ')')
           this.bufferNode.start(startTime, offset)
         } else {
           // If we are at or past the end, don't start the buffer but emit ended
-          console.warn('WebAudioPlayer: offset out of range, not starting. offset=', offset, 'duration=', duration)
           setTimeout(() => this.emitEvent('ended'), 0)
         }
       } else if (this._src) {
@@ -264,7 +246,10 @@ class WebAudioPlayer {
     if (this._muted) {
       this.gainNode.disconnect()
     } else {
-      this.gainNode.connect(this.audioContext.destination)
+      // Only reconnect if not already connected
+      if (!this.gainNode.context?.destination) {
+        this.gainNode.connect(this.audioContext.destination)
+      }
     }
   }
 

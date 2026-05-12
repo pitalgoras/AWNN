@@ -92,6 +92,9 @@ interface AppState {
   envelopeLocked: boolean;
   rawRecordingMode: boolean;
   headLength: number; // Rolling buffer head length in seconds (0-1)
+  sampleRate: number; // AudioContext sample rate for anchor calculations
+  startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
+  bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
   preRollMode: 'always' | 'recording' | 'none';
   waveformQuality: 'low' | 'medium' | 'high';
   isReady: boolean;
@@ -138,10 +141,13 @@ interface AppState {
   setEnvelopeLocked: (locked: boolean) => void;
   setRawRecordingMode: (mode: boolean) => void;
   setHeadLength: (length: number) => void;
+  setStartupDelayMs: (ms: number) => void;
+  setBufferSafetyMs: (ms: number) => void;
   setPreRollMode: (mode: 'always' | 'recording' | 'none') => void;
   setWaveformQuality: (quality: 'low' | 'medium' | 'high') => void;
   setIsReady: (isReady: boolean) => void;
   setResponsiveLayout: (layout: { trackHeight: number, metronomeHeight: number, sidebarWidth: number }) => void;
+  setSampleRate: (rate: number) => void;
   setToolbarProposal: (proposal: 1 | 2 | 3) => void;
   setToolbarVisibleLabels: (visible: boolean) => void;
   reorderTracks: (startIndex: number, endIndex: number) => void;
@@ -176,6 +182,8 @@ const defaultSettings = {
   envelopeLocked: true,
   rawRecordingMode: true,
   headLength: 1.0, // Default 1 second rolling buffer head
+  startupDelayMs: 150, // Default 150ms estimated startup latency (dangerous setting)
+  bufferSafetyMs: 100, // Default 100ms buffer safety margin (dangerous setting)
   preRollMode: 'always' as const,
   waveformQuality: 'low' as const,
   isReady: false,
@@ -189,6 +197,7 @@ const defaultSettings = {
   lyricsSegments: [] as VoicingSegment[],
   lyricsViewMode: 'fixed' as const,
   activeColorId: '#FACC15', // Default unison color
+  sampleRate: 44100, // Default; updated when AudioContext is created
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
   mediumBtnSize: 44,
@@ -227,6 +236,9 @@ export const useStore = create<AppState>()(
         setEnvelopeLocked: (locked) => set({ envelopeLocked: locked }),
         setRawRecordingMode: (mode) => set({ rawRecordingMode: mode }),
         setHeadLength: (length) => set({ headLength: Math.max(0, Math.min(1, length)) }),
+        setStartupDelayMs: (ms) => set({ startupDelayMs: Math.max(0, Math.min(1000, ms)) }),
+        setBufferSafetyMs: (ms) => set({ bufferSafetyMs: Math.max(0, Math.min(500, ms)) }),
+        setSampleRate: (rate) => set({ sampleRate: rate }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
         setIsReady: (isReady) => set({ isReady }),
@@ -291,15 +303,16 @@ export const useStore = create<AppState>()(
           if (Math.abs(delta) < 0.0001) return;
 
           phrase.startPosition = newPosition;
-          // UN-ANCHOR: Clear anchoredFrame when moved so audio plays at new position
-          // Only keep anchor if returning to original position (within tolerance)
+          // FIXED: Recalculate anchoredFrame relative to new position to preserve sync
+          // anchoredFrame represents the frame offset from UserTime 0
+          // When the clip moves, we need to update anchoredFrame so audio still lines up
+          // new anchoredFrame = originalAnchoredFrame + (newPosition - originalStartPosition) * sampleRate
+          // But since we want relative shift: deltaFrames = deltaPosition * sampleRate
           if (phrase.originalAnchoredFrame !== undefined && phrase.originalAnchoredFrame !== 0) {
-            const originalStartPos = (phrase.originalAnchoredFrame / (44100)) - phrase.headLength;
-            if (Math.abs(newPosition - originalStartPos) > 0.01) {
-              // Moved to different position - clear anchor
-              phrase.anchoredFrame = 0;
-            }
-            // If within tolerance of original position, keep anchor
+            const sampleRate = get().sampleRate || 44100;
+            const deltaFrames = Math.round(delta * sampleRate);
+            phrase.anchoredFrame = phrase.originalAnchoredFrame + deltaFrames;
+            console.log('store: updated anchoredFrame for moved phrase:', phrase.anchoredFrame, '(delta:', delta, ')');
           }
           // Shift envelope nodes that are within the phrase's time range
           track.envelope.forEach(node => {

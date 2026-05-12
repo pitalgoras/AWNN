@@ -190,12 +190,16 @@ export const SyncTool: React.FC = () => {
           <>
             <button 
               onClick={() => {
-                // Reset: restore anchor and calculate new startPosition using clip's headLength
-                const originalAnchoredFrame = selectedPhrase.originalAnchoredFrame;
-                const sampleRate = 44100; // TODO: get from audioContext
-                const newStartPosition = (originalAnchoredFrame / sampleRate) - selectedPhrase.headLength;
+                // Reset: restore anchor and calculate new startPosition
+                // startPosition = anchor(RealTime) - secondsPerBar(UserTime offset) - headLength
+                const state = useStore.getState();
+                const anchorFrame = selectedPhrase.originalAnchoredFrame;
+                const sampleRate = state.sampleRate;
+                const beatsPerSecond = (state.bpm || 120) / 60;
+                const secondsPerBar = (1 / beatsPerSecond) * (state.timeSignature?.[0] || 4);
+                const newStartPosition = (anchorFrame / sampleRate) - secondsPerBar - selectedPhrase.headLength;
                 updatePhrase(selectedTrack.id, selectedPhrase.id, {
-                  anchoredFrame: originalAnchoredFrame,
+                  anchoredFrame: anchorFrame,
                   startPosition: Math.max(0, newStartPosition)
                 });
               }} 

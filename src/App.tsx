@@ -237,13 +237,15 @@ export default function App() {
   // Update multitrack tracks when anchoredFrame changes (for playback sync)
   useEffect(() => {
     if (!isReady || !multitrackRef.current) return;
-    
-    console.log('useEffect anchoredFrame: checking tracks...');
+
     tracks.forEach(track => {
-      console.log('useEffect anchoredFrame: track', track.id, 'anchoredFrame=', track.anchoredFrame, 'phrases count=', track.phrases.length);
-      if (track.anchoredFrame !== undefined) {
-        console.log('useEffect anchoredFrame: updating track', track.id, 'anchoredFrame=', track.anchoredFrame);
+      if (track.anchoredFrame !== undefined && track.anchoredFrame !== 0) {
         // Convert Track to TrackOptions (multitrack expects this)
+        const isMetronome = track.id === 'metronome';
+        const trackOffset = track.offset || 0;
+        const beatsPerSecond = (bpm || 120) / 60;
+        const secondsPerBeat = 1 / beatsPerSecond;
+        const spb = secondsPerBeat * (timeSignature?.[0] || 4);
         const trackOptions = {
           id: track.id,
           name: track.name,
@@ -258,7 +260,7 @@ export default function App() {
             url: p.url,
             audioBuffer: p.audioBuffer,
             peaks: p.peaks,
-            startPosition: p.startPosition,
+            startPosition: isMetronome ? p.startPosition : p.startPosition + spb + trackOffset,
             duration: p.duration,
             headLength: p.headLength,
             anchoredFrame: p.anchoredFrame,
@@ -1040,6 +1042,45 @@ export default function App() {
                       className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
                     />
                   </div>
+                </div>
+              </div>
+
+              {/* Dangerous Settings */}
+              <div className="border-t border-red-900/30 pt-4 mt-4">
+                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-red-500 mb-2">
+                  Dangerous Settings
+                </label>
+                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30">
+                  <div className="pr-4">
+                    <div className="text-sm font-bold text-zinc-100">Startup Delay</div>
+                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Estimated time (ms) between play start and actual audio context running. Higher = safer but slower.</div>
+                  </div>
+                  <input 
+                    type="number" 
+                    min="0" max="1000" step="10"
+                    value={useStore.getState().startupDelayMs}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      if (!isNaN(val)) useStore.getState().setStartupDelayMs(val);
+                    }}
+                    className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+                  />
+                </div>
+                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
+                  <div className="pr-4">
+                    <div className="text-sm font-bold text-zinc-100">Buffer Safety</div>
+                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Extra wait (ms) after headLength to ensure rolling buffer is populated before recording starts.</div>
+                  </div>
+                  <input 
+                    type="number" 
+                    min="0" max="500" step="10"
+                    value={useStore.getState().bufferSafetyMs}
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value);
+                      if (!isNaN(val)) useStore.getState().setBufferSafetyMs(val);
+                    }}
+                    className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+                  />
                 </div>
               </div>
             </div>

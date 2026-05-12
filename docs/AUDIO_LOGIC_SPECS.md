@@ -1,4 +1,4 @@
-# Audio Engine & Interaction Specifications (Updated for audioOffset)
+# Audio Engine & Interaction Specifications (Updated for anchorFrame)
 
 This document outlines the comprehensive logic, edge cases, and user experience decisions for the multitrack audio engine.
 
@@ -16,14 +16,16 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 
 ## 3. Recording, Pre-roll & Tempo Logic
 *   **Pre-roll (Count-in) Behavior (UPDATED):**
-    *   **Rolling Buffer:** Always captures ~2s of audio during playback
-    *   **Head:** Audio already in rolling buffer when Record pressed (~1s) - VALID pre-punch-in audio
+    *   **Rolling Buffer:** Always captures ~2s of audio during playback (in AudioWorklet)
+    *   **Head:** Audio already in rolling buffer when Record pressed (~`headLength` seconds) — included as prefix of recorded clip. The `_flush()` method in the worklet trims the rolling buffer to exactly `headLength` seconds.
     *   **Pre-roll Mode:** Affects PLAYBACK timing (when to start), NOT recording capture
 *   **Recording Logic (UPDATED):**
-    *   **All states:** `startPosition = punchInTime - headLength`, `audioOffset = NO`
-    *   **Rolling buffer** always captures during playback → HEAD is ALWAYS present (~1s)
-    *   **WaveSurfer plays from startPosition** → matches audio position in buffer directly
-    *   **NO audioOffset needed** - the visual position already accounts for the head!
+    *   **`anchoredFrame`** = `floor(punchInUserTime_Real × sampleRate)` — AudioContext clock frame of definitive audio start (ground truth for sync). `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`.
+    *   **`startPosition`** = `punchInUserTime - headLength` — visual clip includes head before anchor. Computed directly from UserTime to avoid drift from AudioContext clock delays.
+    *   **Rolling buffer** always captures during playback → Head is always present (~`headLength` seconds)
+    *   **WaveSurfer plays entire buffer** from position 0 → head audio is audible, followed by definitive recording
+    *   **`headLength`** is per-clip metadata (editable in SyncTool) — changing it adjusts visual boundaries without affecting sync
+    *   **`startupDelayMs`** (default 150ms) and **`bufferSafetyMs`** (default 100ms) are editable in Dangerous Settings within the Advanced Settings modal. `startupDelayMs` estimates the time between `onSetIsPlaying(true)` and actual AudioContext playback start. `bufferSafetyMs` adds extra wait margin to ensure the rolling buffer is populated before START_RECORDING is sent.
 *   **Tempo Control (BpmInput):**
     *   **Interaction:** Supports direct typing (3-digit), vertical scrubbing (drag-to-change), and arrow keys (Up/Down).
     *   **Responsiveness:** The UI prioritizes input responsiveness. Metronome regeneration is debounced (500ms) to prevent audio processing from interrupting the user's input flow.
@@ -34,28 +36,26 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 *   **Timeline Grid Performance:**
     *   **Virtualization:** The grid only renders beat/bar lines that are currently visible in the viewport, maintaining 60fps performance even at high zoom levels.
 *   **Audio Integrity:** Audio clips are stored at their absolute time in seconds/milliseconds. Changing the BPM shifts the grid and metronome but does NOT stretch or move existing audio clips.
-*   **Metronome:** A dedicated metronome track provides a click track. **There is no "manual" metronome; it is always a pre-rendered audio track.** This track is the single source of truth for project synchronization. It plays during the pre-roll and standard playback. It can be muted or its volume adjusted, but it cannot be recorded onto. The metronome track is rendered as a 1-bar clip laid consecutively (appended dynamically) to save memory. The metronome track is thinner (40px) and has no text label on its clips. **Track ID:** Currently `'metronome'` (consider renaming to `'0'` in future).
-*   **Continuous Recorder Pattern (Updated):** The recording engine maintains a persistent `MediaStream` + `MediaRecorder` with `timeslice=100ms`. This serves TWO purposes:
-    *   **Eliminate mic latency:** Microphone is always "hot" (warmed up), avoiding cold-start latency.
-    *   **Circular buffer for pre-roll:** Last N seconds of audio are available when user presses Record (punch-in). The `audioChunks[]` array acts as a rolling buffer that gets "recycled" on each new recording.
-    *   **AudioWorklet Shared Clock:** The AudioWorklet uses the SAME `currentTime` as playback (via `audioContext.currentTime`). This eliminates jitter between recording and playback. The worklet decides when to start recording using its own `currentTime` (1s before `punchInUserTime_Real`).
+*   **Metronome:** A dedicated metronome track provides a click track. **There is no "manual" metronome; it is always a pre-rendered audio track.** This track is the single source of truth for project synchronization. It plays during the pre-roll and standard playback. It can be muted or its volume adjusted, but it cannot be recorded onto. The metronome plays from start with no head offset (`headLength = 0`), ensuring clicks land exactly on the timeline grid. The metronome track is thinner (40px) and has no text label on its clips. **Track ID:** Currently `'metronome'` (consider renaming to `'0'` in future).
+*   **Continuous Recorder Pattern:** The AudioWorklet runs continuously during playback, maintaining a 2-second rolling buffer in the audio render thread. This eliminates microphone cold-start latency and provides a pre-roll head before recording punches in. No `MediaRecorder` is used — all capture happens on the shared AudioContext clock for jitter-free sync.
 *   **Cues & Navigation:**
     *   **Cues:** Users can add markers (cues) to the timeline. Cues are visible in the transport bar and the sidebar.
     *   **Bar.Beat Display:** The transport bar features a digital display showing the current position in `Bar.Beat` format (e.g., `1.1`, `2.3`). User Time 0.0 corresponds to Bar 1.1.
 
-## 4. Latency Compensation & Sync (audioOffset Approach)
+## 4. Latency Compensation & Sync (anchorFrame Approach)
 
 *   **Visual Sync ($L_{vis}$):** The visual playhead position is calculated as `currentTime - outputLatency`. This ensures the cursor visually matches the sound hitting the user's ears.
-*   **Recording Sync ($L_{rt}$):** Recorded clips use `audioOffset` to align the performance with the backing track.
-    *   **Formula:** `audioOffset = -(headDuration + latencySec)`
-    *   **Where:** `headDuration = 1.0s` (the pre-roll head we captured), `latencySec = (globalLatencyMs + extraLatencyMs) / 1000`
-    *   **Result:** When timeline reaches `punchInUserTime`, playback skips the head automatically → audio is IN SYNC!
-*   **Track Offset:** Each track supports a manual `offset` (in seconds) to nudge its timing. This is applied during the `startPosition` calculation when initializing the multitrack engine.
+*   **Recording Sync ($L_{rt}$):** Recorded clips use `anchoredFrame` (shared-clock frame number) as the ground truth for sync. This frame number represents the exact moment in the AudioContext clock where the definitive recording begins.
+    *   **`anchoredFrame`** = `floor(punchInUserTime_Real × sampleRate)` — absolute frame from AudioContext clock. `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`.
+    *   **`headLength`** (per clip, default 1.0s) — rolling buffer audio prepended before anchor. Worklet's `_flush()` trims rolling buffer to exactly `headLength` seconds.
+    *   **`originalAnchoredFrame`** — snapshot at creation for Reset/Undo
+*   **Track Offset:** Each track supports a manual `offset` (in seconds) to nudge its timing. Applied during `startPosition` calculation in `useAudioEngine.ts`.
 *   **Sample-Accurate Playback:** The engine uses `AudioBufferSourceNode` for all playback, ensuring sample-accurate timing that is independent of JavaScript main-thread jitter.
-*   **audioOffset Implementation:**
-    *   **Storage:** `audioOffset` stored in phrase data (default `-(1.0 + latencySec)`).
-    *   **Playback:** `WebAudioPlayer` uses `offset` parameter to skip head during playback.
-    *   **WaveSurfer:** Creates `WebAudioPlayer` with `offset: Math.abs(audioOffset)` when initializing.
+*   **Sync Implementation:**
+    *   **Playback offset formula:** `offset = playedDuration` (plays entire buffer from start, including head)
+    *   **Visual startPosition:** `punchInUserTime - headLength` (direct UserTime, not derived from anchoredFrame)
+    *   **Move/Nudge:** `anchoredFrame = originalAnchoredFrame + round(delta × sampleRate)`
+    *   **Reset:** `startPosition = (originalAnchoredFrame / sampleRate) - secondsPerBar - headLength`
 
 ## 5. Selection & Interaction
 *   **Intelligent Phrase Selection:** Double-clicking on a track identifies the phrase (clip) currently under the playhead (`currentTime`) and selects it. This allows for quick access to clip-specific settings like manual offsets or deletion.
@@ -105,29 +105,32 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 *   **Main Thread Impact:** Because Web Workers are blocked, Monaco is forced to perform heavy operations (like syntax highlighting, parsing, and formatting) on the main UI thread.
 *   **UI Freezes:** This limitation causes noticeable UI freezes and unresponsiveness ("long pauses") when editing code, especially in large files. This is an environmental constraint, not a flaw in the application's React or Audio Engine architecture.
 
-## 7. Recent Changes (audioOffset Implementation)
+## 7. Recent Changes (anchorFrame Migration — May 2026)
 
-### What Changed (May 2026)
-1. ✅ **AudioWorklet decides start via `currentTime`** - No delays from main thread
-2. ✅ **`audioOffset = -(1.0s head + latencySec)`** - Calculated in `handleAudioWorkletStop()`
-3. ✅ **`startPosition = punchInUserTime`** - Correct visual position (where user pressed Record)
-4. ✅ **`WebAudioPlayer` supports `offset` parameter** - Skips head during playback
-5. ✅ **`multitrack.ts` uses `audioOffset`** - WaveSurfer creates player with offset
+### What Changed
+1. ✅ **AudioWorklet mandatory** — `MediaRecorder` fallback removed entirely
+2. ✅ **`anchoredFrame`** stores absolute AudioContext clock frame of punch-in (`punchInUserTime_Real × sampleRate`)
+3. ✅ **`startPosition = punchInUserTime - headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
+4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording) from position 0
+5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at creation time. Worklet `_flush()` trims rolling buffer to exactly `headLength` seconds.
+6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo operations
+7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
+8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
+9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants, editable in Dangerous Settings, used in `punchInUserTime_Real` computation
 
 ### Files Modified
-- `public/worklets/recorder.worklet.js` - AudioWorklet decides when to start
-- `src/audio/recording/RecordingEngine.ts` - Calculates `audioOffset`
-- `src/lib/multitrack/webaudio.ts` - `WebAudioPlayer` supports offset
-- `src/lib/multitrack/multitrack.ts` - Uses `audioOffset` for playback
-- `docs/RECORDING_LOGIC.md` - Updated with audioOffset approach
-- `docs/AUDIO_LOGIC_SPECS.md` - This file (updated)
+- `public/worklets/recorder.worklet.js` — returns `_anchoredFrame`, trims head to `headLength` in `_flush()`, uses `punchInUserTime_Real` directly
+- `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
+- `src/lib/multitrack/webaudio.ts` — simplified `playAt()` offset, duplicate gain connection fix
+- `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
+- `src/components/SyncTool.tsx` — Reset formula includes `secondsPerBar`
+- `src/hooks/useAudioEngine.ts` — async IIFE, fire-and-forget resume, sampleRate in store
+- `src/store/useStore.ts` — `sampleRate` state, `startupDelayMs`/`bufferSafetyMs` settings, `updatePhrasePosition` preserves anchor on move
+- `src/App.tsx` — removed `syncedTrackIdsRef` guard, added Dangerous Settings UI
 
-### Git Commits (branch: `backup-before-fixes`)
-```
-f4b742a feat: Add audioOffset support - WebAudioPlayer skip head + latency
-c57a68c feat: AudioWorklet decides start via currentTime, audioOffset with latency compensation
-b32e74d fix: Simplify AudioWorklet - remove recordingStartTime, use currentFrame - sampleRate
-ddff309 fix: AudioWorklet event reference bug - store recordingStartTime in class property
-3a3eb32 fix: Recording 1s head + temp startPos=punchInUserTime-1s + comments + docs
-a9a6976 fix: Read currentTime from store in startRecording() to avoid stale config
+### Replaced Approaches
+- ~~`audioOffset = -(headDuration + latencySec)`~~ → `anchoredFrame` + `headLength`
+- ~~`WebAudioPlayer` with `offset` param~~ → `playedDuration` offset (plays all audio)
+- ~~`startPosition = anchorFrame/sr − sPB − headLength`~~ → `startPosition = punchInUserTime − headLength`
+- ~~`captureImmediately` flag~~ → unconditional `_recordingStartFrame = _anchoredFrame` in worklet
 ```

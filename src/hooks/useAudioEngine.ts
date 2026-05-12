@@ -93,11 +93,7 @@ const {
       metronomeEngineRef.current = new MetronomeEngine(audioContextRef.current);
     }
 
-    // Initialize RecordingEngine
-    // Detect AudioWorklet support
-    const audioContext = audioContextRef.current;
-    const useAudioWorklet = audioContext?.audioWorklet !== undefined;
-
+    // Initialize RecordingEngine (AudioWorklet is mandatory)
     if (!recordingEngineRef.current) {
       const config: RecordingConfig = {
         rawRecordingMode,
@@ -109,8 +105,9 @@ const {
         isPlaying,
         currentTime,
         headLength: useStore.getState().headLength,
+        startupDelayMs: useStore.getState().startupDelayMs,
+        bufferSafetyMs: useStore.getState().bufferSafetyMs,
         audioContextRef,
-        useAudioWorklet,
       };
 
       const callbacks: RecordingCallbacks = {
@@ -131,7 +128,11 @@ const {
             console.log('useAudioEngine: DIRECT update multitrack track', trackId, 'with anchoredFrame=', phrase.anchoredFrame);
             // Update track.anchoredFrame
             track.anchoredFrame = phrase.anchoredFrame;
-            // Convert Track to TrackOptions (multitrack expects this)
+            const isMetronome = trackId === 'metronome';
+            const trackOffset = track.offset || 0;
+            console.log('useAudioEngine: addTrack startPosition conversion — UserTime:', phrase.startPosition, '→ RealTime:', isMetronome ? phrase.startPosition : phrase.startPosition + secondsPerBar + trackOffset, '(sPB:', secondsPerBar, 'offset:', trackOffset, ')');
+            // FIXED: Flatten audio data to top level so multitrack.initAudio() can find it
+            // initAudio reads track.audioBuffer/track.url directly, not from phrases[]
             const trackOptions = {
               id: track.id,
               name: track.name,
@@ -141,17 +142,15 @@ const {
               volume: track.volume,
               pan: track.pan,
               offset: track.offset,
-              anchoredFrame: track.anchoredFrame,
-              phrases: track.phrases.map(p => ({
-                url: p.url,
-                audioBuffer: p.audioBuffer,
-                peaks: p.peaks,
-                startPosition: p.startPosition,
-                duration: p.duration,
-                headLength: p.headLength,
-                anchoredFrame: p.anchoredFrame,
-                originalAnchoredFrame: p.originalAnchoredFrame,
-              })),
+              anchoredFrame: phrase.anchoredFrame,
+              // Top-level audio data from the latest phrase
+              url: phrase.url,
+              audioBuffer: phrase.audioBuffer,
+              peaks: phrase.peaks,
+              startPosition: isMetronome ? phrase.startPosition : phrase.startPosition + secondsPerBar + trackOffset,
+              duration: phrase.duration,
+              headLength: phrase.headLength,
+              originalAnchoredFrame: phrase.originalAnchoredFrame,
             } as any;
             multitrackRef.current.addTrack(trackOptions);
           }
@@ -177,8 +176,9 @@ const {
         preRollMode,
         currentTime,
         headLength: useStore.getState().headLength,
+        startupDelayMs: useStore.getState().startupDelayMs,
+        bufferSafetyMs: useStore.getState().bufferSafetyMs,
         isPlaying,
-        useAudioWorklet,
       });
     }
 
@@ -317,7 +317,7 @@ const {
     ).join(',') + `|bpm:${bpm}|ts:${timeSignature?.[0]}/${timeSignature?.[1]}`;
   }, [tracks, bpm, timeSignature]);
 
-  // Initialize Multitrack
+// Initialize Multitrack
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -328,158 +328,158 @@ const {
       containerRef.current.style.transition = 'opacity 0.3s ease-in-out';
     }
 
-    
-    if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
-      // Create AudioContext if not exists or closed
-      audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
-    }
-    
-    // Resume if suspended (should not happen as we create it here, but just in case)
-    if (audioContextRef.current?.state === 'suspended') {
-      audioContextRef.current.resume();
-    }
-    
-    // Ensure AudioContext is not null
-    if (!audioContextRef.current) {
-      throw new Error('Failed to create AudioContext');
-    }
-    
-    const multitrackItems: (TrackOptions & { trackId: string })[] = [];
+    let disposed = false;
 
-    const pixelRatio = waveformQuality === 'low' ? 1 : waveformQuality === 'medium' ? Math.max(1, window.devicePixelRatio / 2) : window.devicePixelRatio;
-    const sampleRate = waveformQuality === 'low' ? 8000 : waveformQuality === 'medium' ? 16000 : 44100;
+    (async () => {
+      try {
+        if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
+          // Create AudioContext if not exists or closed
+          audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
+        }
 
-    const beatsPerSecond = (bpm || 120) / 60;
-    const secondsPerBeat = 1 / beatsPerSecond;
-    const secondsPerBar = secondsPerBeat * (timeSignature?.[0] || 4);
+        // Resume if suspended - fire-and-forget since this requires a user gesture
+        // and will resolve on first click/keypress. Don't block init on this.
+        if (audioContextRef.current?.state === 'suspended') {
+          audioContextRef.current.resume().catch(() => {/* expected on page load */});
+        }
 
-    (tracks || []).forEach(t => {
-      const isMetronome = t.id === 'metronome';
-      if (t.phrases.length === 0) {
-        multitrackItems.push({
-          id: t.id, // Use track ID as phrase ID for empty tracks
-          trackId: t.id,
-          url: SILENT_WAV,
-          startPosition: 0,
-          volume: 0,
-            options: {
-              waveColor: t.color,
-              progressColor: t.color,
-              height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
-              pixelRatio,
-              sampleRate,
-              // FIXED: Don't create WebAudioPlayer here - let multitrack handle it with audioOffset
-            } as unknown as TrackOptions['options']
-          });
-      } else {
-        t.phrases.forEach(p => {
-          // Metronome phrases are already in Real Time (starting from 0)
-          // Other phrases are in User Time (starting from 0, which is Bar 1)
-          // Apply track-level offset for manual nudge/latency compensation
-          const realStartPosition = isMetronome ? p.startPosition : p.startPosition + secondsPerBar + (t.offset || 0);
-          
-          multitrackItems.push({
-            id: p.id,
-            trackId: t.id,
-            url: p.url,
-            audioBuffer: p.audioBuffer,
-            peaks: p.peaks,
-            startPosition: realStartPosition,
-            startCue: p.startCue,
-            endCue: p.endCue,
-            headLength: p.headLength,
-            anchoredFrame: p.anchoredFrame,
-            originalAnchoredFrame: p.originalAnchoredFrame,
-            volume: t.isMuted ? 0 : t.volume,
-            draggable: true,
-            options: {
-              waveColor: t.color,
-              progressColor: t.color,
-              height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
-              pixelRatio,
-              sampleRate,
-              // FIXED: Don't create WebAudioPlayer here - let multitrack handle it with audioOffset
-            } as unknown as TrackOptions['options']
-          });
+        // Ensure AudioContext is not null
+        if (!audioContextRef.current) {
+          throw new Error('Failed to create AudioContext');
+        }
+
+        // Update sample rate in store
+        useStore.getState().setSampleRate(audioContextRef.current.sampleRate);
+
+        const multitrackItems: (TrackOptions & { trackId: string })[] = [];
+
+        const pixelRatio = waveformQuality === 'low' ? 1 : waveformQuality === 'medium' ? Math.max(1, window.devicePixelRatio / 2) : window.devicePixelRatio;
+        const sampleRate = waveformQuality === 'low' ? 8000 : waveformQuality === 'medium' ? 16000 : 44100;
+
+        const beatsPerSecond = (bpm || 120) / 60;
+        const secondsPerBeat = 1 / beatsPerSecond;
+        const secondsPerBar = secondsPerBeat * (timeSignature?.[0] || 4);
+
+        (tracks || []).forEach(t => {
+          const isMetronome = t.id === 'metronome';
+          if (t.phrases.length === 0) {
+            multitrackItems.push({
+              id: t.id,
+              trackId: t.id,
+              url: SILENT_WAV,
+              startPosition: 0,
+              volume: 0,
+                options: {
+                  waveColor: t.color,
+                  progressColor: t.color,
+                  height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
+                  pixelRatio,
+                  sampleRate,
+                } as unknown as TrackOptions['options']
+            });
+          } else {
+            t.phrases.forEach(p => {
+              const realStartPosition = isMetronome ? p.startPosition : p.startPosition + secondsPerBar + (t.offset || 0);
+
+              multitrackItems.push({
+                id: p.id,
+                trackId: t.id,
+                url: p.url,
+                audioBuffer: p.audioBuffer,
+                peaks: p.peaks,
+                startPosition: realStartPosition,
+                startCue: p.startCue,
+                endCue: p.endCue,
+                headLength: p.headLength,
+                anchoredFrame: p.anchoredFrame,
+                originalAnchoredFrame: p.originalAnchoredFrame,
+                volume: t.isMuted ? 0 : t.volume,
+                draggable: true,
+                options: {
+                  waveColor: t.color,
+                  progressColor: t.color,
+                  height: isMetronome ? metronomeHeight : (t.id === selectedTrackId && !envelopeLocked ? Math.floor(trackHeight * 1.5) : trackHeight),
+                  pixelRatio,
+                  sampleRate,
+                } as unknown as TrackOptions['options']
+              });
+            });
+          }
         });
+
+        if (disposed) return;
+
+        const multitrack = MultiTrack.create(multitrackItems, {
+          container: containerRef.current,
+          minPxPerSec: zoom,
+          rightButtonDrag: false,
+          cursorWidth: 2,
+          cursorColor: '#D72F21',
+          trackBackground: '#2D3748',
+          audioContext: audioContextRef.current!,
+          moveLocked: moveLocked,
+          timelineOptions: {
+            formatTimeCallback: (seconds: number) => {
+              const userTime = seconds - secondsPerBar;
+              const absTime = Math.abs(userTime);
+              const mins = Math.floor(absTime / 60);
+              const secs = Math.floor(absTime % 60);
+              const sign = userTime < 0 ? '-' : '';
+              return `${sign}${mins}:${secs.toString().padStart(2, '0')}`;
+            }
+          },
+          preRollDuration: secondsPerBar
+        });
+
+        multitrackRef.current = multitrack;
+        setMultitrack(multitrack);
+        useStore.getState().setMultitrackTimeGetter(() => {
+          const realTime = multitrack.getCurrentTime();
+          return realTime - secondsPerBar;
+        });
+
+        multitrack.on('canplay', () => {
+          const storeState = useStore.getState();
+          const realTime = storeState.currentTime + secondsPerBar;
+
+          if (typeof multitrack.setTime === 'function') {
+            multitrack.setTime(realTime);
+          }
+
+          adjustLayout();
+
+          let maxDuration = 0;
+          const wssList = multitrack.wavesurfers || [];
+          wssList.forEach((ws: WaveSurfer) => {
+            try {
+              const wsTrackId = (ws as any).options?.trackId || (ws as any).options?.id;
+              if (wsTrackId === 'metronome' || wsTrackId === 'placeholder') return;
+
+              const matchingItems = multitrackItems.filter(item => item.trackId === wsTrackId);
+              if (matchingItems.length === 0) return;
+
+              const d = ws.getDuration();
+              const item = matchingItems[0];
+              const realStartPos = item.startPosition || 0;
+              const userStartPos = realStartPos - secondsPerBar;
+              if (d + userStartPos > maxDuration) maxDuration = d + userStartPos;
+            } catch {
+              // ignore
+            }
+          });
+          setDuration(maxDuration);
+        });
+      } catch (err) {
+        console.error('Multitrack initialization failed:', err);
       }
-    });
-
-    const multitrack = MultiTrack.create(multitrackItems, {
-      container: containerRef.current,
-      minPxPerSec: zoom,
-      rightButtonDrag: false, // This is for panning the timeline
-      cursorWidth: 2,
-      cursorColor: '#D72F21',
-      trackBackground: '#2D3748',
-      audioContext: audioContextRef.current!,
-      moveLocked: moveLocked,
-      timelineOptions: {
-        formatTimeCallback: (seconds: number) => {
-          const userTime = seconds - secondsPerBar;
-          const absTime = Math.abs(userTime);
-          const mins = Math.floor(absTime / 60);
-          const secs = Math.floor(absTime % 60);
-          const sign = userTime < 0 ? '-' : '';
-          return `${sign}${mins}:${secs.toString().padStart(2, '0')}`;
-        }
-      },
-      preRollDuration: secondsPerBar
-      // We MUST NOT use trackBorderColor here. The library's source code blindly 
-      // inserts a 2px <div> before EVERY item in the array if this is set, 
-      // which breaks our nth-child math and adds 2px of vertical space per clip.
-      // We will draw the borders manually in CSS instead.
-    });
-
-    multitrackRef.current = multitrack;
-    setMultitrack(multitrack);
-    useStore.getState().setMultitrackTimeGetter(() => {
-      const realTime = multitrack.getCurrentTime();
-      return realTime - secondsPerBar;
-    });
-
-    multitrack.on('canplay', () => {
-      const storeState = useStore.getState();
-      const realTime = storeState.currentTime + secondsPerBar;
-      
-      // Sync the playhead to the store's current time (which is 0 UserTime initially)
-      if (typeof multitrack.setTime === 'function') {
-        multitrack.setTime(realTime);
-      }
-      
-      // Delay setting isReady until layout is adjusted
-      adjustLayout();
-      
-      // Calculate max duration in User Time
-      let maxDuration = 0;
-      const wssList = multitrack.wavesurfers || [];
-      wssList.forEach((ws: WaveSurfer) => {
-        try {
-          // Get trackId from wavesurfer options (set during creation)
-          const wsTrackId = (ws as any).options?.trackId || (ws as any).options?.id;
-          
-          // Skip metronome track
-          if (wsTrackId === 'metronome' || wsTrackId === 'placeholder') return;
-          
-          // Find matching item(s) in multitrackItems by trackId
-          const matchingItems = multitrackItems.filter(item => item.trackId === wsTrackId);
-          if (matchingItems.length === 0) return;
-          
-          // Use the first matching item (or calculate max duration across all phrases for this track)
-          const d = ws.getDuration();
-          const item = matchingItems[0];
-          const realStartPos = item.startPosition || 0;
-          const userStartPos = realStartPos - secondsPerBar;
-          if (d + userStartPos > maxDuration) maxDuration = d + userStartPos;
-        } catch {
-          // ignore
-        }
-      });
-      setDuration(maxDuration);
-    });
+    })();
 
     return () => {
-      multitrack.destroy();
+      disposed = true;
+      if (multitrackRef.current) {
+        multitrackRef.current.destroy();
+        multitrackRef.current = null;
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trackStructureHash, waveformQuality, bpm, setDuration, timeSignature?.[0], timeSignature?.[1], secondsPerBar]);
@@ -508,18 +508,30 @@ const {
     // Listen for drag events to update the store
     multitrack.on('start-position-change', (event: { id: string; startPosition: number }) => {
       // wavesurfer-multitrack passes an object with { id, startPosition }
+      // startPosition from multitrack is in RealTime (AudioContext clock)
+      // We need to convert to UserTime (timeline position) for the store
       const id = event?.id;
-      const startPosition = event?.startPosition;
+      const realStartPosition = event?.startPosition;
       
-      if (!id || startPosition === undefined) return;
+      if (!id || realStartPosition === undefined) return;
       
       const state = useStore.getState();
       for (const track of state.tracks) {
         if (track.phrases.some(p => p.id === id)) {
-          // Only update if the position actually changed to avoid infinite loops
           const phrase = track.phrases.find(p => p.id === id);
-          if (phrase && Math.abs(phrase.startPosition - startPosition) > 0.001) {
-            state.updatePhrasePosition(track.id, id, startPosition);
+          if (!phrase) break;
+
+          // FIXED: Convert RealTime → UserTime before storing
+          // RealTime = UserTime + secondsPerBar + trackOffset
+          // So: UserTime = RealTime - secondsPerBar - trackOffset
+          const isMetronome = track.id === 'metronome';
+          const trackOffset = track.offset || 0;
+          const userStartPosition = isMetronome ? realStartPosition : realStartPosition - secondsPerBar - trackOffset;
+
+          // Only update if the position actually changed to avoid infinite loops
+          if (Math.abs(phrase.startPosition - userStartPosition) > 0.01) {
+            console.log('start-position-change: RealTime=', realStartPosition, '→ UserTime=', userStartPosition, '(sPB=', secondsPerBar, 'offset=', trackOffset, ')');
+            state.updatePhrasePosition(track.id, id, userStartPosition);
           }
           break;
         }
@@ -843,14 +855,21 @@ const {
             // Only set if the position is actually different to avoid infinite loops with the drag event
             // Unfortunately, wavesurfer-multitrack doesn't expose a getTrackStartPosition method,
             // so we rely on the React state being the source of truth.
-            
-            // We need to be careful here: if the user is actively dragging, we don't want to 
+
+            // We need to be careful here: if the user is actively dragging, we don't want to
             // fight the drag event. However, since the drag event updates the store, this useEffect
             // will run. Calling setTrackStartPosition with the *same* position the drag just reported
             // should be a no-op visually.
+
+            // FIXED: Convert UserTime → RealTime for multitrack
+            // phrase.startPosition is in UserTime (timeline), but setTrackStartPosition expects RealTime
+            const isMetronome = track.id === 'metronome';
+            const trackOffset = track.offset || 0;
+            const realStartPosition = isMetronome ? phrase.startPosition : phrase.startPosition + secondsPerBar + trackOffset;
+
             try {
               perfLogger.log(6, track.id);
-              multitrackRef.current.setTrackStartPosition(itemIndex, phrase.startPosition);
+              multitrackRef.current.setTrackStartPosition(itemIndex, realStartPosition);
             } catch (e) {
               console.warn("Failed to set track start position:", e);
             }
