@@ -7,7 +7,7 @@
 | **Rolling buffer** | 2-second continuous capture in AudioWorklet, always active during playback |
 | **Capture** | The AudioWorklet's act of recording into `_audioData` |
 | **Recording** | Final saved audio (includes head if present) |
-| **Head** | Audio already in rolling buffer (up to `headLength` seconds) when definitive recording starts — prepended as prefix of the saved clip. The worklet's `_flush()` trims the rolling buffer to exactly `headLength` seconds. |
+| **Head** | Audio already in rolling buffer (up to `headLength` seconds) when definitive recording starts — extracted by `_flush()` from the single buffer. The rolling buffer stops trimming at `_recordingStartFrame`, preserving the head window through the end of the recording. |
 | **Pre-roll** | 1 bar (2s at 120 BPM) of PLAYBACK before punch-in — for timing, NOT recording |
 | **Anchor (anchoredFrame)** | AudioContext clock frame number from `punchInUserTime_Real × sampleRate`, marking where definitive audio starts. Source of truth for sync, Reset, and Undo. |
 | **startupDelay** | Estimated time (150ms default) between `onSetIsPlaying(true)` call and actual AudioContext playback start in the AudioWorklet |
@@ -40,9 +40,10 @@
 1. Rolling buffer captures continuously during playback (2s ring buffer in AudioWorklet)
 2. User presses Record at punchInTime
 3. `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn` computed for AudioWorklet sync
-4. AudioWorklet starts, using `punchInUserTime_Real` to set `_anchoredFrame`. Rolling buffer data provides the head, trimmed to exactly `headLength` seconds by `_flush()`.
-5. Saved audio buffer = `[head ~headLength s][definitive recording...]`
-6. `startPosition = punchInUserTime − headLength` places the visual clip directly from UserTime
+4. AudioWorklet sets `_recordingStartFrame = _anchoredFrame`. Rolling buffer **stops trimming** at this frame, preserving everything from `_recordingStartFrame - rollingBufferDuration` onward in one contiguous buffer.
+5. Audio continues flowing into the single buffer until STOP_RECORDING.
+6. `_flush()` extracts: [head: last `headLength` seconds before `_recordingStartFrame`] + [definitive recording from `_recordingStartFrame` onward], all from the same rolling buffer. No separate `_audioData` stream.
+7. `startPosition = punchInUserTime − headLength` places the visual clip directly from UserTime
 
 ### Playback Flow
 1. WaveSurfer reaches `startPosition` (which includes the head before the definitive audio)
@@ -73,11 +74,16 @@
 ## Implementation
 
 ### RecordingEngine.ts
-- Calculate `punchInUserTime` when Record pressed (UserTime)
+- Calculate `punchInUserTime` when Record pressed (UserTime). When `isCurrentlyPlaying`, use `storeState.currentTime` (multitrack playhead position), NOT `audioCtx.currentTime` (fixes clip-in-future bug)
 - `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn` (AudioContext clock)
 - Send `punchInUserTime_Real` to AudioWorklet via message
 - Worklet computes `_anchoredFrame = Math.floor(punchInUserTime_Real × sampleRate)` and returns it as `anchoredFrame`
 - `startPosition = punchInUserTime − headLength` (direct UserTime, independent of anchorFrame)
+
+### RecorderWorklet (worklet)
+- Single rolling buffer for both head and definitive recording (no separate `_audioData`)
+- Trimming stops at `_recordingStartFrame` — preserves head window + recording in one buffer
+- `_flush()`: iterates buffer, extracts last `headLength` seconds before `_recordingStartFrame` as head, then includes data from `_recordingStartFrame` onward as definitive recording
 
 ### WebAudioPlayer (webaudio.ts)
 - Stores `_anchoredFrame` and `_headLength` as metadata

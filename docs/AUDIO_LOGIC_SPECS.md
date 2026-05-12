@@ -16,9 +16,9 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 
 ## 3. Recording, Pre-roll & Tempo Logic
 *   **Pre-roll (Count-in) Behavior (UPDATED):**
-    *   **Rolling Buffer:** Always captures ~2s of audio during playback (in AudioWorklet)
-    *   **Head:** Audio already in rolling buffer when Record pressed (~`headLength` seconds) — included as prefix of recorded clip. The `_flush()` method in the worklet trims the rolling buffer to exactly `headLength` seconds.
-    *   **Pre-roll Mode:** Affects PLAYBACK timing (when to start), NOT recording capture
+*   **Rolling Buffer:** Always captures ~2s of audio during playback (in AudioWorklet). Single-buffer approach: before `_recordingStartFrame`, buffer is trimmed normally; at/after `_recordingStartFrame`, trimming stops, preserving the entire clip in one contiguous buffer.
+*   **Head:** Audio already in rolling buffer when Recording starts (last `headLength` seconds before `_recordingStartFrame`) — extracted by `_flush()` directly from the buffer. No separate `_audioData` stream.
+*   **Pre-roll Mode:** Affects PLAYBACK timing (when to start), NOT recording capture
 *   **Recording Logic (UPDATED):**
     *   **`anchoredFrame`** = `floor(punchInUserTime_Real × sampleRate)` — AudioContext clock frame of definitive audio start (ground truth for sync). `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`.
     *   **`startPosition`** = `punchInUserTime - headLength` — visual clip includes head before anchor. Computed directly from UserTime to avoid drift from AudioContext clock delays.
@@ -47,7 +47,7 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 *   **Visual Sync ($L_{vis}$):** The visual playhead position is calculated as `currentTime - outputLatency`. This ensures the cursor visually matches the sound hitting the user's ears.
 *   **Recording Sync ($L_{rt}$):** Recorded clips use `anchoredFrame` (shared-clock frame number) as the ground truth for sync. This frame number represents the exact moment in the AudioContext clock where the definitive recording begins.
     *   **`anchoredFrame`** = `floor(punchInUserTime_Real × sampleRate)` — absolute frame from AudioContext clock. `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`.
-    *   **`headLength`** (per clip, default 1.0s) — rolling buffer audio prepended before anchor. Worklet's `_flush()` trims rolling buffer to exactly `headLength` seconds.
+    *   **`headLength`** (per clip, default 1.0s) — rolling buffer audio prepended before anchor. Single-buffer approach: `_flush()` extracts head from the last `headLength` seconds of buffer before `_recordingStartFrame`; no separate `_audioData` stream.
     *   **`originalAnchoredFrame`** — snapshot at creation for Reset/Undo
 *   **Track Offset:** Each track supports a manual `offset` (in seconds) to nudge its timing. Applied during `startPosition` calculation in `useAudioEngine.ts`.
 *   **Sample-Accurate Playback:** The engine uses `AudioBufferSourceNode` for all playback, ensuring sample-accurate timing that is independent of JavaScript main-thread jitter.
@@ -112,15 +112,15 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 2. ✅ **`anchoredFrame`** stores absolute AudioContext clock frame of punch-in (`punchInUserTime_Real × sampleRate`)
 3. ✅ **`startPosition = punchInUserTime - headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
 4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording) from position 0
-5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at creation time. Worklet `_flush()` trims rolling buffer to exactly `headLength` seconds.
+5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at creation time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`, `_flush()` extracts head from last `headLength` seconds before start, then includes definitive recording. No separate `_audioData` stream.
 6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo operations
 7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
 9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants, editable in Dangerous Settings, used in `punchInUserTime_Real` computation
 
 ### Files Modified
-- `public/worklets/recorder.worklet.js` — returns `_anchoredFrame`, trims head to `headLength` in `_flush()`, uses `punchInUserTime_Real` directly
-- `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
+- `public/worklets/recorder.worklet.js` — single buffer approach: `_flush()` extracts head from last `headLength` seconds before `_recordingStartFrame`, rolling buffer stops trimming at capture start; no `_audioData`
+- `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation; `punchInUserTime` for `isCurrentlyPlaying` uses store `currentTime` (fixes clip-in-future bug); named `startupDelay`/`bufferSafety` constants
 - `src/lib/multitrack/webaudio.ts` — simplified `playAt()` offset, duplicate gain connection fix
 - `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
 - `src/components/SyncTool.tsx` — Reset formula includes `secondsPerBar`

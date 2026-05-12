@@ -320,8 +320,9 @@ startPos = this.recordingStartTransportTime - latencySec;
 - **`startPosition`** = `punchInUserTime − headLength` (direct UserTime computation, not derived from anchoredFrame — avoids drift from AudioContext clock delays)
 - **`playAt()`** plays entire buffer from position 0 — head + definitive recording sequentially
 - **Move/Undo** use `originalAnchoredFrame` as ground truth, adjusted by `delta × sampleRate`
-- **`_flush()`** trims rolling buffer head to exactly `headLength` seconds
+- **`_flush()`** trims head to exactly `headLength` seconds from single rolling buffer (no `_audioData`)
 - **`startupDelay`** (150ms) + `bufferSafety` (100ms) named constants, editable in Dangerous Settings
+- **`punchInUserTime`** for `isCurrentlyPlaying` uses `storeState.currentTime` (not `audioCtx.currentTime - sPB`) — fixes clip-in-future bug when recording while playing
 
 **Result**: Audio plays in perfect sync with other tracks. Frame-based math ensures jitter resistance.
 
@@ -348,15 +349,16 @@ startPos = this.recordingStartTransportTime - latencySec;
 2. ✅ **`anchoredFrame`** = `Math.floor(punchInUserTime_Real × sampleRate)` — AudioContext clock frame via `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`
 3. ✅ **`startPosition = punchInUserTime − headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
 4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording)
-5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at recording time. Worklet `_flush()` trims rolling buffer to exactly `headLength` seconds.
+5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at recording time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`; `_flush()` extracts head + recording from one buffer, no `_audioData`.
 6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo
 7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
 9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants for recording timing, editable in Dangerous Settings
 10. ✅ **`syncedTrackIdsRef` removed** — App.tsx no longer gates `addTrack` behind a one-time-per-track check
+11. ✅ **`punchInUserTime` for `isCurrentlyPlaying`** uses `storeState.currentTime` — fixes clip-in-future bug when recording while playback is active
 
 ### Files Modified
-- `public/worklets/recorder.worklet.js` — returns `_anchoredFrame`, trims head to `headLength` in `_flush()`, uses `punchInUserTime_Real` directly
+- `public/worklets/recorder.worklet.js` — single-buffer approach: no `_audioData`, rolling buffer stops trimming at `_recordingStartFrame`, `_flush()` extracts head + recording from one buffer
 - `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
 - `src/lib/multitrack/webaudio.ts` — simplified `playAt()`, duplicate gain connection fix
 - `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
@@ -386,11 +388,12 @@ startPos = this.recordingStartTransportTime - latencySec;
 - [x] Pre-roll "always" → clip at Bar 1 (`punchInUserTime = 0`)
 - [x] Live punch-in → clip at current playhead position
 - [x] Latency compensation works (bluetooth, USB, etc.)
-- [x] `_flush()` trims rolling buffer to exactly `headLength` seconds
+- [ ] `_flush()` extracts head + recording from single buffer (rolling buffer stops trimming at `_recordingStartFrame`)
 - [ ] Pre-roll recording with 1-bar head (pending test)
 - [x] `syncedTrackIdsRef` removed — all recordings update multitrack engine
 - [x] `startupDelayMs` + `bufferSafetyMs` configurable in Dangerous Settings
 - [ ] "none" mode while playing — clip at correct playhead position (pending test)
+- [ ] `punchInUserTime` for `isCurrentlyPlaying` uses store `currentTime` (not `audioCtx.currentTime`)
 
 ---
 

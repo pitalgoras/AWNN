@@ -339,10 +339,10 @@ export class RecordingEngine {
       let punchInUserTime: number;
       
       if (isCurrentlyPlaying) {
-        // Playing: AudioContext.currentTime is accurate (aligned with scrolling)
-        const audioCtx = this.config.audioContextRef?.current;
-        const currentTimeReal = audioCtx?.currentTime || 0;
-        punchInUserTime = Math.max(0, currentTimeReal - secondsPerBar);
+        // Playing: use store currentTime (multitrack playhead position)
+        // NOT audioCtx.currentTime — that's the AudioContext wall clock
+        // which diverges from the timeline the longer the AudioContext runs.
+        punchInUserTime = Math.max(0, storeState?.currentTime || 0);
       } else {
         // Stopped: use store currentTime (playhead position)
         punchInUserTime = Math.max(0, storeState?.currentTime || 0);
