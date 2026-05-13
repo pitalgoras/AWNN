@@ -102,10 +102,16 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         for (let i = 0; i < outData.length && i < this.burstCountdown; i++) {
           const burstPos = (this.burstDuration - this.burstCountdown) + i
           const t = (currentFrame + i) / sampleRate
-          // Amplitude ramps from 100% at burst start to 0% at burst end
-          // Creates a clear energy peak at the beginning of the burst
-          const ramp = Math.max(0, 1 - burstPos / this.burstDuration)
-          outData[i] = Math.sin(2 * Math.PI * 1000 * t) * 0.04 * ramp
+          // Triangular envelope: ramp up to max amplitude at midpoint, then down to 0
+          // Creates a clear energy peak at the burst center
+          const midpoint = this.burstDuration / 2
+          let envelope
+          if (burstPos < midpoint) {
+            envelope = burstPos / midpoint  // linear up
+          } else {
+            envelope = Math.max(0, 1 - (burstPos - midpoint) / midpoint) // linear down
+          }
+          outData[i] = Math.sin(2 * Math.PI * 1000 * t) * 0.04 * envelope
         }
         this.burstCountdown -= outData.length
       }
