@@ -234,6 +234,34 @@ a9a6976 fix: Read currentTime from store in startRecording() to avoid stale conf
 
 ---
 
+## 22. Incremental addTrack & Muted Setter Fix (2026-05-13)
+
+**Problem:** Every recording triggered a full multitrack rebuild (destroy + recreate all wavesurfers), and only one recorded clip produced audio during playback (plus metronome).
+
+**Root Causes:**
+1. **Full rebuild on every recording:** The `trackStructureHash` effect and the `useEffect([tracks])` both caused the entire multitrack to be destroyed and recreated whenever a new phrase was added.
+2. **Race condition:** The `useEffect([tracks])` ran synchronously before the async rebuild completed, and its `addTrack` call used nested `phrases[]` format instead of flat format — overwriting good audio data with broken data.
+3. **Muted setter bug:** `WebAudioPlayer.muted` setter had a broken reconnect condition (`!this.gainNode.context?.destination` is always false because `destination` always exists). When a clip was briefly muted during the pre-roll window (first RAF frames where `newTime < 0`), its `gainNode` was disconnected and NEVER reconnected.
+4. **addTrack `else` was a no-op:** When `addTrack` couldn't find a track to replace by id/trackId, it just warned and did nothing — no new entry was created.
+
+**Decisions:**
+1. **Removed `useEffect([tracks])` entirely** — it was redundant. The `onAddPhrase` callback + `trackStructureHash` rebuild handle all cases.
+2. **Incremental `addTrack`:** Replaced the no-op `else` branch with actual insertion code that creates a new DOM container, wavesurfer, and audio player without touching existing tracks.
+3. **Added `trackId` to `trackOptions`:** The `onAddPhrase` callback now sends `trackId: track.id` so `addTrack`'s fallback `findIndex(t => t.trackId === ...)` can find phrase-ID entries by parent track.
+4. **Fixed `muted` setter:** Removed the broken reconnect condition. After `disconnect()`, the node is fully detached, so `connect()` is always safe on unmute.
+
+**Changes:**
+1. **`src/App.tsx`** — Deleted the entire `useEffect([tracks])` block (lines ~237-273), which was racing with `onAddPhrase` callback and async rebuild.
+2. **`src/hooks/useAudioEngine.ts`** — Added `trackId: track.id` to the `trackOptions` object passed to `addTrack`.
+3. **`src/lib/multitrack/multitrack.ts`** — `addTrack()` `else` branch now inserts a new entry (container, audio, wavesurfer, dragging) instead of just warning.
+4. **`src/lib/multitrack/webaudio.ts`** — `muted` setter now unconditionally calls `this.gainNode.connect(this.audioContext.destination)` on unmute.
+
+**Result:** Recordings no longer cause full multitrack redraws. Multiple clips play simultaneously (no longer stuck at "1 + metronome"). The last 3% of audio-related bugs appear to be resolved.
+
+**Commits:**
+- `c845a6b` — fix: remove redundant [tracks] effect, addTrack now inserts new entries incrementally
+- `5f473f3` — fix: muted setter never reconnects gain node after unmuting
+
 ## 20. Voicing Label Algorithm Refinement (2026-05-03)
 **Problem:** When painting voicing labels on lyrics, duplicate tags appeared, and labels were added even when the same voicing already applied. The voicing tags should only exist when the voicing **changes**.
 

@@ -117,16 +117,17 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
 9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants, editable in Dangerous Settings, used in `punchInUserTime_Real` computation
+10. ✅ **Incremental `addTrack`** — `addTrack` now inserts new track entries (container + wavesurfer + audio) instead of just warning. No full multitrack rebuild needed for recordings.
+11. ✅ **Removed `useEffect([tracks])`** — eliminated race condition that overwrote good audio data with broken nested format. All track updates handled by `onAddPhrase` callback + `trackStructureHash` rebuild.
+12. ✅ **Muted setter fix** — `WebAudioPlayer.muted` now correctly reconnects gain node on unmute. Previously, the broken reconnect condition (`!this.gainNode.context?.destination`) was always false (destination always exists), so gainNode stayed disconnected after being muted during pre-roll.
 
 ### Files Modified
 - `public/worklets/recorder.worklet.js` — single buffer approach: `_flush()` extracts head from last `headLength` seconds before `_recordingStartFrame`, rolling buffer stops trimming at capture start; no `_audioData`
 - `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation; `punchInUserTime` for `isCurrentlyPlaying` uses store `currentTime` (fixes clip-in-future bug); named `startupDelay`/`bufferSafety` constants
-- `src/lib/multitrack/webaudio.ts` — simplified `playAt()` offset, duplicate gain connection fix
-- `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
-- `src/components/SyncTool.tsx` — Reset formula includes `secondsPerBar`
-- `src/hooks/useAudioEngine.ts` — async IIFE, fire-and-forget resume, sampleRate in store
-- `src/store/useStore.ts` — `sampleRate` state, `startupDelayMs`/`bufferSafetyMs` settings, `updatePhrasePosition` preserves anchor on move
-- `src/App.tsx` — removed `syncedTrackIdsRef` guard, added Dangerous Settings UI
+- `src/lib/multitrack/webaudio.ts` — fixed `muted` setter: gainNode reconnects unconditionally on unmute (was stuck disconnected after pre-roll mute)
+- `src/lib/multitrack/multitrack.ts` — `addTrack()` `else` branch now inserts new entry incrementally (no full rebuild required for recordings); non-anchored tracks get `headLength: 0`
+- `src/hooks/useAudioEngine.ts` — added `trackId: track.id` to `trackOptions` for `addTrack` fallback search; async IIFE, fire-and-forget resume, sampleRate in store
+- `src/App.tsx` — removed `syncedTrackIdsRef` guard, removed entire `useEffect([tracks])` race, added Dangerous Settings UI
 
 ### Replaced Approaches
 - ~~`audioOffset = -(headDuration + latencySec)`~~ → `anchoredFrame` + `headLength`
