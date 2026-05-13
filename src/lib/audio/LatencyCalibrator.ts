@@ -142,28 +142,7 @@ export class LatencyCalibrator {
     this.source.connect(this.workletNode)
     this.workletNode.connect(this.ctx.destination)
 
-    // 5. Sample noise floor, then run calibration
-    const floorPromise = new Promise<number>((resolve) => {
-      const handler = (event: MessageEvent) => {
-        if (event.data.type === 'FLOOR_RESULT') {
-          this.workletNode!.port.onmessage = null
-          resolve(event.data.peak)
-        }
-      }
-      this.workletNode!.port.onmessage = handler
-    })
-    this.workletNode.port.postMessage({
-      type: 'MEASURE_FLOOR',
-      durationFrames: Math.floor(0.2 * sr),
-    })
-    let floorPeak = await floorPromise
-    if (floorPeak < 0.001) floorPeak = 0.005 // safety floor for dead-silent rooms
-
-    // Adaptive threshold: 4x noise floor + 0.01 margin, clamped to [0.02, 0.15]
-    const threshold = Math.max(0.02, Math.min(0.15, floorPeak * 4 + 0.01))
-    console.log('Calibration: noise floor peak=' + floorPeak.toFixed(4) + ', threshold=' + threshold.toFixed(3))
-
-    // 6. Set up result handler
+    // 5. Set up result handler (energy detection — no threshold needed)
     const resultPromise = new Promise<{
       generationFrames: number[]
       detectedFrames: number[]
@@ -196,7 +175,6 @@ export class LatencyCalibrator {
       type: 'START',
       numPulses: this.options.numTests,
       pulseIntervalFrames: Math.floor(0.2 * sr),
-      threshold,
       sustainFrames: Math.floor(500 * sr / 1000),
     })
 
@@ -220,42 +198,22 @@ export class LatencyCalibrator {
     }
     this.callbacks.onProgress?.(80)
 
-    // 9. Pair each generation with the nearest detection
+    // 9. Pair generations with detections (1:1 from per-pulse windows)
     const { generationFrames, detectedFrames, maxPeak } = result
-
-    // Signal quality diagnostics
-    const signalRatio = maxPeak / threshold
-    if (signalRatio < 1.5) {
-      console.warn(`⚠️ Signal too quiet (${signalRatio.toFixed(1)}x above threshold). Turn UP speakers or move mic closer.`)
-    } else if (signalRatio > 20) {
-      console.warn(`⚠️ Signal very hot (${signalRatio.toFixed(1)}x above threshold). Turn DOWN speakers to avoid distortion.`)
-    } else {
-      console.log(`✅ Signal level good: ${signalRatio.toFixed(1)}x above noise floor threshold.`)
-    }
-
-    const MAX_LATENCY_FRAMES = Math.floor(3 * sr) // 3 seconds max
-    const MIN_LATENCY_FRAMES = Math.floor(0.003 * sr) // 3ms min (below this = likely direct electrical coupling)
-
-    const usedDetections = new Set<number>()
+    const pairs = Math.min(generationFrames.length, detectedFrames.length)
     const latencyFrames: number[] = []
 
-    for (const gen of generationFrames) {
-      // Find the earliest detection that hasn't been used and is within range
-      let bestDetect: number | null = null
-      for (const det of detectedFrames) {
-        if (usedDetections.has(det)) continue
-        const diff = det - gen
-        if (diff >= MIN_LATENCY_FRAMES && diff <= MAX_LATENCY_FRAMES) {
-          if (bestDetect === null || diff < bestDetect - gen) {
-            bestDetect = det
-          }
-        }
-      }
-      if (bestDetect !== null) {
-        usedDetections.add(bestDetect)
-        latencyFrames.push(bestDetect - gen)
+    for (let i = 0; i < pairs; i++) {
+      const diff = detectedFrames[i] - generationFrames[i]
+      const MIN_LATENCY_MS = 3
+      const MAX_LATENCY_MS = 500
+      const diffMs = Math.round((diff / sr) * 1000)
+      if (diffMs >= MIN_LATENCY_MS && diffMs <= MAX_LATENCY_MS) {
+        latencyFrames.push(diff)
       }
     }
+
+    console.log(`Calibration: ${pairs}/${generationFrames.length} pulses paired, maxPeak=${maxPeak.toFixed(4)}`)
 
     if (latencyFrames.length < 2) {
       return {
