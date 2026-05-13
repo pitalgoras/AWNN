@@ -98,11 +98,19 @@ export class RecordingEngine {
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } else {
       const isChrome = /Chrome/.test(navigator.userAgent);
-      const audio: MediaTrackConstraints = {
-        echoCancellation: isChrome ? { exact: false } : false,
-        noiseSuppression: isChrome ? { exact: false } : false,
-        autoGainControl: isChrome ? { exact: false } : false,
-      };
+      let audio: MediaTrackConstraints;
+      if (isChrome) {
+        audio = {
+          echoCancellation: { exact: false },
+          noiseSuppression: { exact: false },
+          autoGainControl: { exact: false },
+        };
+      } else {
+        // Firefox: echoCancellation: false alone triggers WebRTC passthrough mode,
+        // effectively disabling noise suppression and AGC as a side effect.
+        // Adding extra constraints can renegotiate the codec path and re-enable processing.
+        audio = { echoCancellation: false };
+      }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
     }
 
@@ -149,17 +157,21 @@ export class RecordingEngine {
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } else {
       const isChrome = /Chrome/.test(navigator.userAgent);
-      const audio: any = {
-        echoCancellation: isChrome ? { exact: false } : false,
-        noiseSuppression: isChrome ? { exact: false } : false,
-        autoGainControl: isChrome ? { exact: false } : false,
-      };
+      let audio: any;
       if (isChrome) {
-        audio.googEchoCancellation = false;
-        audio.googAutoGainControl = false;
-        audio.googNoiseSuppression = false;
-        audio.googHighpassFilter = false;
-        audio.googTypingNoiseDetection = false;
+        audio = {
+          echoCancellation: { exact: false },
+          noiseSuppression: { exact: false },
+          autoGainControl: { exact: false },
+          googEchoCancellation: false,
+          googAutoGainControl: false,
+          googNoiseSuppression: false,
+          googHighpassFilter: false,
+          googTypingNoiseDetection: false,
+        };
+      } else {
+        // Firefox: echoCancellation: false alone triggers WebRTC passthrough
+        audio = { echoCancellation: false };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
     }

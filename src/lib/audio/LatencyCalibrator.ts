@@ -109,17 +109,22 @@ export class LatencyCalibrator {
     const sr = this.ctx.sampleRate
 
     // 2. Get mic stream
-    const ac: any = {
-      echoCancellation: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
-      noiseSuppression: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
-      autoGainControl: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
-    }
+    let ac: any
     if (/Chrome/.test(navigator.userAgent)) {
-      ac.googEchoCancellation = false
-      ac.googAutoGainControl = false
-      ac.googNoiseSuppression = false
-      ac.googHighpassFilter = false
-      ac.googTypingNoiseDetection = false
+      ac = {
+        echoCancellation: { exact: false },
+        noiseSuppression: { exact: false },
+        autoGainControl: { exact: false },
+        googEchoCancellation: false,
+        googAutoGainControl: false,
+        googNoiseSuppression: false,
+        googHighpassFilter: false,
+        googTypingNoiseDetection: false,
+      }
+    } else {
+      // Firefox: echoCancellation: false triggers WebRTC passthrough,
+      // effectively disabling all audio processing as a side effect
+      ac = { echoCancellation: false }
     }
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: ac })
 
