@@ -226,7 +226,7 @@ export default function AudioEditorView() {
           calibratorRef.current = null;
         }
       },
-      { numTests: 3, threshold: 0.15 }
+      { numTests: 3 }
     );
 
     calibratorRef.current = calibrator;

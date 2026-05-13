@@ -52,7 +52,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
           calibratorRef.current = null;
         }
       },
-      { numTests: 5, threshold: 0.1 }
+      { numTests: 5 }
     );
 
     calibratorRef.current = calibrator;

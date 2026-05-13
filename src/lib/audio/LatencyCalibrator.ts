@@ -1,345 +1,272 @@
 /**
- * LatencyCalibrator - Shared module for audio latency calibration
- * Uses AudioWorklet for cross-browser compatibility (Firefox + Chrome)
+ * LatencyCalibrator - Measures round-trip audio latency via loopback
+ *
+ * Approach:
+ * 1. Get microphone access with raw audio constraints
+ * 2. Play 5 sharp clicks through speakers at known AudioContext times
+ * 3. Capture all mic input during the test via ScriptProcessorNode
+ * 4. After the test, analyze the recorded buffer for click transients
+ * 5. Compute latency as (detected_time - expected_time) for each click
+ * 6. Return the average of all successful detections
  */
 
 export interface LatencyCalibrationOptions {
-  numTests?: number;
-  threshold?: number;
-  beepFrequency?: number;
-  beepDuration?: number;
-  testInterval?: number;
-  timeoutMs?: number;
+  numTests?: number
+  testInterval?: number
+  beepFrequency?: number
+  beepDuration?: number
 }
 
 export interface LatencyCalibrationResult {
-  success: boolean;
-  latencies: number[];
-  averageLatencyMs: number;
-  error?: string;
+  success: boolean
+  latencies: number[]
+  averageLatencyMs: number
+  error?: string
 }
 
 export interface LatencyCalibrationCallbacks {
-  onProgress?: (progress: number) => void;
-  onTestComplete?: (testIndex: number, latencyMs: number | null) => void;
-  onComplete?: (result: LatencyCalibrationResult) => void;
-  onError?: (error: string) => void;
+  onProgress?: (progress: number) => void
+  onComplete?: (result: LatencyCalibrationResult) => void
+  onError?: (error: string) => void
 }
 
 export class LatencyCalibrator {
-  private audioContext: AudioContext | null = null;
-  private stream: MediaStream | null = null;
-  private workletNode: AudioWorkletNode | null = null;
-  private source: MediaStreamAudioSourceNode | null = null;
-  private callbacks: LatencyCalibrationCallbacks;
-  private options: Required<LatencyCalibrationOptions>;
-  
-  private detectedLatencies: number[] = [];
-  private currentTest = 0;
-  private isRunning = false;
-  private timeoutId: NodeJS.Timeout | null = null;
+  private callbacks: LatencyCalibrationCallbacks
+  private options: Required<LatencyCalibrationOptions>
+
+  private ctx: AudioContext | null = null
+  private stream: MediaStream | null = null
+  private processor: ScriptProcessorNode | null = null
+  private source: MediaStreamAudioSourceNode | null = null
+  private isCancelled = false
+
+  private recordedSamples: Float32Array[] = []
+  private clickTimes: number[] = []
 
   constructor(
     callbacks: LatencyCalibrationCallbacks = {},
-    options: LatencyCalibrationOptions = {}
+    options: LatencyCalibrationOptions = {},
   ) {
-    this.callbacks = callbacks;
+    this.callbacks = callbacks
     this.options = {
       numTests: 5,
-      threshold: 0.1,
+      testInterval: 0.8,
       beepFrequency: 1000,
-      beepDuration: 0.05,
-      testInterval: 300,
-      timeoutMs: 5000,
-      ...options
-    };
+      beepDuration: 0.04,
+      ...options,
+    }
   }
 
   async calibrate(): Promise<void> {
-    if (this.isRunning) {
-      this.callbacks.onError?.('Calibration already running');
-      return;
-    }
-
-    this.isRunning = true;
-    this.detectedLatencies = [];
-    this.currentTest = 0;
+    this.isCancelled = false
+    this.recordedSamples = []
+    this.clickTimes = []
 
     try {
-      // Get microphone stream with raw audio settings
+      // 1. Create AudioContext
+      this.ctx = new (window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext })
+          .webkitAudioContext)()
+
+      // 2. Get mic stream with raw audio — no echo cancellation,
+      //    no noise suppression, no AGC
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        }
-      });
+          echoCancellation: { exact: false },
+          noiseSuppression: { exact: false },
+          autoGainControl: { exact: false },
+        },
+      })
 
-      // Create AudioContext
-      this.audioContext = new (window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)();
+      // 3. Create ScriptProcessorNode to capture mic input
+      this.processor = this.ctx.createScriptProcessor(1024, 1, 1)
 
-      // Load and initialize AudioWorklet
-      try {
-        await this.audioContext.audioWorklet.addModule(
-          '/worklets/latency-detector.worklet.js'
-        );
-      } catch (err) {
-        console.warn('AudioWorklet not supported, falling back to ScriptProcessor', err);
-        await this.calibrateWithScriptProcessor();
-        return;
+      this.processor.onaudioprocess = (e) => {
+        if (this.isCancelled) return
+        // Copy input samples for later analysis
+        const data = e.inputBuffer.getChannelData(0)
+        this.recordedSamples.push(new Float32Array(data))
       }
 
-      // Create source from microphone stream
-      this.source = this.audioContext.createMediaStreamSource(this.stream);
+      // 4. Connect mic -> processor (no output needed for capture)
+      this.source = this.ctx.createMediaStreamSource(this.stream)
+      this.source.connect(this.processor)
+      this.processor.connect(this.ctx.destination)
 
-      // Create AudioWorklet node
-      this.workletNode = new AudioWorkletNode(this.audioContext, 'latency-detector-processor');
+      // 5. Schedule clicks
+      this.scheduleClicks()
 
-      // Set threshold
-      this.workletNode.port.postMessage({
-        type: 'SET_THRESHOLD',
-        threshold: this.options.threshold
-      });
+      // 6. Wait for all clicks to finish + grace period for last click to arrive
+      const totalDuration =
+        this.options.numTests * this.options.testInterval + 1.5
+      await new Promise((r) => setTimeout(r, totalDuration * 1000))
 
-      // Connect: source -> worklet -> destination (for beep to play)
-      this.source.connect(this.workletNode);
-      this.workletNode.connect(this.audioContext.destination);
+      if (this.isCancelled) return
 
-      // Listen for messages from the worklet
-      this.workletNode.port.onmessage = (event) => {
-        this.handleWorkletMessage(event.data);
-      };
+      // 7. Analyze the recorded buffer
+      const result = this.analyze()
 
-      // Start the first test
-      this.runNextTest();
-
+      this.cleanup()
+      this.callbacks.onComplete?.(result)
     } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Unknown error';
-      this.cleanup();
-      this.callbacks.onError?.(`Microphone access denied or audio error: ${errorMsg}`);
+      this.cleanup()
+      const msg = err instanceof Error ? err.message : String(err)
+      this.callbacks.onError?.(`Calibration failed: ${msg}`)
     }
   }
 
-  private async calibrateWithScriptProcessor(): Promise<void> {
-    // Fallback for browsers not supporting AudioWorklet
-    if (!this.audioContext || !this.stream) {
-      this.callbacks.onError?.('AudioContext or stream not initialized');
-      return;
+  private scheduleClicks(): void {
+    if (!this.ctx) return
+
+    for (let i = 0; i < this.options.numTests; i++) {
+      const clickTime = this.ctx.currentTime + 0.5 + i * this.options.testInterval
+      this.clickTimes.push(clickTime)
+
+      const osc = this.ctx.createOscillator()
+      const gain = this.ctx.createGain()
+
+      osc.type = 'square'
+      osc.frequency.value = this.options.beepFrequency
+
+      // Sharp attack, short sustain
+      gain.gain.setValueAtTime(0, clickTime)
+      gain.gain.linearRampToValueAtTime(1, clickTime + 0.003)
+      gain.gain.exponentialRampToValueAtTime(
+        0.0001,
+        clickTime + this.options.beepDuration,
+      )
+
+      osc.connect(gain)
+      gain.connect(this.ctx.destination)
+
+      osc.start(clickTime)
+      osc.stop(clickTime + this.options.beepDuration + 0.01)
+    }
+  }
+
+  private analyze(): LatencyCalibrationResult {
+    if (this.isCancelled) {
+      return { success: false, latencies: [], averageLatencyMs: 0, error: 'Cancelled' }
     }
 
-    const ctx = this.audioContext;
-    const stream = this.stream;
-    const processor = ctx.createScriptProcessor(512, 1, 1);
-    const source = ctx.createMediaStreamSource(stream);
+    // Combine all recorded chunks into one buffer
+    let totalLen = 0
+    for (const chunk of this.recordedSamples) totalLen += chunk.length
+    const buffer = new Float32Array(totalLen)
+    let offset = 0
+    for (const chunk of this.recordedSamples) {
+      buffer.set(chunk, offset)
+      offset += chunk.length
+    }
 
-    source.connect(processor);
-    processor.connect(ctx.destination);
+    if (buffer.length === 0) {
+      return {
+        success: false,
+        latencies: [],
+        averageLatencyMs: 0,
+        error: 'No audio captured. Check microphone permissions.',
+      }
+    }
 
-    const beepTime = 0;
-    let isWaitingForBeep = false;
+    const sampleRate = this.ctx?.sampleRate || 44100
+    const detected: number[] = []
 
-    processor.onaudioprocess = (e) => {
-      if (!isWaitingForBeep || beepTime === 0) return;
+    for (const expectedTime of this.clickTimes) {
+      // Convert expected time to sample frame in the recording
+      // The recording starts approximately at AudioContext time 0
+      // (ScriptProcessorNode starts capturing immediately)
+      const expectedSample = Math.floor(expectedTime * sampleRate)
 
-      const data = e.inputBuffer.getChannelData(0);
-      const currentTime = ctx.currentTime;
+      // Search window: from expected to expected + 1.0s (covers up to 1000ms latency)
+      const windowStart = Math.max(0, expectedSample)
+      const windowEnd = Math.min(buffer.length, expectedSample + sampleRate)
 
-      if (currentTime < beepTime) return;
+      if (windowEnd <= windowStart) continue
 
-      for (let i = 0; i < data.length; i++) {
-        if (Math.abs(data[i]) > this.options.threshold) {
-          const sampleTime = currentTime + (i / ctx.sampleRate);
-          const latencyMs = (sampleTime - beepTime) * 1000;
+      // Local peak detection: find the highest peak in the search window
+      const searchWindow = buffer.subarray(windowStart, windowEnd)
+      let peakVal = 0
+      let peakIdx = 0
 
-      if (latencyMs < 1000) {
-            this.detectedLatencies.push(latencyMs);
-          }
+      // Skip the first 2ms to avoid detecting the oscillator's direct emission (if any)
+      const skipSamples = Math.floor(0.002 * sampleRate)
 
-          isWaitingForBeep = false;
-          processor.disconnect();
-          source.disconnect();
-
-          // Run next test or finish
-          this.currentTest++;
-          if (this.currentTest < this.options.numTests) {
-            setTimeout(() => this.runNextTestWithProcessor(ctx, stream), this.options.testInterval);
-          } else {
-            this.finishCalibration();
-          }
-          return;
+      for (let i = skipSamples; i < searchWindow.length - 1; i++) {
+        const abs = Math.abs(searchWindow[i])
+        if (abs > peakVal && abs > 0.02) {
+          peakVal = abs
+          peakIdx = i
         }
       }
 
-      if (currentTime > beepTime + 1.0) {
-        isWaitingForBeep = false;
-        this.currentTest++;
-        if (this.currentTest < this.options.numTests) {
-          setTimeout(() => this.runNextTestWithProcessor(ctx, stream), 100);
-        } else {
-          this.finishCalibration();
+      if (peakVal > 0.02) {
+        // Refine: interpolate around peak for sub-sample accuracy
+        const refined = this.refinePeak(searchWindow, peakIdx)
+        const detectedSample = windowStart + refined
+        const detectedTime = detectedSample / sampleRate
+        const latencyMs = (detectedTime - expectedTime) * 1000
+
+        if (latencyMs > 0 && latencyMs < 1000) {
+          detected.push(Math.round(latencyMs))
         }
       }
-    };
-
-    // Start first test
-    this.runNextTestWithProcessor(ctx, stream);
-  }
-
-  private runNextTestWithProcessor(ctx: AudioContext, stream: MediaStream) {
-    if (this.currentTest >= this.options.numTests) {
-      return;
     }
 
-    this.callbacks.onProgress?.(this.currentTest / this.options.numTests * 100);
+    const success = detected.length >= 2
+    const avg = success
+      ? Math.round(detected.reduce((a, b) => a + b, 0) / detected.length)
+      : 0
 
-    const beepTime = ctx.currentTime + 0.5;
-    const isWaitingForBeep = true;
-
-    // Schedule beep
-    const osc = ctx.createOscillator();
-    const env = ctx.createGain();
-
-    osc.type = 'square';
-    osc.frequency.value = this.options.beepFrequency;
-
-    env.gain.setValueAtTime(0, beepTime);
-    env.gain.linearRampToValueAtTime(1, beepTime + 0.005);
-    env.gain.exponentialRampToValueAtTime(0.001, beepTime + this.options.beepDuration);
-
-    osc.connect(env);
-    env.connect(ctx.destination);
-
-    osc.start(beepTime);
-    osc.stop(beepTime + 0.1);
-  }
-
-  private handleWorkletMessage(data: any) {
-    if (data.type === 'BEEP_DETECTED') {
-      const latencyMs = data.latencyMs;
-      
-      if (latencyMs < 1000) {
-        this.detectedLatencies.push(latencyMs);
-        this.callbacks.onTestComplete?.(this.currentTest, latencyMs);
-      }
-
-      this.currentTest++;
-
-      if (this.currentTest < this.options.numTests) {
-        this.callbacks.onProgress?.(this.currentTest / this.options.numTests * 100);
-        setTimeout(() => this.runNextTest(), this.options.testInterval);
-      } else {
-        this.finishCalibration();
-      }
-    } else if (data.type === 'BEEP_TIMEOUT') {
-      this.currentTest++;
-
-      if (this.currentTest < this.options.numTests) {
-        setTimeout(() => this.runNextTest(), 100);
-      } else {
-        this.finishCalibration();
-      }
-    }
-  }
-
-  private runNextTest() {
-    if (!this.audioContext || !this.workletNode || this.currentTest >= this.options.numTests) {
-      return;
-    }
-
-    this.callbacks.onProgress?.(this.currentTest / this.options.numTests * 100);
-
-    // Schedule beep
-    const beepTime = this.audioContext.currentTime + 0.5;
-    
-    // Tell worklet to start listening
-    this.workletNode.port.postMessage({
-      type: 'SET_BEEP_TIME',
-      beepTime
-    });
-
-    // Create and play beep
-    const osc = this.audioContext.createOscillator();
-    const env = this.audioContext.createGain();
-
-    osc.type = 'square';
-    osc.frequency.value = this.options.beepFrequency;
-
-    env.gain.setValueAtTime(0, beepTime);
-    env.gain.linearRampToValueAtTime(1, beepTime + 0.005);
-    env.gain.exponentialRampToValueAtTime(0.001, beepTime + this.options.beepDuration);
-
-    osc.connect(env);
-    env.connect(this.audioContext.destination);
-
-    osc.start(beepTime);
-    osc.stop(beepTime + 0.1);
-  }
-
-  private finishCalibration(): void {
-    const success = this.detectedLatencies.length > 0;
-    const averageLatencyMs = success
-      ? Math.round(this.detectedLatencies.reduce((a, b) => a + b, 0) / this.detectedLatencies.length)
-      : 0;
-
-    const result: LatencyCalibrationResult = {
+    return {
       success,
-      latencies: this.detectedLatencies,
-      averageLatencyMs,
-      error: success ? undefined : 'Could not detect the test tone. Ensure your speakers are audible to the microphone.'
-    };
-
-    this.cleanup();
-    this.callbacks.onComplete?.(result);
+      latencies: detected,
+      averageLatencyMs: avg,
+      error: success
+        ? undefined
+        : 'Could not detect test clicks. Make sure your speakers are on and your microphone can hear them.',
+    }
   }
 
-  cancel() {
-    this.isRunning = false;
-    if (this.timeoutId) {
-      clearTimeout(this.timeoutId);
-      this.timeoutId = null;
-    }
-    this.cleanup();
-    this.callbacks.onError?.('Calibration cancelled');
+  /** Parabolic peak interpolation for sub-sample accuracy */
+  private refinePeak(buffer: Float32Array, idx: number): number {
+    if (idx < 1 || idx >= buffer.length - 1) return idx
+    const y0 = Math.abs(buffer[idx - 1])
+    const y1 = Math.abs(buffer[idx])
+    const y2 = Math.abs(buffer[idx + 1])
+    const denom = 2 * (y0 - 2 * y1 + y2)
+    if (Math.abs(denom) < 1e-10) return idx
+    return idx + (y0 - y2) / denom
   }
 
-  private cleanup() {
-    this.isRunning = false;
+  cancel(): void {
+    this.isCancelled = true
+    this.cleanup()
+  }
 
-    // Disconnect worklet node
-    if (this.workletNode) {
-      try {
-        this.workletNode.disconnect();
-        this.workletNode.port.onmessage = null;
-      } catch (e) {
-        // Ignore disconnect errors
-      }
-      this.workletNode = null;
-    }
-
-    // Disconnect source
+  private cleanup(): void {
     if (this.source) {
       try {
-        this.source.disconnect();
-      } catch (e) {
-        // Ignore
-      }
-      this.source = null;
+        this.source.disconnect()
+      } catch { /* ignore */ }
+      this.source = null
     }
-
-    // Close AudioContext
-    if (this.audioContext && this.audioContext.state !== 'closed') {
+    if (this.processor) {
       try {
-        this.audioContext.close();
-      } catch (e) {
-        // Ignore
-      }
+        this.processor.disconnect()
+        this.processor.onaudioprocess = null
+      } catch { /* ignore */ }
+      this.processor = null
     }
-    this.audioContext = null;
-
-    // Stop media stream
+    if (this.ctx && this.ctx.state !== 'closed') {
+      try {
+        this.ctx.close()
+      } catch { /* ignore */ }
+    }
+    this.ctx = null
     if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
-      this.stream = null;
+      this.stream.getTracks().forEach((t) => t.stop())
+      this.stream = null
     }
+    this.recordedSamples = []
   }
 }
