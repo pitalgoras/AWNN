@@ -105,7 +105,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
             </div>
             
             <p className="text-[10px] text-zinc-500 mb-4 leading-snug">
-              Plays clicks and listens through microphone to measure latency.
+              Plays a 100ms tone through speakers, measures round-trip latency via microphone energy detection.
             </p>
 
             {isCalibrating ? (
