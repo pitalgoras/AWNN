@@ -29,7 +29,7 @@ class CalibrationProcessor extends AudioWorkletProcessor {
     this.maxChunkSum = 0
     this.maxChunkIdx = -1
     this.chunkIdx = 0
-    this.burstDuration = Math.floor(0.100 * sampleRate)  // 100ms
+    this.burstDuration = Math.floor(0.500 * sampleRate)  // 500ms (wakes Bluetooth)
     this.burstCountdown = 0
 
     this.port.onmessage = (event) => {
@@ -102,7 +102,7 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         }
         for (let i = 0; i < outData.length && i < this.burstCountdown; i++) {
           const t = (currentFrame + i) / sampleRate
-          outData[i] = Math.sin(2 * Math.PI * 1000 * t) * 0.4
+          outData[i] = Math.sin(2 * Math.PI * 1000 * t) * 0.04
         }
         this.burstCountdown -= outData.length
       }

@@ -146,6 +146,16 @@ export class LatencyCalibrator {
     })
     this.workletNode.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
     let floorPeak = await floorPromise
+    // Retry once if floor was silent (AudioContext may not have stabilized)
+    if (floorPeak < 0.001) {
+      console.log('Calibration: floor measurement returned near-zero, retrying...')
+      await new Promise((r) => setTimeout(r, 200))
+      const floorPromise2 = new Promise<number>((resolve) => {
+        this.workletNode!.port.onmessage = (e) => { if (e.data.type === 'FLOOR_RESULT') { this.workletNode!.port.onmessage = null; resolve(e.data.peak) } }
+      })
+      this.workletNode.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
+      floorPeak = await floorPromise2
+    }
     if (floorPeak < 0.001) floorPeak = 0.005
     console.log(`Calibration: noise floor peak=${floorPeak.toFixed(4)}`)
 
@@ -191,15 +201,28 @@ export class LatencyCalibrator {
     const latencyFrames = result.peakFrame - result.burstStartFrame
     const latencyMs = Math.round((latencyFrames / sr) * 1000)
 
-    // 11. Level diagnostics
+    // 11. Level diagnostics — warn but don't block on clipping
     const ratio = floorPeak > 0 ? result.maxSample / floorPeak : 0
     const issues: string[] = []
+    const warnings: string[] = []
     if (ratio < 2) issues.push(`Signal too quiet (${ratio.toFixed(1)}x noise floor). Turn UP speakers or move mic CLOSER.`)
-    if (result.maxSample > 0.95) issues.push(`Input too HOT (peak ${result.maxSample.toFixed(2)}). Lower mic sensitivity or move mic FURTHER from speaker.`)
-    if (result.maxSample > 0.95 && ratio < 2) issues.push(`Speakers too LOUD for the mic distance but mic may be TOO CLOSE to speaker. Move speaker AWAY from mic.`)
+    if (result.maxSample > 0.99) warnings.push(`Near clipping (peak ${result.maxSample.toFixed(2)}). Consider lowering speaker volume or moving mic further.`)
+    if (result.peakFrame <= result.burstStartFrame) issues.push('Peak frame before burst start — detection error.')
 
     const success = issues.length === 0 && latencyMs > 0
     const error = issues.length > 0 ? issues.join(' ') : undefined
+    const fullLog = [error, ...warnings].filter(Boolean).join(' ')
+      || 'Levels good.'
+
+    console.log('Calibration result:', {
+      latencyMs,
+      floorPeak: result.floorPeak.toFixed(4),
+      maxSample: result.maxSample.toFixed(4),
+      ratio: ratio.toFixed(1),
+      success,
+    })
+    if (warnings.length > 0) console.warn(warnings.join(' '))
+    if (error) console.error(error)
 
     const debugResult: DebugResult = {
       success,
