@@ -1,13 +1,10 @@
 /**
- * LatencyCalibrator - Measures round-trip audio latency via a shared-clock
- * AudioWorklet that generates pulses and listens for them simultaneously.
+ * LatencyCalibrator - Measures round-trip audio latency via a single
+ * 100ms burst played through speakers and detected by energy peak
+ * on the microphone input.
  *
- * The worklet knows the exact AudioContext frame when a pulse is generated
- * and the exact frame when it arrives at the microphone. The difference
- * is the round-trip latency — no external signal generation needed.
- *
- * DEBUG API (run from browser console):
- *   __calibrationDebug.run()
+ * DEBUG API (console):
+ *   __calibrationDebug.run() → DebugResult
  */
 
 export interface LatencyCalibrationOptions {
@@ -16,9 +13,9 @@ export interface LatencyCalibrationOptions {
 
 export interface LatencyCalibrationResult {
   success: boolean
-  latencies: number[]
   averageLatencyMs: number
   error?: string
+  latencies: number[]
 }
 
 export interface LatencyCalibrationCallbacks {
@@ -29,13 +26,15 @@ export interface LatencyCalibrationCallbacks {
 
 export interface DebugResult {
   success: boolean
-  latenciesMs: number[]
-  averageLatencyMs: number
-  generationFrames: number[]
-  detectedFrames: number[]
-  latencyFrames: number[]
+  latencyMs: number
+  burstStartFrame: number
+  peakFrame: number
+  floorPeak: number
+  maxSample: number
   sr: number
   error?: string
+  latencies: number[]
+  averageLatencyMs: number
 }
 
 export class LatencyCalibrator {
@@ -49,7 +48,7 @@ export class LatencyCalibrator {
   private isCancelled = false
 
   private _resolveResult:
-    | ((result: { generationFrames: number[]; detectedFrames: number[]; maxPeak: number }) => void)
+    | ((result: { burstStartFrame: number; peakFrame: number; maxSample: number; floorPeak: number }) => void)
     | null = null
 
   constructor(
@@ -57,7 +56,7 @@ export class LatencyCalibrator {
     options: LatencyCalibrationOptions = {},
   ) {
     this.callbacks = callbacks
-    this.options = { numTests: 5, ...options }
+    this.options = { numTests: 1, ...options }
   }
 
   async calibrate(): Promise<void> {
@@ -84,13 +83,15 @@ export class LatencyCalibrator {
       const msg = err instanceof Error ? err.message : String(err)
       return {
         success: false,
-        latenciesMs: [],
-        averageLatencyMs: 0,
-        generationFrames: [],
-        detectedFrames: [],
-        latencyFrames: [],
+        latencyMs: 0,
+        burstStartFrame: 0,
+        peakFrame: 0,
+        floorPeak: 0,
+        maxSample: 0,
         sr: 0,
         error: msg,
+        latencies: [],
+        averageLatencyMs: 0,
       }
     }
   }
@@ -104,12 +105,10 @@ export class LatencyCalibrator {
     // 1. Create and resume AudioContext
     this.ctx = new (window.AudioContext ||
       (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext)()
-    if (this.ctx.state === 'suspended') {
-      await this.ctx.resume()
-    }
+    if (this.ctx.state === 'suspended') { await this.ctx.resume() }
     const sr = this.ctx.sampleRate
 
-    // 2. Get mic stream with raw audio constraints
+    // 2. Get mic stream
     const ac: any = {
       echoCancellation: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
       noiseSuppression: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
@@ -131,136 +130,107 @@ export class LatencyCalibrator {
       if (!err?.message?.includes('already been added')) throw err
     }
 
-    // 4. Connect mic → worklet → destination (worklet generates pulse on output)
+    // 4. Connect mic → worklet → destination
     this.workletNode = new AudioWorkletNode(this.ctx, 'calibration-processor', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      channelCount: 1,
-      channelCountMode: 'explicit',
+      numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit',
     })
     this.source = this.ctx.createMediaStreamSource(this.stream)
     this.source.connect(this.workletNode)
     this.workletNode.connect(this.ctx.destination)
 
-    // 5. Set up result handler (energy detection — no threshold needed)
-    const resultPromise = new Promise<{
-      generationFrames: number[]
-      detectedFrames: number[]
-      maxPeak: number
-    }>((resolve) => {
-        this._resolveResult = resolve
-      },
-    )
+    // 5. Sample noise floor
+    const floorPromise = new Promise<number>((resolve) => {
+      this.workletNode!.port.onmessage = (e) => {
+        if (e.data.type === 'FLOOR_RESULT') { resolve(e.data.peak) }
+      }
+    })
+    this.workletNode.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
+    let floorPeak = await floorPromise
+    if (floorPeak < 0.001) floorPeak = 0.005
+    console.log(`Calibration: noise floor peak=${floorPeak.toFixed(4)}`)
 
-    this.workletNode.port.onmessage = (event) => {
-      if (event.data.type === 'DEBUG') {
-        console.log('Calibration worklet:', event.data.msg, event.data)
-      } else if (event.data.type === 'RESULT') {
-        if (this._resolveResult) {
-          this._resolveResult({
-            generationFrames: event.data.generationFrames,
-            detectedFrames: event.data.detectedFrames,
-            maxPeak: event.data.maxPeak ?? 0,
-          })
-          this._resolveResult = null
-        }
+    // 6. Set up result handler
+    const resultPromise = new Promise<{ burstStartFrame: number; peakFrame: number; maxSample: number; floorPeak: number }>(
+      (resolve) => { this._resolveResult = resolve },
+    )
+    this.workletNode.port.onmessage = (e) => {
+      if (e.data.type === 'DEBUG') { console.log('Calibration worklet:', e.data.msg, e.data) }
+      else if (e.data.type === 'RESULT' && this._resolveResult) {
+        this._resolveResult({
+          burstStartFrame: e.data.burstStartFrame,
+          peakFrame: e.data.peakFrame,
+          maxSample: e.data.maxSample,
+          floorPeak: e.data.floorPeak,
+        })
+        this._resolveResult = null
       }
     }
 
     this.callbacks.onProgress?.(10)
 
-    // 6. Send START to worklet
-    const sustainMs = 500
-    this.workletNode.port.postMessage({
-      type: 'START',
-      numPulses: this.options.numTests,
-      pulseIntervalFrames: Math.floor(0.2 * sr),
-      sustainFrames: Math.floor(500 * sr / 1000),
-    })
+    // 7. Send START
+    this.workletNode.port.postMessage({ type: 'START' })
+    this.callbacks.onProgress?.(30)
 
-    this.callbacks.onProgress?.(20)
-
-    // 7. Wait: sustain + numPulses * interval + 1.5s grace
-    const waitMs = sustainMs + this.options.numTests * 200 + 1500
-    await new Promise((r) => setTimeout(r, waitMs))
-
+    // 8. Wait for burst + grace
+    await new Promise((r) => setTimeout(r, 2000))
     if (this.isCancelled) {
-      return { success: false, latencies: [], latenciesMs: [], averageLatencyMs: 0, generationFrames: [], detectedFrames: [], latencyFrames: [], sr }
+      return { success: false, latencyMs: 0, burstStartFrame: 0, peakFrame: 0, floorPeak: 0, maxSample: 0, sr, latencies: [], averageLatencyMs: 0 }
     }
     this.callbacks.onProgress?.(60)
 
-    // 8. Send STOP, collect results
+    // 9. Get result
     this.workletNode.port.postMessage({ type: 'STOP' })
     const result = await resultPromise
-
     if (this.isCancelled) {
-      return { success: false, latencies: [], latenciesMs: [], averageLatencyMs: 0, generationFrames: [], detectedFrames: [], latencyFrames: [], sr }
+      return { success: false, latencyMs: 0, burstStartFrame: 0, peakFrame: 0, floorPeak: 0, maxSample: 0, sr, latencies: [], averageLatencyMs: 0 }
     }
     this.callbacks.onProgress?.(80)
 
-    // 9. Pair generations with detections (1:1 from per-pulse windows)
-    const { generationFrames, detectedFrames, maxPeak } = result
-    const pairs = Math.min(generationFrames.length, detectedFrames.length)
-    const latencyFrames: number[] = []
+    // 10. Compute latency
+    const latencyFrames = result.peakFrame - result.burstStartFrame
+    const latencyMs = Math.round((latencyFrames / sr) * 1000)
 
-    for (let i = 0; i < pairs; i++) {
-      const diff = detectedFrames[i] - generationFrames[i]
-      const MIN_LATENCY_MS = 3
-      const MAX_LATENCY_MS = 500
-      const diffMs = Math.round((diff / sr) * 1000)
-      if (diffMs >= MIN_LATENCY_MS && diffMs <= MAX_LATENCY_MS) {
-        latencyFrames.push(diff)
-      }
-    }
+    // 11. Level diagnostics
+    const ratio = floorPeak > 0 ? result.maxSample / floorPeak : 0
+    const issues: string[] = []
+    if (ratio < 2) issues.push(`Signal too quiet (${ratio.toFixed(1)}x noise floor). Turn UP speakers or move mic CLOSER.`)
+    if (result.maxSample > 0.95) issues.push(`Input too HOT (peak ${result.maxSample.toFixed(2)}). Lower mic sensitivity or move mic FURTHER from speaker.`)
+    if (result.maxSample > 0.95 && ratio < 2) issues.push(`Speakers too LOUD for the mic distance but mic may be TOO CLOSE to speaker. Move speaker AWAY from mic.`)
 
-    console.log(`Calibration: ${pairs}/${generationFrames.length} pulses paired, maxPeak=${maxPeak.toFixed(4)}`)
+    const success = issues.length === 0 && latencyMs > 0
+    const error = issues.length > 0 ? issues.join(' ') : undefined
 
-    if (latencyFrames.length < 2) {
-      return {
-        success: false,
-        latencies: [],
-        latenciesMs: [],
-        averageLatencyMs: 0,
-        generationFrames,
-        detectedFrames,
-        latencyFrames,
-        sr,
-        error: `Only ${latencyFrames.length} pulse(s) matched (need at least 2). Ensure speakers are on and microphone can hear them.`,
-      }
-    }
-
-    const latenciesMs = latencyFrames.map((f) => Math.round((f / sr) * 1000))
-    const avgLatency = Math.round(
-      latenciesMs.reduce((a, b) => a + b, 0) / latenciesMs.length,
-    )
-
-    console.log('Calibration result:', {
-      generationFrames,
-      detectedFrames,
-      latencyFrames,
-      latenciesMs,
-      avgLatency,
-    })
-
-    return {
-      success: true,
-      latencies: latenciesMs,
-      latenciesMs,
-      averageLatencyMs: avgLatency,
-      generationFrames,
-      detectedFrames,
-      latencyFrames,
+    const debugResult: DebugResult = {
+      success,
+      latencyMs,
+      burstStartFrame: result.burstStartFrame,
+      peakFrame: result.peakFrame,
+      floorPeak: result.floorPeak,
+      maxSample: result.maxSample,
       sr,
+      error,
+      latencies: success ? [latencyMs] : [],
+      averageLatencyMs: success ? latencyMs : 0,
     }
+
+    const calResult: LatencyCalibrationResult = {
+      success,
+      averageLatencyMs: success ? latencyMs : 0,
+      latencies: success ? [latencyMs] : [],
+      error,
+    }
+
+    console.log('Calibration result:', { latencyMs, floorPeak: result.floorPeak.toFixed(4), maxSample: result.maxSample.toFixed(4), ratio: ratio.toFixed(1), success })
+    if (error) console.warn(error)
+
+    return { ...debugResult, ...calResult }
   }
 
   private cleanup(): void {
     if (this.workletNode) {
-      try {
-        this.workletNode.port.onmessage = null
-        this.workletNode.port.close()
-        this.workletNode.disconnect()
-      } catch { /* ignore */ }
+      try { this.workletNode.port.onmessage = null; this.workletNode.port.close(); this.workletNode.disconnect() }
+      catch { /* ignore */ }
       this.workletNode = null
     }
     if (this.source) { try { this.source.disconnect() } catch { /* ignore */ } this.source = null }
