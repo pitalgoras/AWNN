@@ -166,18 +166,19 @@ export class LatencyCalibrator {
     this.callbacks.onProgress?.(10)
 
     // 6. Send START to worklet
+    const sustainMs = 500
     this.workletNode.port.postMessage({
       type: 'START',
       numPulses: this.options.numTests,
       pulseIntervalFrames: Math.floor(0.2 * sr), // 200ms between pulses
-      threshold: 0.05,
+      threshold: 0.03,
+      sustainFrames: Math.floor((sustainMs / 1000) * sr),
     })
 
     this.callbacks.onProgress?.(20)
 
-    // 7. Wait: 0.3s initial delay + numPulses * 0.2s interval + 1s grace
-    const waitMs =
-      300 + this.options.numTests * 200 + 1000
+    // 7. Wait: sustain + numPulses * interval + 1.5s grace
+    const waitMs = sustainMs + this.options.numTests * 200 + 1500
     await new Promise((r) => setTimeout(r, waitMs))
 
     if (this.isCancelled) {
@@ -194,11 +195,33 @@ export class LatencyCalibrator {
     }
     this.callbacks.onProgress?.(80)
 
-    // 9. Compute latencies
+    // 9. Pair each generation with the nearest detection
     const { generationFrames, detectedFrames } = result
-    const pairs = Math.min(generationFrames.length, detectedFrames.length)
+    const MAX_LATENCY_FRAMES = Math.floor(3 * sr) // 3 seconds max
+    const MIN_LATENCY_FRAMES = Math.floor(0.003 * sr) // 3ms min (below this = likely direct electrical coupling)
 
-    if (pairs < 2) {
+    const usedDetections = new Set<number>()
+    const latencyFrames: number[] = []
+
+    for (const gen of generationFrames) {
+      // Find the earliest detection that hasn't been used and is within range
+      let bestDetect: number | null = null
+      for (const det of detectedFrames) {
+        if (usedDetections.has(det)) continue
+        const diff = det - gen
+        if (diff >= MIN_LATENCY_FRAMES && diff <= MAX_LATENCY_FRAMES) {
+          if (bestDetect === null || diff < bestDetect - gen) {
+            bestDetect = det
+          }
+        }
+      }
+      if (bestDetect !== null) {
+        usedDetections.add(bestDetect)
+        latencyFrames.push(bestDetect - gen)
+      }
+    }
+
+    if (latencyFrames.length < 2) {
       return {
         success: false,
         latencies: [],
@@ -206,15 +229,10 @@ export class LatencyCalibrator {
         averageLatencyMs: 0,
         generationFrames,
         detectedFrames,
-        latencyFrames: [],
+        latencyFrames,
         sr,
-        error: `Only ${pairs} pulse(s) detected (need at least 2). Ensure speakers are on and microphone can hear them.`,
+        error: `Only ${latencyFrames.length} pulse(s) matched (need at least 2). Ensure speakers are on and microphone can hear them.`,
       }
-    }
-
-    const latencyFrames: number[] = []
-    for (let i = 0; i < pairs; i++) {
-      latencyFrames.push(detectedFrames[i] - generationFrames[i])
     }
 
     const latenciesMs = latencyFrames.map((f) => Math.round((f / sr) * 1000))
