@@ -137,7 +137,7 @@ export class LatencyCalibrator {
 
     // 4. Connect mic → worklet → destination
     this.workletNode = new AudioWorkletNode(this.ctx, 'calibration-processor', {
-      numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit',
+      numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1,
     })
     this.source = this.ctx.createMediaStreamSource(this.stream)
     this.source.connect(this.workletNode)
