@@ -980,7 +980,7 @@ const {
 
   // Generate click track buffer when BPM, Time Signature, or duration changes
   useEffect(() => {
-    if (!audioContextRef.current || !isReady) return;
+    if (!audioContextRef.current || !metronomeEngineRef.current || !isReady) return;
     
     const beatsPerSecond = (debouncedBpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
