@@ -355,10 +355,13 @@ startPos = this.recordingStartTransportTime - latencySec;
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
 9. ✅ **`startupDelayMs` (150ms) + `bufferSafetyMs` (100ms)** — named constants for recording timing, editable in Dangerous Settings
 10. ✅ **`syncedTrackIdsRef` removed** — App.tsx no longer gates `addTrack` behind a one-time-per-track check
-11. ✅ **`punchInUserTime` for `isCurrentlyPlaying`** uses `storeState.currentTime` — fixes clip-in-future bug when recording while playback is active
+12. ✅ **Pattern-based latency calibration** — new `calibration.worklet.js` for sample-accurate rising edge detection. Test signal: 500ms sustain (wakes Bluetooth) + 5 peaks at non-regular intervals [100,140,100,100,140]ms. Pattern matching eliminates false positives. Old `latency-detector.worklet.js` removed.
 
 ### Files Modified
+- `public/worklets/calibration.worklet.js` — NEW: rising edge detector with configurable threshold/startFrame/minGapFrames
 - `public/worklets/recorder.worklet.js` — single-buffer approach: no `_audioData`, rolling buffer stops trimming at `_recordingStartFrame`, `_flush()` extracts head + recording from one buffer
+- `public/worklets/latency-detector.worklet.js` — DELETED (replaced by calibration.worklet.js)
+- `src/lib/audio/LatencyCalibrator.ts` — rewritten: AudioWorklet-based edge detection + pattern matching; removed ScriptProcessorNode fallback
 - `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
 - `src/lib/multitrack/webaudio.ts` — simplified `playAt()`, duplicate gain connection fix
 - `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`

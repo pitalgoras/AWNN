@@ -278,3 +278,34 @@ a9a6976 fix: Read currentTime from store in startRecording() to avoid stale conf
 * **Implementation:** Updated `LyricsBuilder.tsx`:
   - `setLyricsCleanText` now uses line-by-line processing to remove duplicate voicing tags with text between them.
   - `handleWordInteraction` implements the backward scan, "right before" test, backward replace/insert, and forward duplicate removal via a helper scanner.
+
+## 23. Pattern-Based Latency Calibration (2026-05-13)
+
+**Problem:** The previous calibration approach (regular-interval clicks + ScriptProcessorNode buffer recording) was unreliable. Bluetooth speakers have noise gates that swallow the first beep. Echoes and ambient noise triggered false peak detections. Timebase offset between ScriptProcessorNode and AudioContext caused search windows to miss the actual click positions. Results varied from 264ms to 624ms on the same run.
+
+**Root Causes:**
+1. **Noise gate on Bluetooth:** First 1-3 beeps were lost because the speaker was in standby — no sound reached the mic.
+2. **No pattern differentiation:** All beeps used the same regular interval (800ms). Any noise peak within the interval could trigger a false detection.
+3. **AnalyserNode avoids offset:** The new approach uses a dedicated AudioWorklet for edge detection (no ScriptProcessorNode), with `currentFrame`-based timing at sample accuracy.
+
+**Solution — Pattern-Based Detection with AudioWorklet:**
+1. **New `calibration.worklet.js`:** A dedicated AudioWorklet that monitors mic input for rising edges above a threshold. Configurable `threshold`, `minGapFrames`, and `startFrame` filtering. Returns exact AudioContext frame numbers for each detected edge.
+2. **Sustain tone (500ms, 1kHz, 70%):** Plays before the measurement pattern to wake Bluetooth speakers and open the noise gate.
+3. **Unique non-regular pattern:** The first beep is followed by a sequence of 5 peaks at intervals `[100, 140, 100, 100, 140]`ms (derived from bit pattern `[0,1,0,0,1]` where 0=80ms gap, 1=120ms gap). This creates an audio fingerprint that can be reliably identified even in noisy environments.
+4. **Pattern matching:** Sliding window over detected edges. All 5 consecutive intervals must match the expected pattern within ±25ms tolerance. The first match wins.
+5. **Same raw audio constraints** as the recording engine (`echoCancellation`, `noiseSuppression`, `autoGainControl` all disabled, plus Chrome `goog*` flags).
+
+**Changes:**
+1. **`public/worklets/calibration.worklet.js`** — NEW: rising edge detector with configurable parameters.
+2. **`src/lib/audio/LatencyCalibrator.ts`** — Rewritten: uses AudioWorklet for edge detection + pattern matching. Removed ScriptProcessorNode fallback.
+3. **`src/components/LatencyCalibrationModal.tsx`** — Removed `threshold` from options (now part of worklet config).
+4. **`src/components/AudioEditorView.tsx`** — Removed `threshold` from options.
+5. **`public/worklets/latency-detector.worklet.js`** — DELETED (replaced by calibration.worklet.js).
+
+**Commits:**
+- `6ddb68e` — fix: new auto calibration — buffer recording + peak analysis
+- `ebf540a` — fix: latency calibrator — double currentTest increment, too-short timeout
+- `9a2a7b8` — fix: latency calibrator AudioContext was suspended
+- `649380f` — fix: calibrator getUserMedia — match raw recording constraints
+- `58a56b3` — fix: calibrator — record captureStartTime from onaudioprocess
+- `4c0bc14` — fix: new calibration worklet + pattern-based latency detection

@@ -120,6 +120,7 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 10. ✅ **Incremental `addTrack`** — `addTrack` now inserts new track entries (container + wavesurfer + audio) instead of just warning. No full multitrack rebuild needed for recordings.
 11. ✅ **Removed `useEffect([tracks])`** — eliminated race condition that overwrote good audio data with broken nested format. All track updates handled by `onAddPhrase` callback + `trackStructureHash` rebuild.
 12. ✅ **Muted setter fix** — `WebAudioPlayer.muted` now correctly reconnects gain node on unmute. Previously, the broken reconnect condition (`!this.gainNode.context?.destination`) was always false (destination always exists), so gainNode stayed disconnected after being muted during pre-roll.
+13. ✅ **Pattern-based latency calibration** — new `calibration.worklet.js` for sample-accurate rising edge detection. Test signal: 500ms sustain (wakes Bluetooth) + 5 peaks at non-regular intervals [100,140,100,100,140]ms. Pattern matching eliminates false positives. `LatencyCalibrator.ts` rewritten to use worklet + pattern matching.
 
 ### Files Modified
 - `public/worklets/recorder.worklet.js` — single buffer approach: `_flush()` extracts head from last `headLength` seconds before `_recordingStartFrame`, rolling buffer stops trimming at capture start; no `_audioData`

@@ -45,6 +45,8 @@ This document tracks the features discussed, planned, implemented, and discarded
   - Includes a Settings UI with a manual input field for the latency value.
   - Includes an "Auto-Calibrate" tool that plays a click and records it to automatically calculate the system latency.
   - **Raw Recording Mode:** Option to disable audio filtering during recording.
+  - **Auto-Calibrate:** Plays a 500ms sustain tone + 5-peak pattern at non-regular intervals (100/140ms) through speakers, detects edges via a dedicated AudioWorklet, and pattern-matches the intervals to compute round-trip latency. Uses same raw audio constraints as recording engine. Sustain tone wakes Bluetooth speakers before the measurement pattern.
+  - **Pattern Recognition:** The non-regular interval pattern [100, 140, 100, 100, 140]ms creates a unique audio fingerprint that eliminates false positives from echoes, ambient noise, and noise-gate artifacts. Tolerance ±25ms.
 - [x] **Unified Pre-roll Behavior:** 1-bar pre-roll and hard-trimming applied to recordings (start or punch-in). Pre-roll mode can be set to "Always", "Recording Only", or "None". If already playing, recording starts immediately without count-in.
   - Import audio files at the current playhead (`currentTime`).
 - [x] **Clip Labeling (WaveSurfer Regions):**
