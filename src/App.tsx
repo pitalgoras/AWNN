@@ -234,44 +234,6 @@ export default function App() {
     });
   }, [tracks, selectedPhraseId, isReady, multitrackRef]);
   
-  // Update multitrack tracks when anchoredFrame changes (for playback sync)
-  useEffect(() => {
-    if (!isReady || !multitrackRef.current) return;
-
-    tracks.forEach(track => {
-      if (track.anchoredFrame !== undefined && track.anchoredFrame !== 0) {
-        // Convert Track to TrackOptions (multitrack expects this)
-        const isMetronome = track.id === 'metronome';
-        const trackOffset = track.offset || 0;
-        const beatsPerSecond = (bpm || 120) / 60;
-        const secondsPerBeat = 1 / beatsPerSecond;
-        const spb = secondsPerBeat * (timeSignature?.[0] || 4);
-        const trackOptions = {
-          id: track.id,
-          name: track.name,
-          color: track.color,
-          isMuted: track.isMuted,
-          isSolo: track.isSolo,
-          volume: track.volume,
-          pan: track.pan,
-          offset: track.offset,
-          anchoredFrame: track.anchoredFrame,
-          phrases: track.phrases.map(p => ({
-            url: p.url,
-            audioBuffer: p.audioBuffer,
-            peaks: p.peaks,
-            startPosition: isMetronome ? p.startPosition : p.startPosition + spb + trackOffset,
-            duration: p.duration,
-            headLength: p.headLength,
-            anchoredFrame: p.anchoredFrame,
-            originalAnchoredFrame: p.originalAnchoredFrame,
-          })),
-        } as any;
-        multitrackRef.current?.addTrack(trackOptions);
-      }
-    });
-  }, [tracks, isReady, multitrackRef]);
-
   const handleContainerClick = (e: React.MouseEvent) => {
     if (!containerRef.current || !multitrackRef.current) return;
     

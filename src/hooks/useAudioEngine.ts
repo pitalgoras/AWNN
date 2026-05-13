@@ -135,6 +135,7 @@ const {
             // initAudio reads track.audioBuffer/track.url directly, not from phrases[]
             const trackOptions = {
               id: track.id,
+              trackId: track.id,
               name: track.name,
               color: track.color,
               isMuted: track.isMuted,

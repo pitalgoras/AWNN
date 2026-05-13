@@ -681,7 +681,35 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
         })
       })
     } else {
-      console.warn('multitrack: addTrack could not find track to replace:', track.id)
+      // ADD new entry (called from onAddPhrase for a fresh recording)
+      const newIndex = this.tracks.length;
+      this.tracks.push(track);
+
+      this.initAudio(track).then((audio) => {
+        this.audios.push(audio);
+        this.durations.push(audio.duration);
+        this.initDurations(this.durations);
+
+        // Create and append DOM container for the new track
+        const wrapper = this.rendering.containers[0].parentElement!;
+        const container = document.createElement('div');
+        container.style.position = 'relative';
+        wrapper.appendChild(container);
+        this.rendering.containers.push(container);
+
+        this.wavesurfers.push(this.initWavesurfer(track, newIndex));
+
+        const unsubscribe = initDragging(
+          container,
+          (delta: number) => this.onDrag(newIndex, delta),
+          this.options.rightButtonDrag,
+        );
+        this.wavesurfers[newIndex].once('destroy', unsubscribe);
+
+        this.wavesurfers[newIndex].once('ready', () => {
+          this.emit('canplay');
+        });
+      });
     }
   }
 
