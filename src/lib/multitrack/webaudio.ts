@@ -246,10 +246,9 @@ async playAt(startTime: number) {
     if (this._muted) {
       this.gainNode.disconnect()
     } else {
-      // Only reconnect if not already connected
-      if (!this.gainNode.context?.destination) {
-        this.gainNode.connect(this.audioContext.destination)
-      }
+      // When unmuting, reconnect the gain node.
+      // After disconnect(), the node is fully detached, so connect() is safe.
+      this.gainNode.connect(this.audioContext.destination)
     }
   }
 
