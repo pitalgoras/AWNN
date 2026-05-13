@@ -30,7 +30,7 @@ class CalibrationProcessor extends AudioWorkletProcessor {
     this.pulseCountdown = 0               // frames until next pulse generation
     this.isWaiting = false                // waiting to hear pulse on input
     this.prevAbove = false
-    this.detectedFrames: number[] = []
+    this.detectedFrames = []
     this.inputCounter = 0
 
     this.port.onmessage = (event) => {
