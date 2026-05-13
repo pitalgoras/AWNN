@@ -59,7 +59,7 @@ class LatencyDetectorProcessor extends AudioWorkletProcessor {
       }
     }
 
-    if (currentTime > this.beepTime + 0.4) {
+    if (currentTime > this.beepTime + 1.0) {
       this.port.postMessage({
         type: 'BEEP_TIMEOUT',
         beepTime: this.beepTime

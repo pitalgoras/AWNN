@@ -50,7 +50,7 @@ export class LatencyCalibrator {
       beepFrequency: 1000,
       beepDuration: 0.05,
       testInterval: 300,
-      timeoutMs: 2000,
+      timeoutMs: 5000,
       ...options
     };
   }
@@ -151,7 +151,7 @@ export class LatencyCalibrator {
           const sampleTime = currentTime + (i / ctx.sampleRate);
           const latencyMs = (sampleTime - beepTime) * 1000;
 
-          if (latencyMs < 400) {
+      if (latencyMs < 1000) {
             this.detectedLatencies.push(latencyMs);
           }
 
@@ -170,7 +170,7 @@ export class LatencyCalibrator {
         }
       }
 
-      if (currentTime > beepTime + 0.4) {
+      if (currentTime > beepTime + 1.0) {
         isWaitingForBeep = false;
         this.currentTest++;
         if (this.currentTest < this.options.numTests) {
@@ -217,13 +217,13 @@ export class LatencyCalibrator {
     if (data.type === 'BEEP_DETECTED') {
       const latencyMs = data.latencyMs;
       
-      if (latencyMs < 400) {
+      if (latencyMs < 1000) {
         this.detectedLatencies.push(latencyMs);
         this.callbacks.onTestComplete?.(this.currentTest, latencyMs);
       }
 
       this.currentTest++;
-      
+
       if (this.currentTest < this.options.numTests) {
         this.callbacks.onProgress?.(this.currentTest / this.options.numTests * 100);
         setTimeout(() => this.runNextTest(), this.options.testInterval);
@@ -232,7 +232,7 @@ export class LatencyCalibrator {
       }
     } else if (data.type === 'BEEP_TIMEOUT') {
       this.currentTest++;
-      
+
       if (this.currentTest < this.options.numTests) {
         setTimeout(() => this.runNextTest(), 100);
       } else {
@@ -273,8 +273,6 @@ export class LatencyCalibrator {
 
     osc.start(beepTime);
     osc.stop(beepTime + 0.1);
-
-    this.currentTest++;
   }
 
   private finishCalibration(): void {
