@@ -211,9 +211,13 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // Auto-request fullscreen on mount (may fail without gesture, but works on some devices)
+  // Request fullscreen on first user interaction (tap/click anywhere)
   useEffect(() => {
-    document.documentElement.requestFullscreen().catch(() => {});
+    const handler = () => {
+      document.documentElement.requestFullscreen().catch(() => {});
+    };
+    document.addEventListener('pointerdown', handler, { once: true });
+    return () => document.removeEventListener('pointerdown', handler);
   }, []);
 
   // Pinch-to-zoom on the multitask container
