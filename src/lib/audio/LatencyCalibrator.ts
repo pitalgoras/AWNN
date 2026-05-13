@@ -63,10 +63,13 @@ export class LatencyCalibrator {
     this.clickTimes = []
 
     try {
-      // 1. Create AudioContext
+      // 1. Create AudioContext and ensure it's running (user gesture required)
       this.ctx = new (window.AudioContext ||
         (window as unknown as { webkitAudioContext: typeof AudioContext })
           .webkitAudioContext)()
+      if (this.ctx.state === 'suspended') {
+        await this.ctx.resume()
+      }
 
       // 2. Get mic stream with raw audio — no echo cancellation,
       //    no noise suppression, no AGC
@@ -216,6 +219,14 @@ export class LatencyCalibrator {
     const avg = success
       ? Math.round(detected.reduce((a, b) => a + b, 0) / detected.length)
       : 0
+
+    console.log('LatencyCalibrator: result', {
+      success,
+      detected,
+      avg,
+      totalRecordedSamples: buffer.length,
+      clickTimes: this.clickTimes,
+    })
 
     return {
       success,
