@@ -340,6 +340,10 @@ const {
           // Create AudioContext if not exists or closed
           audioContextRef.current = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
         }
+        // Create MetronomeEngine now that AudioContext is available
+        if (!metronomeEngineRef.current && audioContextRef.current) {
+          metronomeEngineRef.current = new MetronomeEngine(audioContextRef.current);
+        }
 
         // Resume if suspended - fire-and-forget since this requires a user gesture
         // and will resolve on first click/keypress. Don't block init on this.

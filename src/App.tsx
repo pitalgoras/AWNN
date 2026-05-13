@@ -211,21 +211,24 @@ export default function App() {
     return () => document.removeEventListener('fullscreenchange', handler);
   }, []);
 
-  // Pinch-to-zoom + overscroll prevention on the multitrack container
+  // Auto-request fullscreen on mount (may fail without gesture, but works on some devices)
+  useEffect(() => {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }, []);
+
+  // Pinch-to-zoom on the multitask container
+  const pinchRef = useRef({ dist: 0, zoom: 0 });
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-
-    let initialDist = 0;
-    let initialZoom = zoom;
 
     const getDist = (t1: Touch, t2: Touch) =>
       Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length === 2) {
-        initialDist = getDist(e.touches[0], e.touches[1]);
-        initialZoom = useStore.getState().zoom;
+        pinchRef.current.dist = getDist(e.touches[0], e.touches[1]);
+        pinchRef.current.zoom = useStore.getState().zoom;
       }
     };
 
@@ -233,8 +236,8 @@ export default function App() {
       if (e.touches.length === 2) {
         e.preventDefault();
         const dist = getDist(e.touches[0], e.touches[1]);
-        const ratio = dist / initialDist;
-        const newZoom = Math.max(10, Math.min(200, Math.round(initialZoom * ratio)));
+        const ratio = dist / pinchRef.current.dist;
+        const newZoom = Math.max(10, Math.min(200, Math.round(pinchRef.current.zoom * ratio)));
         useStore.getState().setZoom(newZoom);
       }
     };
@@ -245,7 +248,7 @@ export default function App() {
       el.removeEventListener('touchstart', onTouchStart);
       el.removeEventListener('touchmove', onTouchMove);
     };
-  }, [containerRef, zoom]);
+  }, [containerRef]);
 
 
 
