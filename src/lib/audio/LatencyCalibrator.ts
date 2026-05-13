@@ -42,6 +42,7 @@ export class LatencyCalibrator {
 
   private recordedSamples: Float32Array[] = []
   private clickTimes: number[] = []
+  private captureStartTime: number = 0
 
   constructor(
     callbacks: LatencyCalibrationCallbacks = {},
@@ -61,6 +62,7 @@ export class LatencyCalibrator {
     this.isCancelled = false
     this.recordedSamples = []
     this.clickTimes = []
+    this.captureStartTime = 0
 
     try {
       // 1. Create AudioContext and ensure it's running (user gesture required)
@@ -93,7 +95,10 @@ export class LatencyCalibrator {
 
       this.processor.onaudioprocess = (e) => {
         if (this.isCancelled) return
-        // Copy input samples for later analysis
+        // Record the AudioContext time of the first captured buffer
+        if (this.recordedSamples.length === 0) {
+          this.captureStartTime = e.playbackTime
+        }
         const data = e.inputBuffer.getChannelData(0)
         this.recordedSamples.push(new Float32Array(data))
       }
@@ -182,10 +187,11 @@ export class LatencyCalibrator {
     const detected: number[] = []
 
     for (const expectedTime of this.clickTimes) {
-      // Convert expected time to sample frame in the recording
-      // The recording starts approximately at AudioContext time 0
-      // (ScriptProcessorNode starts capturing immediately)
-      const expectedSample = Math.floor(expectedTime * sampleRate)
+      // Convert expected time to sample frame in the recorded buffer.
+      // The buffer starts at captureStartTime (AudioContext time of first onaudioprocess),
+      // NOT at time 0. Adjust by subtracting the offset.
+      const adjustedTime = expectedTime - this.captureStartTime
+      const expectedSample = Math.floor(adjustedTime * sampleRate)
 
       // Search window: from expected to expected + 1.0s (covers up to 1000ms latency)
       const windowStart = Math.max(0, expectedSample)
