@@ -49,7 +49,7 @@ export class LatencyCalibrator {
   private isCancelled = false
 
   private _resolveResult:
-    | ((result: { generationFrames: number[]; detectedFrames: number[] }) => void)
+    | ((result: { generationFrames: number[]; detectedFrames: number[]; maxPeak: number }) => void)
     | null = null
 
   constructor(
@@ -142,9 +142,33 @@ export class LatencyCalibrator {
     this.source.connect(this.workletNode)
     this.workletNode.connect(this.ctx.destination)
 
-    // 5. Set up message handler for results
-    const resultPromise = new Promise<{ generationFrames: number[]; detectedFrames: number[] }>(
-      (resolve) => {
+    // 5. Sample noise floor, then run calibration
+    const floorPromise = new Promise<number>((resolve) => {
+      const handler = (event: MessageEvent) => {
+        if (event.data.type === 'FLOOR_RESULT') {
+          this.workletNode!.port.onmessage = null
+          resolve(event.data.peak)
+        }
+      }
+      this.workletNode!.port.onmessage = handler
+    })
+    this.workletNode.port.postMessage({
+      type: 'MEASURE_FLOOR',
+      durationFrames: Math.floor(0.2 * sr),
+    })
+    let floorPeak = await floorPromise
+    if (floorPeak < 0.001) floorPeak = 0.005 // safety floor for dead-silent rooms
+
+    // Adaptive threshold: 4x noise floor + 0.01 margin, clamped to [0.02, 0.15]
+    const threshold = Math.max(0.02, Math.min(0.15, floorPeak * 4 + 0.01))
+    console.log('Calibration: noise floor peak=' + floorPeak.toFixed(4) + ', threshold=' + threshold.toFixed(3))
+
+    // 6. Set up result handler
+    const resultPromise = new Promise<{
+      generationFrames: number[]
+      detectedFrames: number[]
+      maxPeak: number
+    }>((resolve) => {
         this._resolveResult = resolve
       },
     )
@@ -157,6 +181,7 @@ export class LatencyCalibrator {
           this._resolveResult({
             generationFrames: event.data.generationFrames,
             detectedFrames: event.data.detectedFrames,
+            maxPeak: event.data.maxPeak ?? 0,
           })
           this._resolveResult = null
         }
@@ -170,9 +195,9 @@ export class LatencyCalibrator {
     this.workletNode.port.postMessage({
       type: 'START',
       numPulses: this.options.numTests,
-      pulseIntervalFrames: Math.floor(0.2 * sr), // 200ms between pulses
-      threshold: 0.03,
-      sustainFrames: Math.floor((sustainMs / 1000) * sr),
+      pulseIntervalFrames: Math.floor(0.2 * sr),
+      threshold,
+      sustainFrames: Math.floor(500 * sr / 1000),
     })
 
     this.callbacks.onProgress?.(20)
@@ -196,7 +221,18 @@ export class LatencyCalibrator {
     this.callbacks.onProgress?.(80)
 
     // 9. Pair each generation with the nearest detection
-    const { generationFrames, detectedFrames } = result
+    const { generationFrames, detectedFrames, maxPeak } = result
+
+    // Signal quality diagnostics
+    const signalRatio = maxPeak / threshold
+    if (signalRatio < 1.5) {
+      console.warn(`⚠️ Signal too quiet (${signalRatio.toFixed(1)}x above threshold). Turn UP speakers or move mic closer.`)
+    } else if (signalRatio > 20) {
+      console.warn(`⚠️ Signal very hot (${signalRatio.toFixed(1)}x above threshold). Turn DOWN speakers to avoid distortion.`)
+    } else {
+      console.log(`✅ Signal level good: ${signalRatio.toFixed(1)}x above noise floor threshold.`)
+    }
+
     const MAX_LATENCY_FRAMES = Math.floor(3 * sr) // 3 seconds max
     const MIN_LATENCY_FRAMES = Math.floor(0.003 * sr) // 3ms min (below this = likely direct electrical coupling)
 
