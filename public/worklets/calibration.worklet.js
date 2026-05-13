@@ -16,28 +16,32 @@ class CalibrationProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this.isMonitoring = false
-    this.threshold = 0.15
-    this.minGapFrames = 2000
+    this.threshold = 0.05
+    this.minGapFrames = 1500
     this.prevAbove = false
     this.lastEdgeFrame = -Infinity
     this.startFrame = 0
     this.edges = []
+    this.processCount = 0
 
     this.port.onmessage = (event) => {
       const data = event.data
       if (data.type === 'START') {
-        this.threshold = data.threshold ?? 0.15
-        this.minGapFrames = data.minGapFrames ?? 2000
+        this.threshold = data.threshold ?? 0.05
+        this.minGapFrames = data.minGapFrames ?? 1500
         this.startFrame = data.startFrame ?? 0
         this.prevAbove = false
         this.lastEdgeFrame = -Infinity
         this.edges = []
         this.isMonitoring = true
+        this.processCount = 0
       } else if (data.type === 'STOP') {
         this.isMonitoring = false
         this.port.postMessage({
           type: 'EDGES',
           edges: this.edges,
+          edgeCount: this.edges.length,
+          processCount: this.processCount,
           startFrame: this.startFrame,
         })
       }
@@ -46,7 +50,21 @@ class CalibrationProcessor extends AudioWorkletProcessor {
 
   process(inputs, outputs, parameters) {
     if (!this.isMonitoring) return true
+    this.processCount++
+
     const input = inputs[0]
+    // Log first process call to confirm audio flow
+    if (this.processCount === 1 && input && input[0]) {
+      this.port.postMessage({
+        type: 'DEBUG',
+        msg: 'First process() call',
+        inputLength: input[0].length,
+        firstFewSamples: Array.from(input[0].slice(0, 10)),
+        currentFrame: currentFrame,
+        startFrame: this.startFrame,
+      })
+    }
+
     if (!input || !input[0] || input[0].length === 0) return true
 
     const data = input[0]
@@ -61,6 +79,17 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         if (frame - this.lastEdgeFrame >= this.minGapFrames) {
           this.edges.push(frame)
           this.lastEdgeFrame = frame
+          // Report first few edges immediately for debugging
+          if (this.edges.length <= 5) {
+            this.port.postMessage({
+              type: 'DEBUG',
+              msg: 'Edge detected',
+              frame: frame,
+              amplitude: abs,
+              threshold: this.threshold,
+              edgeIndex: this.edges.length,
+            })
+          }
         }
       }
       this.prevAbove = isAbove

@@ -94,18 +94,17 @@ export class RecordingEngine {
       return;
     }
 
-    const constraints: MediaStreamConstraints = this.config.rawRecordingMode
-      ? {
-          audio: {
-            echoCancellation: { exact: false },
-            noiseSuppression: { exact: false },
-            autoGainControl: { exact: false },
-          } as MediaTrackConstraints,
-        }
-      : { audio: true };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    this.continuousMicStream = stream;
+    if (!this.config.rawRecordingMode) {
+      this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } else {
+      const isChrome = /Chrome/.test(navigator.userAgent);
+      const audio: MediaTrackConstraints = {
+        echoCancellation: isChrome ? { exact: false } : false,
+        noiseSuppression: isChrome ? { exact: false } : false,
+        autoGainControl: isChrome ? { exact: false } : false,
+      };
+      this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
+    }
 
     await this.initAudioWorklet();
   }
@@ -146,26 +145,24 @@ export class RecordingEngine {
       this.continuousMicStream = null;
     }
 
-    const constraints: MediaStreamConstraints = this.config.rawRecordingMode
-      ? {
-          audio: {
-            echoCancellation: { exact: false },
-            noiseSuppression: { exact: false },
-            autoGainControl: { exact: false },
-            // Chrome-specific internal flags (Firefox ignores unsupported constraints)
-            ...(/Chrome/.test(navigator.userAgent) ? {
-              googEchoCancellation: false,
-              googAutoGainControl: false,
-              googNoiseSuppression: false,
-              googHighpassFilter: false,
-              googTypingNoiseDetection: false,
-            } as any : {}),
-          }
-        }
-      : { audio: true };
-
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    this.continuousMicStream = stream;
+    if (!this.config.rawRecordingMode) {
+      this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } else {
+      const isChrome = /Chrome/.test(navigator.userAgent);
+      const audio: any = {
+        echoCancellation: isChrome ? { exact: false } : false,
+        noiseSuppression: isChrome ? { exact: false } : false,
+        autoGainControl: isChrome ? { exact: false } : false,
+      };
+      if (isChrome) {
+        audio.googEchoCancellation = false;
+        audio.googAutoGainControl = false;
+        audio.googNoiseSuppression = false;
+        audio.googHighpassFilter = false;
+        audio.googTypingNoiseDetection = false;
+      }
+      this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
+    }
 
     await this.initAudioWorklet();
   }

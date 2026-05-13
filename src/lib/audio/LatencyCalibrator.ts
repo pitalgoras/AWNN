@@ -49,9 +49,11 @@ export class LatencyCalibrator {
   private readonly PEAK_DURATION = 0.02       // 20ms per peak
   private readonly SHORT_GAP = 0.08           // 80ms (bit 0)
   private readonly LONG_GAP = 0.12            // 120ms (bit 1)
-  private readonly THRESHOLD = 0.15           // min amplitude for edge detection
+  private readonly THRESHOLD = 0.05           // min amplitude for edge detection (reduced from 0.15)
   private readonly MIN_GAP_SEC = 0.045        // min gap between peaks (45ms)
   private readonly TOLERANCE_SEC = 0.025      // ±25ms timing tolerance
+
+  private _resolveEdges: ((edges: number[]) => void) | null = null
 
   constructor(
     callbacks: LatencyCalibrationCallbacks = {},
@@ -76,21 +78,20 @@ export class LatencyCalibrator {
       }
       const sr = this.ctx.sampleRate
 
-      // 2. Get mic stream with raw audio constraints
-      this.stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: { exact: false },
-          noiseSuppression: { exact: false },
-          autoGainControl: { exact: false },
-          ...(/Chrome/.test(navigator.userAgent) ? {
-            googEchoCancellation: false,
-            googAutoGainControl: false,
-            googNoiseSuppression: false,
-            googHighpassFilter: false,
-            googTypingNoiseDetection: false,
-          } as any : {}),
-        },
-      })
+      // 2. Build raw audio constraints (Chrome needs { exact: false }, Firefox needs plain false)
+      const audioConstraints: any = {
+        echoCancellation: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
+        noiseSuppression: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
+        autoGainControl: /Chrome/.test(navigator.userAgent) ? { exact: false } : false,
+      }
+      if (/Chrome/.test(navigator.userAgent)) {
+        audioConstraints.googEchoCancellation = false
+        audioConstraints.googAutoGainControl = false
+        audioConstraints.googNoiseSuppression = false
+        audioConstraints.googHighpassFilter = false
+        audioConstraints.googTypingNoiseDetection = false
+      }
+      this.stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints })
 
       // 3. Load worklet
       try {
@@ -106,6 +107,7 @@ export class LatencyCalibrator {
         numberOfInputs: 1,
         numberOfOutputs: 1,
         channelCount: 1,
+        channelCountMode: 'explicit',
       })
       this.source = this.ctx.createMediaStreamSource(this.stream)
       this.source.connect(this.workletNode)
@@ -113,6 +115,18 @@ export class LatencyCalibrator {
       silentGain.gain.value = 0
       this.workletNode.connect(silentGain)
       silentGain.connect(this.ctx.destination)
+
+      // Set up message handler immediately — DEBUG messages arrive during monitoring
+      this.workletNode.port.onmessage = (event) => {
+        if (event.data.type === 'DEBUG') {
+          console.log('Calibration worklet:', event.data.msg, event.data)
+        } else if (event.data.type === 'EDGES') {
+          if (this._resolveEdges) {
+            this._resolveEdges(event.data.edges)
+            this._resolveEdges = null
+          }
+        }
+      }
 
       this.callbacks.onProgress?.(10)
 
@@ -209,18 +223,17 @@ export class LatencyCalibrator {
         resolve([])
         return
       }
-      const handler = (event: MessageEvent) => {
-        if (event.data.type === 'EDGES') {
-          this.workletNode!.port.onmessage = null
-          resolve(event.data.edges)
-        }
-      }
-      this.workletNode.port.onmessage = handler
+      // The onmessage handler is already set (created before START).
+      // Store the resolve callback so the handler can resolve this promise.
+      this._resolveEdges = resolve
       this.workletNode.port.postMessage({ type: 'STOP' })
 
       // Safety timeout
       setTimeout(() => {
-        if (this.workletNode) this.workletNode.port.onmessage = null
+        if (this._resolveEdges) {
+          this._resolveEdges([])
+          this._resolveEdges = null
+        }
         resolve([])
       }, 2000)
     })
