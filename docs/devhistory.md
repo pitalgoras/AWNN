@@ -310,38 +310,46 @@ a9a6976 fix: Read currentTime from store in startRecording() to avoid stale conf
 - `58a56b3` — fix: calibrator — record captureStartTime from onaudioprocess
 - `4c0bc14` — fix: new calibration worklet + pattern-based latency detection
 
-## 24. Firefox Raw Audio — `echoCancellation: false` Triggers WebRTC Passthrough (2026-05-13)
+## 24. Firefox Raw Audio — Research Evolution (2026-05-13)
 
 **Problem:** Raw audio capture (`echoCancellation`, `noiseSuppression`, `autoGainControl` all disabled) worked in Chrome but was broken in Firefox. Firefox threw `OverconstrainedError` on `{ exact: false }` constraints and, when given plain `false` for all three, still applied audio processing — making calibration results unstable (28–155ms spread vs Chrome's 96–116ms).
 
-**Root Cause:**
-1. **`{ exact: false }` is a required constraint** — Firefox throws if the feature can't be guaranteed. Chrome handles it.
-2. **Setting all three to plain `false`** (`echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`) caused Firefox's constraint negotiation to **renegotiate the codec path**, which re-enabled the WebRTC AudioProcessing module.
-3. **Firefox's WebRTC module enters passthrough mode when `echoCancellation: false` is set alone** — this effectively disables noise suppression and AGC as a side effect without triggering codec renegotiation.
-4. **The `goog*` flags** (`googEchoCancellation`, `googNoiseSuppression`, etc.) are **Chrome-internal WebRTC constraints**. Firefox rejects unknown constraints, crashing `getUserMedia`.
+**Root Causes:**
+1. **`{ exact: false }` is Chrome-only** — Firefox throws `OverconstrainedError` if the feature can't be guaranteed.
+2. **`goog*` flags are Chrome-internal** — Firefox rejects unknown constraints, crashing `getUserMedia`.
+3. **`sampleRate` mismatch** — Chrome's `{ exact: false }` constraints inherently disable resampling; Firefox needs `sampleRate: ctx.sampleRate` to avoid resampling latency.
+4. **`channelCountMode: 'explicit'`** on AudioWorklet nodes breaks Firefox input capture silently.
 
-**Solution — Browser-specific constraint patterns:**
+**Phase 1 — `echoCancellation: false` alone (incorrect):**
+- Initial assumption was that Firefox enters WebRTC passthrough mode when only `echoCancellation: false` is set, disabling all processing as a side effect.
+- Commit `6ca8e8d`, documented in the original §24.
+- `getSettings()` later showed processing was still active. Theory was wrong.
 
-| Browser | Constraints | Mechanism |
-|---------|------------|-----------|
+**Phase 2 — All three constraints + sampleRate (correct):**
+- Commit `a4ec9c2` corrected the approach.
+- Firefox needs all three ideal constraints set to `false` (echo, noise, AGC) plus `sampleRate` matching the AudioContext.
+- This was confirmed by `getSettings()` logging added in commit `5fa147b`.
+
+**Final Configuration:**
+
+| Browser | Constraints | Notes |
+|---------|------------|-------|
 | Chrome | `echoCancellation: { exact: false }`, `noiseSuppression: { exact: false }`, `autoGainControl: { exact: false }`, plus `goog*` flags | Required constraints + Chrome-internal WebRTC flags |
-| Firefox | `echoCancellation: false` **alone** | Triggers passthrough mode in Firefox's libwebrtc module, disabling all processing |
+| Firefox | `echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`, `sampleRate: ctx.sampleRate` | Ideal constraints all false + matching sample rate |
+| Both | UA check via `/Chrome/.test(navigator.userAgent)` | All three `getUserMedia` call sites use same pattern |
 
-**Implementation:**
-- All three `getUserMedia` call sites use the same browser check (`/Chrome/.test(navigator.userAgent)`):
-  - Chrome: strict constraints + `goog*` flags
-  - Firefox: `{ echoCancellation: false }` only
-- `RecordingEngine.initializeForPlayback()` (line 97–114)
-- `RecordingEngine.initStream()` (line 156–176)
-- `LatencyCalibrator.runCalibration()` (line 112–129)
+**Diagnostics:** Added `getSettings()` logging after each `getUserMedia` call (commit `5fa147b`) — check browser console for `mic settings:` log to verify constraints were honored.
 
 **Files Modified:**
-- `src/audio/recording/RecordingEngine.ts` — both `initializeForPlayback` and `initStream` updated
-- `src/lib/audio/LatencyCalibrator.ts` — calibrator constraint block updated
+- `src/audio/recording/RecordingEngine.ts` — `initializeForPlayback` and `initStream`
+- `src/lib/audio/LatencyCalibrator.ts` — calibrator constraint block
+- `public/worklets/calibration.worklet.js` — removed `channelCountMode: 'explicit'`
 
-**Result:** Raw audio capture now works in both Chrome and Firefox. Calibration results are consistent across browsers.
+**Result:** Raw audio capture now works in both Chrome and Firefox. Calibration results are consistent across browsers. See `docs/FIREFOX_RAW_AUDIO_RESEARCH.md` for detailed findings.
 
-**Commits:**
-- `8e3ac33` — fix: Firefox raw audio — guard Chrome-specific goog constraints behind UA check
-- `65eb92d` — fix: Firefox raw audio constraints — use { exact: false } only for Chrome
-- `6ca8e8d` — fix: Firefox raw audio — use echoCancellation: false alone to trigger passthrough
+**Commits (chronological):**
+- `6ca8e8d` — fix: Firefox raw audio — use echoCancellation: false alone (incorrect)
+- `59288fc` — docs: document Firefox raw audio discovery (now outdated)
+- `f524e7c` — fix: Firefox — remove channelCountMode:explicit from calibrator worklet
+- `a4ec9c2` — fix: Firefox raw audio — restore all three constraints (echo, noise, AGC)
+- `5fa147b` — chore: add getSettings() logging to diagnose Firefox raw audio
