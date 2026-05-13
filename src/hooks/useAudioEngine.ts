@@ -323,10 +323,13 @@ const {
     if (!containerRef.current) return;
 
     perfLogger.log(1);
-    setIsReady(false);
-    if (containerRef.current) {
-      containerRef.current.style.opacity = '0';
-      containerRef.current.style.transition = 'opacity 0.3s ease-in-out';
+    const isFirstInit = !multitrackRef.current;
+    if (isFirstInit) {
+      setIsReady(false);
+      if (containerRef.current) {
+        containerRef.current.style.opacity = '0';
+        containerRef.current.style.transition = 'opacity 0.3s ease-in-out';
+      }
     }
 
     let disposed = false;
