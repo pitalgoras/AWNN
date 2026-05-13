@@ -1,25 +1,31 @@
 /**
  * Calibration worklet for sample-accurate round-trip latency measurement.
  *
- * Generates pulses on its output (→ speakers) and records ALL rising
- * edges on its input (from mic). The main thread pairs generation
- * frames with detection frames to compute latency.
+ * Generates pulses on its output (→ speakers) and listens for each
+ * one within a bounded time window on its input (from mic).
+ *
+ * Per-pulse bounded window: each pulse opens a detection window
+ * [genFrame + minLatency, genFrame + maxLatency]. The FIRST rising
+ * edge within that window is the pulse arrival. This prevents cross-
+ * pulse interference and false matching to sustain echo edges.
  *
  * Messages:
- *   MEASURE_FLOOR: { durationFrames } — sample noise floor → FLOOR_RESULT
+ *   MEASURE_FLOOR: { durationFrames } → FLOOR_RESULT
  *   START: { numPulses, pulseIntervalFrames, threshold, sustainFrames }
- *   STOP:  → { type: 'RESULT', generationFrames, detectedFrames, maxPeak }
+ *   STOP:  → RESULT { generationFrames, detectedFrames, maxPeak }
  */
 class CalibrationProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
     this.numPulses = 5
     this.pulseIntervalFrames = 8820
-    this.pulseLength = 44               // 1ms at 44100
+    this.pulseLength = 44
     this.threshold = 0.03
-    this.sustainFrames = 22050          // 500ms at 44100
+    this.sustainFrames = 22050
+    this.minLatencyFrames = Math.floor(0.003 * 44100)   // 3ms
+    this.maxLatencyFrames = Math.floor(0.500 * 44100)   // 500ms
     this.generationFrames = []
-    this.pulseIndex = -1                // -1 = not started
+    this.pulseIndex = -1
     this.pulseCountdown = 0
     this.sustainCountdown = 0
     this.isMeasuringFloor = false
@@ -28,6 +34,9 @@ class CalibrationProcessor extends AudioWorkletProcessor {
     this.maxPeak = 0
     this.prevAbove = false
     this.detectedFrames = []
+    this.waitStart = 0
+    this.waitEnd = 0
+    this.isWaiting = false
 
     this.port.onmessage = (event) => {
       const data = event.data
@@ -35,12 +44,13 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         this.floorCountdown = data.durationFrames ?? 8820
         this.floorMaxAbs = 0
         this.isMeasuringFloor = true
-        this.maxPeak = 0
       } else if (data.type === 'START') {
         this.numPulses = data.numPulses ?? 5
         this.pulseIntervalFrames = data.pulseIntervalFrames ?? 8820
         this.threshold = data.threshold ?? 0.03
         this.sustainFrames = data.sustainFrames ?? 22050
+        this.minLatencyFrames = Math.floor(0.003 * sampleRate)
+        this.maxLatencyFrames = Math.floor(0.500 * sampleRate)
         this.generationFrames = []
         this.detectedFrames = []
         this.pulseIndex = 0
@@ -48,6 +58,9 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         this.sustainCountdown = this.sustainFrames
         this.prevAbove = false
         this.maxPeak = 0
+        this.isWaiting = false
+        this.waitStart = 0
+        this.waitEnd = 0
         this.port.postMessage({ type: 'DEBUG', msg: 'START received', sustainFrames: this.sustainFrames })
       } else if (data.type === 'STOP') {
         this.pulseIndex = -1
@@ -65,7 +78,7 @@ class CalibrationProcessor extends AudioWorkletProcessor {
     const input = inputs[0]
     const output = outputs[0]
 
-    // --- Floor measurement (before any output or pulse) ---
+    // --- Floor measurement ---
     if (this.isMeasuringFloor) {
       if (input && input[0] && input[0].length > 0) {
         for (let i = 0; i < input[0].length; i++) {
@@ -80,15 +93,13 @@ class CalibrationProcessor extends AudioWorkletProcessor {
       return true
     }
 
-    // Ignore processing before START
     if (this.pulseIndex < 0) return true
 
-    // --- Generate: sustain tone + pulses ---
+    // --- Generate: sustain + pulses ---
     if (output && output[0]) {
       const outData = output[0]
       for (let i = 0; i < outData.length; i++) outData[i] = 0
 
-      // Generate sustain tone while countdown > remaining sustain
       if (this.sustainCountdown > 0) {
         for (let i = 0; i < outData.length && i < this.sustainCountdown; i++) {
           const t = (currentFrame + i) / sampleRate
@@ -97,7 +108,6 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         this.sustainCountdown -= outData.length
       }
 
-      // Generate pulse when countdown expires
       if (this.pulseCountdown <= 0 && this.pulseIndex < this.numPulses) {
         const pulseStartFrame = currentFrame - this.pulseCountdown
         this.generationFrames.push(pulseStartFrame)
@@ -110,6 +120,12 @@ class CalibrationProcessor extends AudioWorkletProcessor {
             outData[i + pulseOffset] = Math.sin(2 * Math.PI * 1000 * t) * envelope
           }
         }
+
+        // Open per-pulse detection window
+        this.isWaiting = true
+        this.waitStart = pulseStartFrame + this.minLatencyFrames
+        this.waitEnd = pulseStartFrame + this.maxLatencyFrames
+        this.prevAbove = false
 
         this.port.postMessage({
           type: 'DEBUG',
@@ -125,18 +141,42 @@ class CalibrationProcessor extends AudioWorkletProcessor {
       }
     }
 
-    // --- Detect: record ALL rising edges, track maxPeak ---
-    if (input && input[0] && input[0].length > 0) {
+    // --- Detect: per-pulse bounded window ---
+    if (this.isWaiting && input && input[0] && input[0].length > 0) {
       const inData = input[0]
-      for (let i = 0; i < inData.length; i++) {
-        const abs = Math.abs(inData[i])
-        this.maxPeak = Math.max(this.maxPeak, abs)
-        const isAbove = abs >= this.threshold
+      // Close window if we've passed the end
+      if (currentFrame >= this.waitEnd) {
+        this.isWaiting = false
+      } else {
+        for (let i = 0; i < inData.length; i++) {
+          const frame = currentFrame + i
+          if (frame < this.waitStart) {
+            this.prevAbove = Math.abs(inData[i]) >= this.threshold
+            continue
+          }
+          if (frame >= this.waitEnd) {
+            this.isWaiting = false
+            break
+          }
+          this.maxPeak = Math.max(this.maxPeak, Math.abs(inData[i]))
+          const isAbove = Math.abs(inData[i]) >= this.threshold
 
-        if (isAbove && !this.prevAbove) {
-          this.detectedFrames.push(currentFrame + i)
+          if (isAbove && !this.prevAbove) {
+            this.detectedFrames.push(frame)
+            this.isWaiting = false
+            this.waitStart = Infinity
+            this.waitEnd = Infinity
+            break
+          }
+          this.prevAbove = isAbove
         }
-        this.prevAbove = isAbove
+      }
+    }
+
+    // Still track maxPeak even when not waiting
+    if (!this.isWaiting && input && input[0] && input[0].length > 0) {
+      for (let i = 0; i < input[0].length; i++) {
+        this.maxPeak = Math.max(this.maxPeak, Math.abs(input[0][i]))
       }
     }
 
