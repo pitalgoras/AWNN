@@ -1,98 +1,143 @@
 /**
- * Calibration worklet for sample-accurate peak detection.
- * Monitors mic input for rising edges above a threshold and reports
- * their exact AudioContext frame numbers back to the main thread.
+ * Calibration worklet for sample-accurate round-trip latency measurement.
  *
- * Edge detection uses hysteresis: a rising edge is registered when
- * the current sample is at or above threshold while the previous
- * sample was below threshold. Consecutive edges are suppressed if
- * they fall within minGapFrames of the last detected edge.
+ * The worklet generates a short pulse on its output (routed to speakers)
+ * and simultaneously listens for it on its input (from microphone).
+ * By recording the exact generation frame (currentFrame at generation time)
+ * and the detection frame (first sample above threshold after generation),
+ * the round-trip latency can be computed as:
+ *   latencyMs = (detectionFrame - generationFrame) / sampleRate * 1000
+ *
+ * This eliminates all room-echo and noise-gate issues because:
+ * - The generation and detection use the SAME AudioContext clock
+ * - Detection looks for the FIRST pulse arrival, not pattern intervals
+ * - Room echoes arrive after the direct pulse and are ignored
  *
  * Messages:
- *   START: { threshold, minGapFrames, startFrame } — begin monitoring
- *   STOP:  — stop monitoring, post back all detected edges
+ *   START: { numPulses, pulseIntervalFrames, threshold } — begin sequence
+ *   STOP:  — post back results: { type: 'RESULT', latencies: number[] }
  */
 class CalibrationProcessor extends AudioWorkletProcessor {
   constructor() {
     super()
-    this.isMonitoring = false
+    this.isRunning = false
+    this.numPulses = 5
+    this.pulseIntervalFrames = 8820       // 200ms at 44100
+    this.pulseLength = 44                 // 1ms at 44100
     this.threshold = 0.05
-    this.minGapFrames = 1500
+    this.generationFrames = []            // currentFrame when each pulse was generated
+    this.pulseIndex = -1                  // -1 = not started
+    this.pulseCountdown = 0               // frames until next pulse generation
+    this.isWaiting = false                // waiting to hear pulse on input
     this.prevAbove = false
-    this.lastEdgeFrame = -Infinity
-    this.startFrame = 0
-    this.edges = []
-    this.processCount = 0
+    this.detectedFrames: number[] = []
+    this.inputCounter = 0
 
     this.port.onmessage = (event) => {
-      const data = event.data
-      if (data.type === 'START') {
-        this.threshold = data.threshold ?? 0.05
-        this.minGapFrames = data.minGapFrames ?? 1500
-        this.startFrame = data.startFrame ?? 0
+      if (event.data.type === 'START') {
+        this.numPulses = event.data.numPulses ?? 5
+        this.pulseIntervalFrames = event.data.pulseIntervalFrames ?? 8820
+        this.threshold = event.data.threshold ?? 0.05
+        // First pulse at START + 0.3s to let audio path stabilize
+        this.pulseCountdown = Math.floor(0.3 * sampleRate)
+        this.pulseIndex = 0
+        this.isRunning = true
+        this.isWaiting = false
+        this.generationFrames = []
+        this.detectedFrames = []
         this.prevAbove = false
-        this.lastEdgeFrame = -Infinity
-        this.edges = []
-        this.isMonitoring = true
-        this.processCount = 0
-      } else if (data.type === 'STOP') {
-        this.isMonitoring = false
         this.port.postMessage({
-          type: 'EDGES',
-          edges: this.edges,
-          edgeCount: this.edges.length,
-          processCount: this.processCount,
-          startFrame: this.startFrame,
+          type: 'DEBUG',
+          msg: 'START received',
+          numPulses: this.numPulses,
+          pulseCountdown: this.pulseCountdown,
+        })
+      } else if (event.data.type === 'STOP') {
+        this.isRunning = false
+        this.port.postMessage({
+          type: 'RESULT',
+          generationFrames: this.generationFrames,
+          detectedFrames: this.detectedFrames,
         })
       }
     }
   }
 
   process(inputs, outputs, parameters) {
-    if (!this.isMonitoring) return true
-    this.processCount++
+    if (!this.isRunning) return true
 
+    const output = outputs[0]
     const input = inputs[0]
-    // Log first process call to confirm audio flow
-    if (this.processCount === 1 && input && input[0]) {
-      this.port.postMessage({
-        type: 'DEBUG',
-        msg: 'First process() call',
-        inputLength: input[0].length,
-        firstFewSamples: Array.from(input[0].slice(0, 10)),
-        currentFrame: currentFrame,
-        startFrame: this.startFrame,
-      })
-    }
 
-    if (!input || !input[0] || input[0].length === 0) return true
+    // --- Generate pulses on output ---
+    if (output && output[0]) {
+      const outData = output[0]
+      // Default: silence
+      for (let i = 0; i < outData.length; i++) {
+        outData[i] = 0
+      }
 
-    const data = input[0]
-    for (let i = 0; i < data.length; i++) {
-      const frame = currentFrame + i
-      if (frame < this.startFrame) continue
-      const abs = Math.abs(data[i])
-      const isAbove = abs >= this.threshold
+      // Check if we need to generate a pulse
+      if (this.pulseIndex >= 0 && this.pulseIndex < this.numPulses) {
+        this.pulseCountdown -= outData.length
 
-      if (isAbove && !this.prevAbove) {
-        // Rising edge
-        if (frame - this.lastEdgeFrame >= this.minGapFrames) {
-          this.edges.push(frame)
-          this.lastEdgeFrame = frame
-          // Report first few edges immediately for debugging
-          if (this.edges.length <= 5) {
-            this.port.postMessage({
-              type: 'DEBUG',
-              msg: 'Edge detected',
-              frame: frame,
-              amplitude: abs,
-              threshold: this.threshold,
-              edgeIndex: this.edges.length,
-            })
+        if (this.pulseCountdown <= 0 && this.pulseIndex < this.numPulses) {
+          // Generate pulse at current frame
+          const genFrame = currentFrame
+          this.generationFrames.push(genFrame)
+          this.isWaiting = true
+          this.prevAbove = false
+
+          // Write a 1ms 1kHz pulse at the START of this quantum
+          const pulseLen = Math.min(this.pulseLength, outData.length)
+          for (let i = 0; i < pulseLen; i++) {
+            const t = i / sampleRate
+            // Raised-cosine envelope for clean click
+            const envelope = 0.5 * (1 - Math.cos(Math.PI * i / pulseLen))
+            outData[i] = Math.sin(2 * Math.PI * 1000 * t) * envelope
           }
+
+          this.port.postMessage({
+            type: 'DEBUG',
+            msg: 'Pulse generated',
+            pulseIndex: this.pulseIndex,
+            genFrame: genFrame,
+            pulseCountdown: this.pulseCountdown,
+          })
+
+          this.pulseIndex++
+          this.pulseCountdown = this.pulseIntervalFrames
+
+          // Reset prevAbove for fresh detection
+          this.isWaiting = true
+          this.prevAbove = false
         }
       }
-      this.prevAbove = isAbove
+    }
+
+    // --- Detect pulses on input ---
+    if (this.isWaiting && input && input[0] && input[0].length > 0) {
+      const inData = input[0]
+      for (let i = 0; i < inData.length; i++) {
+        const abs = Math.abs(inData[i])
+        const isAbove = abs >= this.threshold
+
+        if (isAbove && !this.prevAbove) {
+          // Rising edge — this is the pulse arrival
+          const detectFrame = currentFrame + i
+          this.detectedFrames.push(detectFrame)
+          this.isWaiting = false
+
+          this.port.postMessage({
+            type: 'DEBUG',
+            msg: 'Pulse detected',
+            detectFrame: detectFrame,
+            inputSample: inData[i],
+          })
+          break
+        }
+        this.prevAbove = isAbove
+      }
     }
 
     return true
