@@ -126,6 +126,7 @@ export class LatencyCalibrator {
         echoCancellation: false,
         noiseSuppression: false,
         autoGainControl: false,
+        sampleRate: this.ctx!.sampleRate,
       }
     }
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: ac })

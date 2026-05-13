@@ -110,6 +110,7 @@ export class RecordingEngine {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
+          sampleRate: this.config.audioContextRef?.current?.sampleRate,
         };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
@@ -177,6 +178,7 @@ export class RecordingEngine {
           echoCancellation: false,
           noiseSuppression: false,
           autoGainControl: false,
+          sampleRate: this.config.audioContextRef?.current?.sampleRate,
         };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
