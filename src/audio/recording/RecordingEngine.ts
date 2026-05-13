@@ -152,12 +152,14 @@ export class RecordingEngine {
             echoCancellation: { exact: false },
             noiseSuppression: { exact: false },
             autoGainControl: { exact: false },
-            // @ts-ignore - Chrome specific constraints
-            googEchoCancellation: false,
-            googAutoGainControl: false,
-            googNoiseSuppression: false,
-            googHighpassFilter: false,
-            googTypingNoiseDetection: false,
+            // Chrome-specific internal flags (Firefox ignores unsupported constraints)
+            ...(/Chrome/.test(navigator.userAgent) ? {
+              googEchoCancellation: false,
+              googAutoGainControl: false,
+              googNoiseSuppression: false,
+              googHighpassFilter: false,
+              googTypingNoiseDetection: false,
+            } as any : {}),
           }
         }
       : { audio: true };
