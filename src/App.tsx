@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText } from 'lucide-react';
+import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -195,6 +195,57 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown, { capture: true });
   }, [setSelectedPhraseId, playPause, setShowTracksModal]);
   const lastTapTime = useRef<{ [key: string]: number }>({});
+
+  // Fullscreen toggle
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const toggleFullscreen = () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch(() => {});
+    } else {
+      document.exitFullscreen().catch(() => {});
+    }
+  };
+  useEffect(() => {
+    const handler = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', handler);
+    return () => document.removeEventListener('fullscreenchange', handler);
+  }, []);
+
+  // Pinch-to-zoom + overscroll prevention on the multitrack container
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    let initialDist = 0;
+    let initialZoom = zoom;
+
+    const getDist = (t1: Touch, t2: Touch) =>
+      Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        initialDist = getDist(e.touches[0], e.touches[1]);
+        initialZoom = useStore.getState().zoom;
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getDist(e.touches[0], e.touches[1]);
+        const ratio = dist / initialDist;
+        const newZoom = Math.max(10, Math.min(200, Math.round(initialZoom * ratio)));
+        useStore.getState().setZoom(newZoom);
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    return () => {
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+    };
+  }, [containerRef, zoom]);
 
 
 
@@ -615,6 +666,9 @@ export default function App() {
                   <button onClick={() => setShowSettings(!showSettings)} className={cn(getBtnClass(true), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Settings">
                     <Settings size={headerIconSize} />
                   </button>
+                  <button onClick={toggleFullscreen} className={cn(getBtnClass(true), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
+                    {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
+                  </button>
                 </div>
                 <div className="flex items-center gap-1">
                   <div className="flex items-center gap-1 px-1">
@@ -782,6 +836,13 @@ export default function App() {
                 >
                   <Settings size={headerIconSize} />
                 </button>
+                <button 
+                  onClick={toggleFullscreen}
+                  className={cn(getBtnClass(true), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")}
+                  title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                >
+                  {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
+                </button>
               </div>
             </div>
           </>
@@ -836,7 +897,7 @@ export default function App() {
 
               <div 
                 ref={containerRef} 
-                className="w-full multitrack-container timeline-container relative z-20" 
+                className="w-full multitrack-container timeline-container relative z-20 touch-none overscroll-none" 
                 onClickCapture={handleContainerClick}
               />
               {isReady && <TimelineGrid />}
