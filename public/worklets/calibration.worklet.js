@@ -50,9 +50,8 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         this.chunkSum = 0
         this.chunkCountdown = this.chunkSize
         this.burstCountdown = this.burstDuration
-        // Wait 100ms of silence before burst (for context)
-        this.waitStart = currentFrame + this.burstDuration + Math.floor(0.010 * sampleRate)
-        this.waitEnd = this.waitStart + Math.floor(0.500 * sampleRate)
+        this.waitStart = 0
+        this.waitEnd = 0
         this.port.postMessage({ type: 'DEBUG', msg: 'START received' })
       } else if (data.type === 'STOP') {
         this.isMeasuring = false
@@ -98,6 +97,9 @@ class CalibrationProcessor extends AudioWorkletProcessor {
         // Record burst start (first sample that plays)
         if (this.burstStartFrame === 0) {
           this.burstStartFrame = currentFrame
+          // Open listening window: 10ms blanking, then up to 500ms after burst end
+          this.waitStart = this.burstStartFrame + Math.floor(0.010 * sampleRate)
+          this.waitEnd = this.burstStartFrame + this.burstDuration + Math.floor(0.500 * sampleRate)
         }
         for (let i = 0; i < outData.length && i < this.burstCountdown; i++) {
           const burstPos = (this.burstDuration - this.burstCountdown) + i

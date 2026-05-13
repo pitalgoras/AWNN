@@ -197,8 +197,9 @@ export class LatencyCalibrator {
     }
     this.callbacks.onProgress?.(80)
 
-    // 10. Compute latency
-    const latencyFrames = result.peakFrame - result.burstStartFrame
+    // 10. Compute latency: peakFrame is at the envelope center (250ms into burst)
+    const envelopePeakOffset = Math.floor(0.250 * sr)  // triangular envelope peaks at 250ms
+    const latencyFrames = Math.max(1, result.peakFrame - result.burstStartFrame - envelopePeakOffset)
     const latencyMs = Math.round((latencyFrames / sr) * 1000)
 
     // 11. Level diagnostics — warn but don't block on clipping
