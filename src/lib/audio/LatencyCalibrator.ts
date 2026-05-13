@@ -122,9 +122,11 @@ export class LatencyCalibrator {
         googTypingNoiseDetection: false,
       }
     } else {
-      // Firefox: echoCancellation: false triggers WebRTC passthrough,
-      // effectively disabling all audio processing as a side effect
-      ac = { echoCancellation: false }
+      ac = {
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+      }
     }
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: ac })
 

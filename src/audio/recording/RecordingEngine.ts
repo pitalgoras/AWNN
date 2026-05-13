@@ -106,10 +106,11 @@ export class RecordingEngine {
           autoGainControl: { exact: false },
         };
       } else {
-        // Firefox: echoCancellation: false alone triggers WebRTC passthrough mode,
-        // effectively disabling noise suppression and AGC as a side effect.
-        // Adding extra constraints can renegotiate the codec path and re-enable processing.
-        audio = { echoCancellation: false };
+        audio = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
     }
@@ -170,8 +171,11 @@ export class RecordingEngine {
           googTypingNoiseDetection: false,
         };
       } else {
-        // Firefox: echoCancellation: false alone triggers WebRTC passthrough
-        audio = { echoCancellation: false };
+        audio = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
     }
