@@ -131,7 +131,7 @@ export class LatencyCalibrator {
       if (!err?.message?.includes('already been added')) throw err
     }
 
-    // 4. Connect mic → worklet → silent gain → destination
+    // 4. Connect mic → worklet → destination (worklet generates pulse on output)
     this.workletNode = new AudioWorkletNode(this.ctx, 'calibration-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
@@ -140,10 +140,7 @@ export class LatencyCalibrator {
     })
     this.source = this.ctx.createMediaStreamSource(this.stream)
     this.source.connect(this.workletNode)
-    const silentGain = this.ctx.createGain()
-    silentGain.gain.value = 0
-    this.workletNode.connect(silentGain)
-    silentGain.connect(this.ctx.destination)
+    this.workletNode.connect(this.ctx.destination)
 
     // 5. Set up message handler for results
     const resultPromise = new Promise<{ generationFrames: number[]; detectedFrames: number[] }>(
