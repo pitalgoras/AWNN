@@ -129,6 +129,8 @@ export class LatencyCalibrator {
       }
     }
     this.stream = await navigator.mediaDevices.getUserMedia({ audio: ac })
+    const settings = this.stream.getAudioTracks()[0]?.getSettings()
+    console.log('Calibrator mic settings:', settings)
 
     // 3. Load worklet
     try {

@@ -113,6 +113,8 @@ export class RecordingEngine {
         };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
+      const track = this.continuousMicStream.getAudioTracks()[0];
+      console.log('RecordingEngine initializeForPlayback mic settings:', track?.getSettings());
     }
 
     await this.initAudioWorklet();
@@ -178,6 +180,8 @@ export class RecordingEngine {
         };
       }
       this.continuousMicStream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints);
+      const track2 = this.continuousMicStream.getAudioTracks()[0];
+      console.log('RecordingEngine initStream mic settings:', track2?.getSettings());
     }
 
     await this.initAudioWorklet();
