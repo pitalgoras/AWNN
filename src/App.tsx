@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from './store/useStore';
 import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -107,9 +107,7 @@ export default function App() {
     startRecording, 
     stopRecording,
     undoLastRecording,
-    redoLastRecording,
-    clearUndo,
-    removedPhraseRef,
+    cancelAndJumpBack,
   } = useAudioEngine();
 
   // secondsPerBar is not used in App.tsx, so removed.
@@ -205,19 +203,6 @@ export default function App() {
 
   // Fullscreen toggle
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const [undoOverlayVisible, setUndoOverlayVisible] = useState(false);
-  const undoOverlayTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
-
-  // Wrap undoLastRecording to show overlay and auto-dismiss
-  const handleUndoRecording = useCallback(() => {
-    undoLastRecording();
-    setUndoOverlayVisible(true);
-    clearTimeout(undoOverlayTimerRef.current);
-    undoOverlayTimerRef.current = setTimeout(() => {
-      setUndoOverlayVisible(false);
-      clearUndo();
-    }, 4000);
-  }, [undoLastRecording, clearUndo]);
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -230,7 +215,6 @@ export default function App() {
     document.addEventListener('fullscreenchange', handler);
     return () => {
       document.removeEventListener('fullscreenchange', handler);
-      clearTimeout(undoOverlayTimerRef.current);
     };
   }, []);
 
@@ -516,6 +500,11 @@ export default function App() {
     if (isRecording) {
       perfLogger.log(8);
       stopRecording();
+      // Pause playback when stopping recording via toolbar button
+      setIsPlaying(false);
+      if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
+        multitrackRef.current.pause();
+      }
       return;
     }
     
@@ -525,11 +514,6 @@ export default function App() {
       alert("Recording on the metronome track is not allowed.");
       return;
     }
-    
-    // Clear undo state when starting a new recording
-    clearUndo();
-    setUndoOverlayVisible(false);
-    clearTimeout(undoOverlayTimerRef.current);
     
     perfLogger.log(7, trackId);
     startRecording(trackId);
@@ -544,6 +528,11 @@ export default function App() {
 
   const handleMutePointerDown = (e: React.PointerEvent, trackId: string) => {
     e.stopPropagation();
+    // During recording on this track, mute button cancels + jumps back
+    if (isRecording && selectedTrackId === trackId) {
+      cancelAndJumpBack();
+      return;
+    }
     muteLongPressTimer.current[trackId] = setTimeout(() => {
       const track = tracks.find(t => t.id === trackId);
       if (track) {
@@ -555,6 +544,8 @@ export default function App() {
 
   const handleMutePointerUp = (e: React.PointerEvent, trackId: string, isMuted: boolean) => {
     e.stopPropagation();
+    // During recording on this track, mute up is a no-op (handled by down)
+    if (isRecording && selectedTrackId === trackId) return;
     if (muteLongPressTimer.current[trackId]) {
       clearTimeout(muteLongPressTimer.current[trackId]!);
       muteLongPressTimer.current[trackId] = null;
@@ -909,9 +900,7 @@ export default function App() {
                 handleRecord,
                 handleMutePointerDown,
                 handleMutePointerUp,
-                handleUndoRecording,
-                handleRedoRecording: redoLastRecording,
-                removedPhraseRef,
+                handleUndoRecording: undoLastRecording,
               }} />
             
             {/* Center - Waveforms */}
@@ -941,22 +930,6 @@ export default function App() {
               {isReady && <TimelineGrid />}
               {isReady && <SyncTool />}
               {isReady && <EnvelopeEditor />}
-
-              {/* Undo overlay */}
-              {undoOverlayVisible && removedPhraseRef.current && (() => {
-                const container = containerRef.current;
-                const scrollEl = container?.querySelector('.multitrack-scroll-container');
-                const scrollLeft = scrollEl?.scrollLeft || 0;
-                const x = removedPhraseRef.current.startPosition * zoom - scrollLeft;
-                return (
-                  <div
-                    className="absolute z-50 bg-zinc-900/90 border border-zinc-700 rounded-lg px-4 py-2 text-xs text-zinc-300 shadow-2xl pointer-events-none"
-                    style={{ left: `${x}px`, top: '50%', transform: 'translate(0, -50%)' }}
-                  >
-                    Clip removed. Long-press Record to restore.
-                  </div>
-                );
-              })()}
             </section>
           </div>
         </div>

@@ -53,8 +53,6 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
     handleMutePointerDown, 
     handleMutePointerUp,
     handleUndoRecording,
-    handleRedoRecording,
-    removedPhraseRef,
   } = handlers;
 
   const recordLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -159,11 +157,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                             e.stopPropagation();
                             recordLongPressTimer.current = setTimeout(() => {
                               recordLongPressTimer.current = null;
-                              if (removedPhraseRef?.current) {
-                                handleRedoRecording();
-                              } else {
-                                handleUndoRecording();
-                              }
+                              handleUndoRecording();
                             }, 2000);
                           }}
                           onPointerUp={(e) => {
@@ -218,11 +212,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                             e.stopPropagation();
                             recordLongPressTimer.current = setTimeout(() => {
                               recordLongPressTimer.current = null;
-                              if (removedPhraseRef?.current) {
-                                handleRedoRecording();
-                              } else {
-                                handleUndoRecording();
-                              }
+                              handleUndoRecording();
                             }, 2000);
                           }}
                           onPointerUp={(e) => {
