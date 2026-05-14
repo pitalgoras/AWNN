@@ -347,6 +347,58 @@ a9a6976 fix: Read currentTime from store in startRecording() to avoid stale conf
 
 **Result:** Raw audio capture now works in both Chrome and Firefox. Calibration results are consistent across browsers. See `docs/FIREFOX_RAW_AUDIO_RESEARCH.md` for detailed findings.
 
+## 25. AudioWorklet Metronome — Live-Scheduled Clicks (2026-05-14)
+
+**Problem:** Pre-rendered 600s WAV metronome consumed ~50MB memory, required slow full re-encode on BPM changes, and prevented per-bar tempo/signature changes.
+
+**Solution:** Replaced pre-rendered WAV with an AudioWorklet that generates click samples live on each `process()` call. The worklet is a pure sample-placement engine with no sin/cos/envelope math.
+
+**Architecture:**
+- `ClickRenderer` — static method on main thread that renders sine-click `Float32Array` with exponential decay envelope and baked gain
+- `metronome.worklet.js` — AudioWorkletProcessor: frame counter, beat detection via modulo, typed array copy into output
+- `MetronomeEngine` — scheduler wrapper, posts `SET_TEMPO`/`SET_SIGNATURE`/`ENABLE`/`RESET`/`SET_CLICK_SOUNDS` messages
+- Volume baked into click samples at render time, no `GainNode`
+- BPM changes applied at beat boundary, signature at bar boundary
+
+**Zero drift guarantee:** Worklet's `currentFrame` derives from AudioContext hardware clock. Tempo/signature changes are sample-accurate (±1 sample at 44.1kHz).
+
+**Results:**
+- Memory: 50MB WAV blob → ~2KB (two Float32Array click samples)
+- BPM changes: 500ms re-encode → instant message post
+- Metronome track removed from multitrack entirely (sidebar shows only real tracks)
+- Sync via `barLinesEnabled` TimelineGrid toggle
+
+**Fixes during development:**
+- RESET sent `nextBeatFrame = currentFrame + framesPerBeat`, delaying first click by 1 beat. Fixed: `nextBeatFrame = currentFrame`.
+- Click samples truncated to 128 samples per process() buffer. Fixed: `currentClick/currentClickOffset/currentClickRemaining` state persists across process() calls.
+
+## 26. Undo / Re-record Long-Press Gesture (2026-05-14)
+
+**Feature:** Record button in TrackToolbar supports 2-second long-press for undo/redo.
+
+**Behavior:**
+| Interaction | State | Result |
+|-------------|-------|--------|
+| Tap Record | Idle | Start recording |
+| Tap Record | Recording | Stop recording, keep playing |
+| Long-press (2s) | Idle | Jump playhead to clip start, 200ms delay, remove clip, show floating overlay |
+| Long-press (2s) | Overlay visible | Restore removed clip |
+| Tap Record | Overlay visible | Start new recording, overlay dismissed |
+| Long-press (2s) | Recording | Cancel current recording, remove previous clip, re-record from same position |
+
+**Overlay:** Floats at the playhead X position (clip start), centered vertically on track area. Text: "Clip removed. Long-press Record to restore." Auto-dismisses after 4 seconds.
+
+**Undo/Redo state tracking:**
+- `lastRecordingRef` — stores `{ trackId, phraseId, startPosition }` of the last completed recording
+- `removedPhraseRef` — stores `{ trackId, phrase, startPosition }` of the removed clip for redo
+- `clearUndo()` called on new recording start or overlay timeout
+
+## 27. Play/Pause Behavior During Recording (2026-05-14)
+
+**Change:** Pressing Play/Pause during recording now stops recording AND pauses playback. Previously it only stopped recording while playback continued.
+
+**Rationale:** Matches user expectation that the transport Play/Pause button controls playback state. The Record button in the toolbar still only stops recording without pausing.
+
 **Commits (chronological):**
 - `6ca8e8d` — fix: Firefox raw audio — use echoCancellation: false alone (incorrect)
 - `59288fc` — docs: document Firefox raw audio discovery (now outdated)

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
 import { Mic, Activity } from 'lucide-react';
@@ -20,7 +20,6 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const tracks = useStore(s => s.tracks);
   const selectedTrackId = useStore(s => s.selectedTrackId);
   const isRecording = useStore(s => s.isRecording);
-  const metronomeTrackVisible = useStore(s => s.metronomeTrackVisible);
   
   const envelopeLocked = useStore(s => s.envelopeLocked);
   const sidebarWidth = useStore(s => s.sidebarWidth);
@@ -52,8 +51,13 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
     handleTrackPointerLeave, 
     handleRecord, 
     handleMutePointerDown, 
-    handleMutePointerUp 
+    handleMutePointerUp,
+    handleUndoRecording,
+    handleRedoRecording,
+    removedPhraseRef,
   } = handlers;
+
+  const recordLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const isCompact = toolbarProposal === 3;
   const showLabels = toolbarVisibleLabels && !isCompact;
@@ -151,7 +155,31 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                       </button>
                       {!isMetronome && (
                         <button 
-                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            recordLongPressTimer.current = setTimeout(() => {
+                              recordLongPressTimer.current = null;
+                              if (removedPhraseRef?.current) {
+                                handleRedoRecording();
+                              } else {
+                                handleUndoRecording();
+                              }
+                            }, 2000);
+                          }}
+                          onPointerUp={(e) => {
+                            e.stopPropagation();
+                            if (recordLongPressTimer.current) {
+                              clearTimeout(recordLongPressTimer.current);
+                              recordLongPressTimer.current = null;
+                              handleRecord(track.id);
+                            }
+                          }}
+                          onPointerLeave={() => {
+                            if (recordLongPressTimer.current) {
+                              clearTimeout(recordLongPressTimer.current);
+                              recordLongPressTimer.current = null;
+                            }
+                          }}
                           className={cn(
                             "rounded flex items-center justify-center transition-colors flex-1",
                             getToolbarBtnClass(true),
@@ -186,7 +214,31 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                       </button>
                       {!isMetronome && (
                         <button 
-                          onClick={(e: React.MouseEvent) => { e.stopPropagation(); handleRecord(track.id); }}
+                          onPointerDown={(e) => {
+                            e.stopPropagation();
+                            recordLongPressTimer.current = setTimeout(() => {
+                              recordLongPressTimer.current = null;
+                              if (removedPhraseRef?.current) {
+                                handleRedoRecording();
+                              } else {
+                                handleUndoRecording();
+                              }
+                            }, 2000);
+                          }}
+                          onPointerUp={(e) => {
+                            e.stopPropagation();
+                            if (recordLongPressTimer.current) {
+                              clearTimeout(recordLongPressTimer.current);
+                              recordLongPressTimer.current = null;
+                              handleRecord(track.id);
+                            }
+                          }}
+                          onPointerLeave={() => {
+                            if (recordLongPressTimer.current) {
+                              clearTimeout(recordLongPressTimer.current);
+                              recordLongPressTimer.current = null;
+                            }
+                          }}
                           className={cn(
                             "rounded flex items-center justify-center transition-colors",
                             isCompact ? "w-8 h-8" : "flex-1",

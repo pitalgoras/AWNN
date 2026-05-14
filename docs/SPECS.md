@@ -46,7 +46,7 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 10. **Intelligent Clip Selection:** Double-click on a track selects the clip currently under the playhead.
 11. **Envelope Follows Clip:** Moving a clip on the timeline automatically shifts its associated envelope nodes.
 12. **Drag-to-Delete Nodes:** Envelope nodes can be deleted by dragging them far outside the track boundaries.
-13. **Metronome Track:** A dedicated, thinner track (40px height) that provides a click track. **There is no "manual" metronome; it is always a pre-rendered audio track.** This track serves as the single source of truth for project synchronization. It features a specialized settings modal for BPM, Time Signature, and Volume. The `BpmInput` supports typing, scrubbing, and arrow keys. Metronome regeneration is debounced for performance.
+13. **Metronome (AudioWorklet):** Live-scheduled click generator via dedicated `metronome.worklet.js`. No pre-rendered WAV, no WaveSurfer track. `ClickRenderer` on main thread renders sine-click `Float32Array` samples with baked gain. Worklet is a pure sample-placement engine: frame counter, beat detection via modulo, typed array copy into output. Zero drift (±1 sample at 44.1kHz). BPM changes apply at beat boundary, signature at bar boundary. Instant tempo changes, ~2KB memory. Three Settings toggles: Metronome (master), Bar Lines, Track visibility. Metronome track removed from multitrack and sidebar; mute handled via header button.
 14. **Cues System:** A system for adding and managing cues (markers) on the timeline. Cues can be added from the transport bar or the cues panel. The cues panel can be toggled on/off and allows for deleting cues. The transport bar displays the current position in both time and `Bar.Beat` format.
 15. **Responsive & Mobile-Friendly Layout:** 
     * The track sidebar occupies a proportional **25% width** of the screen.
@@ -57,6 +57,8 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 17. **Centralized Track Management:** Adding, removing, reordering, and renaming tracks is handled within the Project Settings modal to declutter the main interface. Includes a track color picker with default vocal part assignments.
 18. **Lyrics Builder Mode:** A dedicated environment to import, edit, sync, and voice lyrics.
     * Uses a string-based tagging system (e.g., `[S]`, `[ALL]`, `[T:14.5]`) seamlessly woven into `lyricsText`, avoiding desync issues with complex internal segment maps.
+19. **Record Button Long-Press (Undo/Redo):** 2-second hold on Record button removes the last recorded clip (undo) or restores it (redo). A floating overlay at the playhead position displays "Clip removed. Long-press Record to restore." and auto-dismisses after 4 seconds. Long-press during recording cancels the current recording and re-records from the same timeline position.
+20. **Play/Pause During Recording:** Pressing Play/Pause while recording stops recording AND pauses playback. The Record button in the toolbar stops recording without pausing.
     * Offers side-by-side VAD (Voice Activity Detection) visualizations (`VerticalHeatmap.tsx`) generated from track audio peaks to assist mapping.
      * "Scaled View" intelligently spaces lyric lines proportional to their tagged playback times, forming a visual timeline.
      * **Voicing Label Algorithm:** Tags are only inserted when the voicing changes. The logic for applying a voicing label `X` to a word at position `startChar` is:

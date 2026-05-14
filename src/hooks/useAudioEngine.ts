@@ -3,7 +3,7 @@ import WaveSurfer from 'wavesurfer.js';
 import MultiTrack, { type TrackOptions } from '../lib/multitrack/multitrack';
 import WebAudioPlayer from '../lib/multitrack/webaudio';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
-import { useStore } from '../store/useStore';
+import { useStore, type Phrase } from '../store/useStore';
 import { calculatePeaksAsync } from '../audio/processing/audioUtils';
 import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
 import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
@@ -52,6 +52,7 @@ export function useAudioEngine() {
   const wasPlayingRef = useRef(false);
   // Track last recorded phrase for undo + re-record
   const lastRecordingRef = useRef<{ trackId: string; phraseId: string; startPosition: number } | null>(null);
+  const removedPhraseRef = useRef<{ trackId: string; phrase: Phrase; startPosition: number } | null>(null);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
 const { 
@@ -1104,21 +1105,41 @@ const {
     const { trackId, phraseId, startPosition } = lastRecordingRef.current;
     lastRecordingRef.current = null;
 
-    // Cancel current recording (discards data, no onAddPhrase)
     if (useStore.getState().isRecording && recordingEngineRef.current) {
       recordingEngineRef.current.cancelRecording();
     }
 
-    // Remove the last completed phrase
     useStore.getState().removePhrase(trackId, phraseId);
 
-    // Let cancel flush before starting fresh
     await new Promise(r => setTimeout(r, 50));
-
-    // Seek to the same position the last recording started at
     seekTo(startPosition, true);
     await startRecording(trackId);
   }, [startRecording, seekTo]);
+
+  const undoLastRecording = useCallback(() => {
+    if (!lastRecordingRef.current) return;
+    const { trackId, phraseId, startPosition } = lastRecordingRef.current;
+    seekTo(startPosition, true);
+    setTimeout(() => {
+      const track = useStore.getState().tracks.find(t => t.id === trackId);
+      const phrase = track?.phrases.find(p => p.id === phraseId);
+      if (!phrase) return;
+      removedPhraseRef.current = { trackId, phrase, startPosition };
+      lastRecordingRef.current = null;
+      useStore.getState().removePhrase(trackId, phraseId);
+    }, 200);
+  }, [seekTo]);
+
+  const redoLastRecording = useCallback(() => {
+    if (!removedPhraseRef.current) return;
+    const { trackId, phrase, startPosition } = removedPhraseRef.current;
+    removedPhraseRef.current = null;
+    useStore.getState().addPhrase(trackId, phrase as any);
+  }, []);
+
+  const clearUndo = useCallback(() => {
+    removedPhraseRef.current = null;
+  }, []);
 
   useEffect(() => {
     useStore.getState().setSeekTo(seekTo);
@@ -1132,6 +1153,10 @@ const {
     startRecording,
     stopRecording,
     undoAndReRecord,
+    undoLastRecording,
+    redoLastRecording,
+    clearUndo,
     lastRecordingRef,
+    removedPhraseRef,
   };
 }

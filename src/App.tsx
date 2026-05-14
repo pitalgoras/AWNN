@@ -1,6 +1,6 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, RotateCcw } from 'lucide-react';
+import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -106,8 +106,10 @@ export default function App() {
     seekTo, 
     startRecording, 
     stopRecording,
-    undoAndReRecord,
-    lastRecordingRef,
+    undoLastRecording,
+    redoLastRecording,
+    clearUndo,
+    removedPhraseRef,
   } = useAudioEngine();
 
   // secondsPerBar is not used in App.tsx, so removed.
@@ -203,6 +205,19 @@ export default function App() {
 
   // Fullscreen toggle
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [undoOverlayVisible, setUndoOverlayVisible] = useState(false);
+  const undoOverlayTimerRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  // Wrap undoLastRecording to show overlay and auto-dismiss
+  const handleUndoRecording = useCallback(() => {
+    undoLastRecording();
+    setUndoOverlayVisible(true);
+    clearTimeout(undoOverlayTimerRef.current);
+    undoOverlayTimerRef.current = setTimeout(() => {
+      setUndoOverlayVisible(false);
+      clearUndo();
+    }, 4000);
+  }, [undoLastRecording, clearUndo]);
   const toggleFullscreen = () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen().catch(() => {});
@@ -213,7 +228,10 @@ export default function App() {
   useEffect(() => {
     const handler = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener('fullscreenchange', handler);
-    return () => document.removeEventListener('fullscreenchange', handler);
+    return () => {
+      document.removeEventListener('fullscreenchange', handler);
+      clearTimeout(undoOverlayTimerRef.current);
+    };
   }, []);
 
   // Request fullscreen on first user interaction (tap/click anywhere)
@@ -508,6 +526,11 @@ export default function App() {
       return;
     }
     
+    // Clear undo state when starting a new recording
+    clearUndo();
+    setUndoOverlayVisible(false);
+    clearTimeout(undoOverlayTimerRef.current);
+    
     perfLogger.log(7, trackId);
     startRecording(trackId);
   };
@@ -654,11 +677,6 @@ export default function App() {
 
               {/* Center Area: Transport controls (spans 2 rows, bigger) */}
               <div className="flex-1 flex items-center justify-center gap-2 px-4">
-                {lastRecordingRef.current && (
-                  <button onClick={undoAndReRecord} className={cn(getBtnClass(true), "text-amber-400 hover:text-amber-300 rounded-full")} title="Undo & Re-record">
-                    <RotateCcw size={headerIconSize} />
-                  </button>
-                )}
                 <button onClick={() => seekTo(0)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Rewind size={headerIconSize} /></button>
                 <button onClick={handleStop} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Square size={headerIconSize} fill="currentColor" /></button>
                 <button onClick={handlePlayPause} className={cn("w-12 h-12 rounded-full flex items-center justify-center", isPlaying ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-100 border border-zinc-700")}>
@@ -778,11 +796,6 @@ export default function App() {
               </div>
               
               <div className="flex items-center gap-1 sm:gap-3">
-                {lastRecordingRef.current && (
-                  <button onClick={undoAndReRecord} className={cn(getBtnClass(true), "text-amber-400 hover:text-amber-300 hover:bg-zinc-800 rounded-full")} title="Undo & Re-record">
-                    <RotateCcw size={headerIconSize} />
-                  </button>
-                )}
                 <button onClick={() => seekTo(0)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full")}><Rewind size={headerIconSize} /></button>
                 <button onClick={handleStop} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full")}><Square size={headerIconSize} fill="currentColor" /></button>
                 <button 
@@ -895,7 +908,10 @@ export default function App() {
                 handleTrackPointerLeave,
                 handleRecord,
                 handleMutePointerDown,
-                handleMutePointerUp
+                handleMutePointerUp,
+                handleUndoRecording,
+                handleRedoRecording: redoLastRecording,
+                removedPhraseRef,
               }} />
             
             {/* Center - Waveforms */}
@@ -925,6 +941,22 @@ export default function App() {
               {isReady && <TimelineGrid />}
               {isReady && <SyncTool />}
               {isReady && <EnvelopeEditor />}
+
+              {/* Undo overlay */}
+              {undoOverlayVisible && removedPhraseRef.current && (() => {
+                const container = containerRef.current;
+                const scrollEl = container?.querySelector('.multitrack-scroll-container');
+                const scrollLeft = scrollEl?.scrollLeft || 0;
+                const x = removedPhraseRef.current.startPosition * zoom - scrollLeft;
+                return (
+                  <div
+                    className="absolute z-50 bg-zinc-900/90 border border-zinc-700 rounded-lg px-4 py-2 text-xs text-zinc-300 shadow-2xl pointer-events-none"
+                    style={{ left: `${x}px`, top: '50%', transform: 'translate(0, -50%)' }}
+                  >
+                    Clip removed. Long-press Record to restore.
+                  </div>
+                );
+              })()}
             </section>
           </div>
         </div>

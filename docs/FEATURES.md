@@ -69,14 +69,20 @@ This document tracks the features discussed, planned, implemented, and discarded
   - Visual hold lines (dashed) before the first node and after the last node to show effective volume levels.
 - [x] **Node Value Normalization:**
   - Ensure envelope nodes represent a percentage of the track's base volume slider.
-- [x] **Metronome Revamp (Click Track System):**
-  - **No manual metronome.** Always a pre-rendered audio track (single source of truth for sync).
-  - **Dedicated Metronome Settings:** A specialized modal for BPM, Time Signature, and Volume, separate from standard track settings.
-  - **BpmInput Component:** High-precision input supporting typing, vertical scrubbing (drag), and arrow keys.
-  - **State Synchronization:** Uses a `key` prop strategy for reactive UI updates without cascading renders.
-  - **Unified Pre-roll:** 1-bar pre-roll and hard-trimming applied to ALL recordings (start or punch-in).
-  - **Debounced Regeneration:** Metronome audio is only regenerated after the user finishes adjusting tempo/signature.
-  - **Grid Virtualization:** Timeline grid uses virtualization to maintain performance at high zoom levels.
+- [x] **Metronome Revamp (AudioWorklet):**
+  - **Pre-rendered WAV replaced** with live AudioWorklet click scheduler.
+  - Zero drift (±1 sample at 44.1kHz), instant BPM changes, negligible memory (~2KB).
+  - **ClickRenderer** renders sine-click `Float32Array` on main thread with baked gain.
+  - **metronome.worklet.js** — pure sample-placement engine. Tempo changes apply at next beat boundary, signature at next bar.
+  - Metronome track removed from multitrack; sidebar shows only real audio tracks.
+  - Bar/beat lines via `barLinesEnabled` TimelineGrid toggle.
+  - Volume baked into samples at render time (no `GainNode`).
+  - Three Settings toggles: Metronome (master), Bar Lines, Track visibility.
+- [x] **Record Button Long-Press (Undo/Redo):**
+  - 2-second hold on Record button triggers undo (remove last clip) or redo (restore).
+  - Floating overlay at playhead position: "Clip removed. Long-press Record to restore."
+  - Auto-dismisses after 4 seconds.
+  - Long-press during recording = cancel + re-record from same position.
 - [x] **Cues System:**
   - Add/Delete cues.
   - Cues panel toggle.
