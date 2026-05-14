@@ -131,7 +131,12 @@ const {
         onAddPhrase: (trackId, phrase) => {
           console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, anchoredFrame: phrase.anchoredFrame });
           useStore.getState().addPhrase(trackId, phrase);
-          lastRecordingRef.current = { trackId, phraseId: phrase.id };
+          // Read generated ID from store after addPhrase creates it
+          const track = useStore.getState().tracks.find(t => t.id === trackId);
+          const lastPhrase = track?.phrases[track.phrases.length - 1];
+          if (lastPhrase) {
+            lastRecordingRef.current = { trackId, phraseId: lastPhrase.id };
+          }
         },
         onSeekTo: (time, allowNegative) => {
           console.log('callback: seekTo', { time, allowNegative });
