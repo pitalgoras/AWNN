@@ -372,32 +372,46 @@ a9a6976 fix: Read currentTime from store in startRecording() to avoid stale conf
 - RESET sent `nextBeatFrame = currentFrame + framesPerBeat`, delaying first click by 1 beat. Fixed: `nextBeatFrame = currentFrame`.
 - Click samples truncated to 128 samples per process() buffer. Fixed: `currentClick/currentClickOffset/currentClickRemaining` state persists across process() calls.
 
-## 26. Undo / Re-record Long-Press Gesture (2026-05-14)
+## 26. Undo Via Record Button Long-Press (2026-05-14)
 
-**Feature:** Record button in TrackToolbar supports 2-second long-press for undo/redo.
+**Feature:** Record button in TrackToolbar supports 2-second long-press for undo.
 
 **Behavior:**
 | Interaction | State | Result |
 |-------------|-------|--------|
 | Tap Record | Idle | Start recording |
-| Tap Record | Recording | Stop recording, keep playing |
-| Long-press (2s) | Idle | Jump playhead to clip start, 200ms delay, remove clip, show floating overlay |
-| Long-press (2s) | Overlay visible | Restore removed clip |
-| Tap Record | Overlay visible | Start new recording, overlay dismissed |
-| Long-press (2s) | Recording | Cancel current recording, remove previous clip, re-record from same position |
+| Tap Record | Recording | Stop recording + **pause playback** |
+| Long-press Record (2s) | Idle | Undo last clip: jump playhead to clip start, 200ms delay, remove clip |
+| Long-press Record (2s) | Recording | No-op (tap already stops) |
 
-**Overlay:** Floats at the playhead X position (clip start), centered vertically on track area. Text: "Clip removed. Long-press Record to restore." Auto-dismisses after 4 seconds.
+**Undo state tracking:** `lastRecordingRef` stores `{ trackId, phraseId, startPosition }` of the last completed recording.
 
-**Undo/Redo state tracking:**
-- `lastRecordingRef` — stores `{ trackId, phraseId, startPosition }` of the last completed recording
-- `removedPhraseRef` — stores `{ trackId, phrase, startPosition }` of the removed clip for redo
-- `clearUndo()` called on new recording start or overlay timeout
+**Removed:** Redo, overlay, `removedPhraseRef`, `clearUndo` — all discarded as unnecessary complexity.
 
 ## 27. Play/Pause Behavior During Recording (2026-05-14)
 
-**Change:** Pressing Play/Pause during recording now stops recording AND pauses playback. Previously it only stopped recording while playback continued.
+**Change:** Pressing Play/Pause during recording stops recording AND pauses playback. The Record button in the toolbar also stops recording AND pauses playback.
 
-**Rationale:** Matches user expectation that the transport Play/Pause button controls playback state. The Record button in the toolbar still only stops recording without pausing.
+**Rationale:** Both buttons now consistently pause when stopping a recording. The user expects the transport to freeze when dismissing a recording.
+
+## 28. Mute Button Becomes Cancel During Recording (2026-05-14)
+
+**Change:** The mute button in TrackToolbar changes to an amber `RotateCcw` cancel icon when recording on the active track (`isRecording && selectedTrackId === track.id`).
+
+**Behavior:**
+| Interaction | State | Result |
+|-------------|-------|--------|
+| Tap Mute | Idle | Toggle mute (unchanged) |
+| Tap Mute (RotateCcw) | Recording | Cancel recording, **pause playback**, seek playhead to where recording started |
+| Long-press Mute | Idle | Toggle solo (unchanged) |
+| Long-press Mute | Recording | No-op (immediate action, no hold timer starts) |
+
+**Also:** All seek paths are blocked during recording:
+- `handleContainerClick` — already had guard
+- `handleDoubleClick` — added `if (state.isRecording) return;`
+- `PlayheadSlider` — `onChange` returns early if `isRecording`
+
+No accidental playhead movement during recording.
 
 **Commits (chronological):**
 - `6ca8e8d` — fix: Firefox raw audio — use echoCancellation: false alone (incorrect)

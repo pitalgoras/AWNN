@@ -78,11 +78,12 @@ This document tracks the features discussed, planned, implemented, and discarded
   - Bar/beat lines via `barLinesEnabled` TimelineGrid toggle.
   - Volume baked into samples at render time (no `GainNode`).
   - Three Settings toggles: Metronome (master), Bar Lines, Track visibility.
-- [x] **Record Button Long-Press (Undo/Redo):**
-  - 2-second hold on Record button triggers undo (remove last clip) or redo (restore).
-  - Floating overlay at playhead position: "Clip removed. Long-press Record to restore."
-  - Auto-dismisses after 4 seconds.
-  - Long-press during recording = cancel + re-record from same position.
+- [x] **Record Button Long-Press (Undo):**
+  - 2-second hold on Record button removes last clip (undo). Playhead jumps to clip start, 200ms delay, clip removed.
+  - Mute button during recording shows amber RotateCcw icon — tap cancels recording, pauses, seeks to recording start.
+  - Play/Pause and Record buttons both stop recording AND pause playback.
+  - All seek paths (slider, double-click, container click) blocked during recording.
+  - No redo, no floating overlay.
 - [x] **Cues System:**
   - Add/Delete cues.
   - Cues panel toggle.
@@ -98,12 +99,12 @@ This document tracks the features discussed, planned, implemented, and discarded
   - Speed changes must apply seamlessly during active playback.
 - [ ] **Bug Fixes (Pending):**
   - Playhead clock update continuously during playback/recording/scrolling.
-  - Visual feedback & transport behavior at end of content (don't stop playback, keep recording visually).
   - Allow dragging selected clips into negative time and beyond total project length.
   - Narrower clip context menu, fine movement buttons in a sub-menu.
   - Envelope nodes hard-synced to parent clip during zoom/scroll.
   - Clip boundary detection during drag.
   - Save functionality.
+  - **headLength changes in Advanced Settings don't take effect until page reload** — `headLength`, `startupDelayMs`, `bufferSafetyMs` missing from engine init effect dep array.
 
 ## Discarded
 - [x] **Playback-Level Offset for Latency:** Discarded because it causes the visual waveform to be out of sync with the audio playback, leading to a confusing UX.

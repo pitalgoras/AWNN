@@ -57,8 +57,10 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 17. **Centralized Track Management:** Adding, removing, reordering, and renaming tracks is handled within the Project Settings modal to declutter the main interface. Includes a track color picker with default vocal part assignments.
 18. **Lyrics Builder Mode:** A dedicated environment to import, edit, sync, and voice lyrics.
     * Uses a string-based tagging system (e.g., `[S]`, `[ALL]`, `[T:14.5]`) seamlessly woven into `lyricsText`, avoiding desync issues with complex internal segment maps.
-19. **Record Button Long-Press (Undo/Redo):** 2-second hold on Record button removes the last recorded clip (undo) or restores it (redo). A floating overlay at the playhead position displays "Clip removed. Long-press Record to restore." and auto-dismisses after 4 seconds. Long-press during recording cancels the current recording and re-records from the same timeline position.
-20. **Play/Pause During Recording:** Pressing Play/Pause while recording stops recording AND pauses playback. The Record button in the toolbar stops recording without pausing.
+19. **Record Button Long-Press (Undo):** 2-second hold on Record button removes the last recorded clip. Playhead jumps to clip start, 200ms delay, clip removed. No redo, no floating overlay.
+20. **Play/Pause During Recording:** Both Play/Pause and Record buttons stop recording AND pause playback. Consistent behavior.
+21. **Mute Button Becomes Cancel During Recording:** Shows amber RotateCcw icon on active recording track. Tap cancels recording, pauses playback, seeks to recording start. Long-press solo disabled.
+22. **Seek Paths Blocked During Recording:** PlayheadSlider, double-click, container click all return early when isRecording is true.
     * Offers side-by-side VAD (Voice Activity Detection) visualizations (`VerticalHeatmap.tsx`) generated from track audio peaks to assist mapping.
      * "Scaled View" intelligently spaces lyric lines proportional to their tagged playback times, forming a visual timeline.
      * **Voicing Label Algorithm:** Tags are only inserted when the voicing changes. The logic for applying a voicing label `X` to a word at position `startChar` is:
