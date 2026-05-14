@@ -1,7 +1,7 @@
 import React, { useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
-import { Mic, Activity } from 'lucide-react';
+import { Mic, Activity, RotateCcw } from 'lucide-react';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 import { getContrastColor } from '../lib/utils';
@@ -135,7 +135,20 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                 {useSingleRow ? (
                   /* Same row as label button */
                   <div className="flex gap-1 flex-1">
-                     <button 
+                    {isRecording && selectedTrackId === track.id ? (
+                      <button
+                        onPointerDown={(e) => handleMutePointerDown(e, track.id)}
+                        className={cn(
+                          "rounded flex items-center justify-center",
+                          getToolbarBtnClass(true),
+                          "bg-amber-500/20 text-amber-400 border border-amber-500/30 flex-1"
+                        )}
+                        title="Cancel recording"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    ) : (
+                      <button 
                         onPointerDown={(e) => handleMutePointerDown(e, track.id)}
                         onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
                         className={cn(
@@ -151,6 +164,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                       >
                         {track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M')}
                       </button>
+                    )}
                       {!isMetronome && (
                         <button 
                           onPointerDown={(e) => {
@@ -189,7 +203,21 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                 ) : (
                   /* Two rows: label button (row 1), mute/record (row 2) */
                   <div className="flex gap-1 p-1">
-                     <button 
+                    {isRecording && selectedTrackId === track.id ? (
+                      <button
+                        onPointerDown={(e) => handleMutePointerDown(e, track.id)}
+                        className={cn(
+                          "rounded flex items-center justify-center",
+                          isCompact ? "w-8 h-8" : "flex-1",
+                          getToolbarBtnClass(true),
+                          "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                        )}
+                        title="Cancel recording"
+                      >
+                        <RotateCcw size={14} />
+                      </button>
+                    ) : (
+                      <button 
                         onPointerDown={(e) => handleMutePointerDown(e, track.id)}
                         onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
                         className={cn(
@@ -206,6 +234,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                       >
                         {isMetronome ? <Activity className="w-4 h-4" /> : (track.isSolo ? getLabel('Solo', 'S') : getLabel('Mute', 'M'))}
                       </button>
+                    )}
                       {!isMetronome && (
                         <button 
                           onPointerDown={(e) => {
