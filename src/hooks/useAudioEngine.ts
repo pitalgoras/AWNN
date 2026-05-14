@@ -50,8 +50,8 @@ export function useAudioEngine() {
   const metronomeEngineRef = useRef<MetronomeEngine | null>(null);
   const recordingEngineRef = useRef<RecordingEngine | null>(null);
   const wasPlayingRef = useRef(false);
-  // Track last recorded phrase for undo functionality
-  const lastRecordingRef = useRef<{ trackId: string; phraseId: string } | null>(null);
+  // Track last recorded phrase for undo + re-record
+  const lastRecordingRef = useRef<{ trackId: string; phraseId: string; startPosition: number } | null>(null);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
 const { 
@@ -135,7 +135,7 @@ const {
           const track = useStore.getState().tracks.find(t => t.id === trackId);
           const lastPhrase = track?.phrases[track.phrases.length - 1];
           if (lastPhrase) {
-            lastRecordingRef.current = { trackId, phraseId: lastPhrase.id };
+            lastRecordingRef.current = { trackId, phraseId: lastPhrase.id, startPosition: lastPhrase.startPosition };
           }
         },
         onSeekTo: (time, allowNegative) => {
@@ -1101,11 +1101,24 @@ const {
 
   const undoAndReRecord = useCallback(async () => {
     if (!lastRecordingRef.current) return;
-    const { trackId, phraseId } = lastRecordingRef.current;
+    const { trackId, phraseId, startPosition } = lastRecordingRef.current;
     lastRecordingRef.current = null;
+
+    // Cancel current recording (discards data, no onAddPhrase)
+    if (useStore.getState().isRecording && recordingEngineRef.current) {
+      recordingEngineRef.current.cancelRecording();
+    }
+
+    // Remove the last completed phrase
     useStore.getState().removePhrase(trackId, phraseId);
+
+    // Let cancel flush before starting fresh
+    await new Promise(r => setTimeout(r, 50));
+
+    // Seek to the same position the last recording started at
+    seekTo(startPosition, true);
     await startRecording(trackId);
-  }, [startRecording]);
+  }, [startRecording, seekTo]);
 
   useEffect(() => {
     useStore.getState().setSeekTo(seekTo);
