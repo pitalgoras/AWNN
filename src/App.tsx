@@ -62,6 +62,9 @@ export default function App() {
   
   const trackHeight = useStore(s => s.trackHeight);
   const metronomeHeight = useStore(s => s.metronomeHeight);
+  const metronomeEnabled = useStore(s => s.metronomeEnabled);
+  const barLinesEnabled = useStore(s => s.barLinesEnabled);
+  const metronomeTrackVisible = useStore(s => s.metronomeTrackVisible);
   const sidebarWidth = useStore(s => s.sidebarWidth);
   const setResponsiveLayout = useStore(s => s.setResponsiveLayout);
   const toolbarProposal = useStore(s => s.toolbarProposal);
@@ -1198,6 +1201,50 @@ export default function App() {
                   >
                     <Settings size={14} />
                     Open Advanced Panel
+                  </button>
+                </div>
+              </div>
+
+              {/* Metronome Section */}
+              <div>
+                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
+                  Metronome
+                </label>
+                <div className="flex flex-col gap-1.5">
+                  <button
+                    onClick={() => useStore.getState().setMetronomeEnabled(!metronomeEnabled)}
+                    className={cn(
+                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+                      metronomeEnabled
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+                    )}
+                  >
+                    <Volume2 size={14} />
+                    {metronomeEnabled ? 'Enabled' : 'Disabled'}
+                  </button>
+                  <button
+                    onClick={() => useStore.getState().setBarLinesEnabled(!barLinesEnabled)}
+                    className={cn(
+                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+                      barLinesEnabled
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+                    )}
+                  >
+                    Bar Lines
+                  </button>
+                  <button
+                    onClick={() => useStore.getState().setMetronomeTrackVisible(!metronomeTrackVisible)}
+                    className={cn(
+                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
+                      metronomeTrackVisible
+                        ? "bg-emerald-600 text-white shadow-sm"
+                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+                    )}
+                  >
+                    <Music size={14} />
+                    Track
                   </button>
                 </div>
               </div>

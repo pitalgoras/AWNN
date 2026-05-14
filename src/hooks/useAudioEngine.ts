@@ -78,7 +78,9 @@ const {
   isReady,
   setIsReady,
   trackHeight,
-  metronomeHeight
+  metronomeHeight,
+  metronomeEnabled,
+  metronomeTrackVisible,
 } = useStore();
 
   const beatsPerSecond = (bpm || 120) / 60;
@@ -208,6 +210,16 @@ const {
       recordingEngineRef.current.updateConfig({ isPlaying });
     }
   }, [isPlaying]);
+
+  // Stop playback when metronome master is disabled
+  useEffect(() => {
+    if (!metronomeEnabled && isPlaying) {
+      setIsPlaying(false);
+      if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
+        multitrackRef.current.pause();
+      }
+    }
+  }, [metronomeEnabled, isPlaying, setIsPlaying]);
 
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());
@@ -370,6 +382,7 @@ const {
 
         (tracks || []).forEach(t => {
           const isMetronome = t.id === 'metronome';
+          if (isMetronome && !metronomeTrackVisible) return;
           if (t.phrases.length === 0) {
             multitrackItems.push({
               id: t.id,
@@ -490,7 +503,7 @@ const {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackStructureHash, waveformQuality, bpm, setDuration, timeSignature?.[0], timeSignature?.[1], secondsPerBar]);
+  }, [trackStructureHash, waveformQuality, bpm, setDuration, timeSignature?.[0], timeSignature?.[1], secondsPerBar, metronomeTrackVisible, metronomeHeight]);
 
   useEffect(() => {
     if (!multitrack) return;
@@ -987,7 +1000,7 @@ const {
 
   // Generate click track buffer when BPM, Time Signature, or duration changes
   useEffect(() => {
-    if (!audioContextRef.current || !metronomeEngineRef.current || !isReady) return;
+    if (!audioContextRef.current || !metronomeEngineRef.current || !isReady || !metronomeEnabled) return;
     
     const beatsPerSecond = (debouncedBpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;

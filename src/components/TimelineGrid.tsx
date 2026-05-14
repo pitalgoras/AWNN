@@ -3,7 +3,7 @@ import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
 
 export const TimelineGrid: React.FC = () => {
-  const { bpm, timeSignature, zoom, duration } = useStore();
+  const { bpm, timeSignature, zoom, duration, barLinesEnabled } = useStore();
   const [scrollLeft, setScrollLeft] = React.useState(0);
 
   React.useEffect(() => {
@@ -59,6 +59,8 @@ export const TimelineGrid: React.FC = () => {
   const endBar = Math.min(totalBars, Math.ceil((scrollLeft + viewportWidth) / pixelsPerBar) + 1);
   
   const visibleBars = Array.from({ length: endBar - startBar }, (_, i) => startBar + i);
+
+  if (!barLinesEnabled) return null;
 
   return (
     <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-30 overflow-hidden">
