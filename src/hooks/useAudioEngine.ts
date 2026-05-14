@@ -219,7 +219,7 @@ const {
         multitrackRef.current.pause();
       }
     }
-  }, [metronomeEnabled, isPlaying, setIsPlaying]);
+  }, [metronomeEnabled, setIsPlaying]);
 
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());
@@ -240,6 +240,7 @@ const {
     let totalHeight = 0;
     currentTracks.forEach(t => {
       const isMetronome = t.id === 'metronome';
+      if (isMetronome && !metronomeTrackVisible) return;
       const isExpanded = t.id === selectedTrackId && !envelopeLocked && !isMetronome;
       totalHeight += isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
     });
@@ -610,6 +611,9 @@ const {
           let itemIndex = 0;
           
           currentTracks.forEach(track => {
+            // Skip metronome track when not in wavesurfers (visibility off)
+            if (track.id === 'metronome' && !useStore.getState().metronomeTrackVisible) return;
+
             let trackBaseVolume = track.volume;
             if (track.isMuted) trackBaseVolume = 0;
             if (anySolo && !track.isSolo) trackBaseVolume = 0;
@@ -714,6 +718,7 @@ const {
     
     (tracks || []).forEach(track => {
       const isMetronome = track.id === 'metronome';
+      if (isMetronome && !metronomeTrackVisible) return;
       const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
       const h = isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
       
