@@ -95,6 +95,7 @@ interface AppState {
   sampleRate: number; // AudioContext sample rate for anchor calculations
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
+  minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
   preRollMode: 'always' | 'recording' | 'none';
   waveformQuality: 'low' | 'medium' | 'high';
   isReady: boolean;
@@ -143,6 +144,7 @@ interface AppState {
   setHeadLength: (length: number) => void;
   setStartupDelayMs: (ms: number) => void;
   setBufferSafetyMs: (ms: number) => void;
+  setMinProjectDurationMs: (ms: number) => void;
   setPreRollMode: (mode: 'always' | 'recording' | 'none') => void;
   setWaveformQuality: (quality: 'low' | 'medium' | 'high') => void;
   setIsReady: (isReady: boolean) => void;
@@ -184,6 +186,7 @@ const defaultSettings = {
   headLength: 1.0, // Default 1 second rolling buffer head
   startupDelayMs: 150, // Default 150ms estimated startup latency (dangerous setting)
   bufferSafetyMs: 100, // Default 100ms buffer safety margin (dangerous setting)
+  minProjectDurationMs: 600000, // Default 600s minimum project duration (dangerous setting)
   preRollMode: 'always' as const,
   waveformQuality: 'low' as const,
   isReady: false,
@@ -238,6 +241,7 @@ export const useStore = create<AppState>()(
         setHeadLength: (length) => set({ headLength: Math.max(0, Math.min(1, length)) }),
         setStartupDelayMs: (ms) => set({ startupDelayMs: Math.max(0, Math.min(1000, ms)) }),
         setBufferSafetyMs: (ms) => set({ bufferSafetyMs: Math.max(0, Math.min(500, ms)) }),
+        setMinProjectDurationMs: (ms) => set({ minProjectDurationMs: Math.max(10000, Math.min(3600000, ms)) }),
         setSampleRate: (rate) => set({ sampleRate: rate }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),

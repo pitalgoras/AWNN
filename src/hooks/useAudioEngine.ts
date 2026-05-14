@@ -582,7 +582,7 @@ const {
           }
           
           // Stop playback if we reached the end of the project duration
-          const effectiveDuration = Math.max(60, state.duration);
+          const effectiveDuration = Math.max(useStore.getState().minProjectDurationMs / 1000, state.duration);
           if (state.isPlaying && userTime >= effectiveDuration && effectiveDuration > 0 && !state.isRecording) {
             state.setIsPlaying(false);
             if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
@@ -993,7 +993,7 @@ const {
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (debouncedTimeSignature?.[0] || 4);
     
-    const targetDuration = Math.max(600, duration + 300);
+    const targetDuration = Math.max(useStore.getState().minProjectDurationMs / 1000, duration + 300);
     const targetBars = Math.ceil(targetDuration / secondsPerBar);
     const finalTargetDuration = targetBars * secondsPerBar;
     
