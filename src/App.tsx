@@ -1152,15 +1152,6 @@ export default function App() {
                 </div>
               </div>
             </div>
-
-            <div className="p-4 bg-zinc-900/80 border-t border-zinc-800 shrink-0">
-              <button 
-                onClick={() => setShowAdvancedSettings(false)}
-                className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded font-bold text-xs uppercase tracking-widest transition-all"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1316,15 +1307,6 @@ export default function App() {
                 </div>
               </div>
             </div>
-
-            <div className="p-4 bg-zinc-900/80 border-t border-zinc-800 shrink-0">
-              <button 
-                onClick={() => setShowSettings(false)}
-                className="w-full py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded font-bold text-xs uppercase tracking-widest transition-all"
-              >
-                Close
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1414,15 +1396,6 @@ export default function App() {
                 ))}
               </div>
             </div>
-
-            <div className="p-6 bg-zinc-900/80 border-t border-zinc-800 shrink-0">
-              <button 
-                onClick={() => setShowTracksModal(false)}
-                className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
-              >
-                Back to Settings
-              </button>
-            </div>
           </div>
         </div>
       )}
@@ -1483,53 +1456,34 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Volume Section */}
+              {/* BPM Slider */}
               <div>
-                <div className="flex justify-between items-center mb-4">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
-                    Click Volume & Mute
-                  </label>
-                  <div className="flex items-center gap-4">
-                    <button 
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const metronome = tracks.find(t => t.id === 'metronome');
-                        if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
-                      }}
-                      className={cn(
-                        "p-1.5 rounded transition-colors",
-                        tracks.find(t => t.id === 'metronome')?.isMuted 
-                          ? "text-zinc-600 bg-zinc-800" 
-                          : "text-emerald-500 bg-emerald-500/10"
-                      )}
-                    >
-                      {tracks.find(t => t.id === 'metronome')?.isMuted ? <Volume2 size={14} className="opacity-50" /> : <Volume2 size={14} />}
-                    </button>
-                    <span className="font-mono text-[10px] text-zinc-400">
-                      {Math.round((tracks.find(t => t.id === 'metronome')?.volume || 0.5) * 100)}%
-                    </span>
+                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-4">
+                  Tempo Slider
+                </label>
+                <div className="py-2">
+                  <input
+                    type="range"
+                    min="40" max="250" step="1"
+                    value={bpm}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      const hasAudio = (tracks || []).some(t => t.id !== 'metronome' && t.phrases.length > 0);
+                      if (hasAudio && val !== bpm) {
+                        setPendingChange({ type: 'bpm', value: val });
+                      } else {
+                        setBpm(val);
+                      }
+                    }}
+                    className="w-full h-2 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
+                  />
+                  <div className="flex justify-between items-center mt-1">
+                    <span className="text-[10px] text-zinc-500 font-mono">40</span>
+                    <span className="text-lg font-bold text-zinc-100">{bpm} BPM</span>
+                    <span className="text-[10px] text-zinc-500 font-mono">250</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-4 px-2">
-                  <Volume2 className="w-4 h-4 text-zinc-600" />
-                  <input 
-                    type="range" 
-                    min="0" max="1" step="0.01" 
-                    value={tracks.find(t => t.id === 'metronome')?.volume || 0.5}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateTrack('metronome', { volume: parseFloat(e.target.value) })}
-                    className="flex-1 h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
-                  />
-                </div>
               </div>
-            </div>
-
-            <div className="p-6 bg-zinc-900/80 border-t border-zinc-800">
-              <button 
-                onClick={() => setShowMetronomeSettings(false)}
-                className="w-full py-4 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded-xl font-bold text-xs uppercase tracking-widest transition-all"
-              >
-                Done
-              </button>
             </div>
           </div>
         </div>
