@@ -15,7 +15,20 @@ export class MetronomeEngine {
     this.node = new AudioWorkletNode(this.audioContext, 'metronome-processor');
     this.node.connect(this.audioContext.destination);
 
+    this.node.port.onmessage = (e) => {
+      if (e.data?.type === 'STATUS_REPLY') {
+        console.log('MetronomeWorklet status:', e.data);
+      }
+    };
+
     this.loadSamples(gain);
+    this.node.port.postMessage({
+      type: 'CONFIGURE',
+      bpm: 120,
+      beatsPerBar: 4,
+      sampleRate: this.audioContext.sampleRate,
+      enabled: false,
+    });
     this.initialized = true;
   }
 
@@ -55,5 +68,32 @@ export class MetronomeEngine {
     this.node?.disconnect();
     this.node = null;
     this.initialized = false;
+  }
+
+  get debug() {
+    return {
+      send: (msg: Record<string, unknown>) => {
+        this.node?.port.postMessage(msg);
+        console.log('MetronomeDebug: sent', msg);
+      },
+      postMessage: (msg: Record<string, unknown>, transfer?: Transferable[]) => {
+        this.node?.port.postMessage(msg, transfer as any);
+        console.log('MetronomeDebug: sent with transfer', msg);
+      },
+      config: (bpm: number, beatsPerBar: number) => {
+        this.node?.port.postMessage({ type: 'CONFIGURE', bpm, beatsPerBar, sampleRate: this.audioContext.sampleRate, enabled: true });
+        console.log('MetronomeDebug: CONFIGURE', { bpm, beatsPerBar });
+      },
+      reset: (frame = 0) => {
+        this.node?.port.postMessage({ type: 'RESET', frame });
+        console.log('MetronomeDebug: RESET', { frame });
+      },
+      enable: (v: boolean) => {
+        this.node?.port.postMessage({ type: 'ENABLE', enabled: v });
+        console.log('MetronomeDebug: ENABLE', v);
+      },
+      get node() { return this.node; },
+      get initialized() { return this.initialized; },
+    };
   }
 }

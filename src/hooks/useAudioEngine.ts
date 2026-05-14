@@ -94,7 +94,10 @@ const {
       metronomeEngineRef.current = engine;
       const metronomeTrack = tracks.find(t => t.id === 'metronome');
       const gain = metronomeTrack ? (metronomeTrack.isMuted ? 0 : metronomeTrack.volume * 0.5) : 0.5;
-      engine.init(gain).catch(() => {});
+      engine.init(gain).then(() => {
+        (window as any).__metronomeDebug = engine.debug;
+        console.log('MetronomeEngine: Debug API at window.__metronomeDebug');
+      }).catch(() => {});
     }
 
     // Initialize RecordingEngine (AudioWorklet is mandatory)
@@ -362,7 +365,10 @@ const {
           metronomeEngineRef.current = engine;
           const metronomeTrack = tracks.find(t => t.id === 'metronome');
           const gain = metronomeTrack ? (metronomeTrack.isMuted ? 0 : metronomeTrack.volume * 0.5) : 0.5;
-          engine.init(gain).catch(() => {});
+          engine.init(gain).then(() => {
+            (window as any).__metronomeDebug = engine.debug;
+            console.log('MetronomeEngine: Debug API at window.__metronomeDebug');
+          }).catch(() => {});
         }
 
         // Resume if suspended - fire-and-forget since this requires a user gesture
