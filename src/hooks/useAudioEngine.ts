@@ -4,7 +4,6 @@ import MultiTrack, { type TrackOptions } from '../lib/multitrack/multitrack';
 import WebAudioPlayer from '../lib/multitrack/webaudio';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
-import { audioBufferToWav } from '../audio/processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../audio/processing/audioUtils';
 import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
 import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
@@ -44,7 +43,6 @@ export function useAudioEngine() {
   const containerRef = useRef<HTMLDivElement>(null);
   const multitrackRef = useRef<MultiTrack | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
-  const metronomeBufferRef = useRef<{bpm: number, timeSignature: [number, number], buffer: AudioBuffer} | null>(null);
   const isPreRollingRef = useRef(false);
   const [multitrack, setMultitrack] = useState<MultiTrack | null>(null);
   
@@ -92,7 +90,11 @@ const {
   useEffect(() => {
     // Initialize MetronomeEngine when audioContext is available
     if (audioContextRef.current && !metronomeEngineRef.current) {
-      metronomeEngineRef.current = new MetronomeEngine(audioContextRef.current);
+      const engine = new MetronomeEngine(audioContextRef.current);
+      metronomeEngineRef.current = engine;
+      const metronomeTrack = tracks.find(t => t.id === 'metronome');
+      const gain = metronomeTrack ? (metronomeTrack.isMuted ? 0 : metronomeTrack.volume * 0.5) : 0.5;
+      engine.init(gain).catch(() => {});
     }
 
     // Initialize RecordingEngine (AudioWorklet is mandatory)
@@ -240,7 +242,7 @@ const {
     let totalHeight = 0;
     currentTracks.forEach(t => {
       const isMetronome = t.id === 'metronome';
-      if (isMetronome && !metronomeTrackVisible) return;
+      if (isMetronome) return;
       const isExpanded = t.id === selectedTrackId && !envelopeLocked && !isMetronome;
       totalHeight += isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
     });
@@ -326,7 +328,8 @@ const {
 
   const trackStructureHash = useMemo(() => {
     // Only hash the structural elements that require a full engine rebuild
-    return (tracks || []).map(t => 
+    // Metronome is handled by AudioWorklet, excluded from multitrack
+    return (tracks || []).filter(t => t.id !== 'metronome').map(t =>
       `${t.id}:${(t.phrases || []).map(p => `${p.id}:${p.url}`).join('|')}`
     ).join(',') + `|bpm:${bpm}|ts:${timeSignature?.[0]}/${timeSignature?.[1]}`;
   }, [tracks, bpm, timeSignature]);
@@ -355,7 +358,11 @@ const {
         }
         // Create MetronomeEngine now that AudioContext is available
         if (!metronomeEngineRef.current && audioContextRef.current) {
-          metronomeEngineRef.current = new MetronomeEngine(audioContextRef.current);
+          const engine = new MetronomeEngine(audioContextRef.current);
+          metronomeEngineRef.current = engine;
+          const metronomeTrack = tracks.find(t => t.id === 'metronome');
+          const gain = metronomeTrack ? (metronomeTrack.isMuted ? 0 : metronomeTrack.volume * 0.5) : 0.5;
+          engine.init(gain).catch(() => {});
         }
 
         // Resume if suspended - fire-and-forget since this requires a user gesture
@@ -383,7 +390,7 @@ const {
 
         (tracks || []).forEach(t => {
           const isMetronome = t.id === 'metronome';
-          if (isMetronome && !metronomeTrackVisible) return;
+          if (isMetronome) return;
           if (t.phrases.length === 0) {
             multitrackItems.push({
               id: t.id,
@@ -612,7 +619,7 @@ const {
           
           currentTracks.forEach(track => {
             // Skip metronome track when not in wavesurfers (visibility off)
-            if (track.id === 'metronome' && !useStore.getState().metronomeTrackVisible) return;
+            if (track.id === 'metronome') return;
 
             let trackBaseVolume = track.volume;
             if (track.isMuted) trackBaseVolume = 0;
@@ -718,7 +725,7 @@ const {
     
     (tracks || []).forEach(track => {
       const isMetronome = track.id === 'metronome';
-      if (isMetronome && !metronomeTrackVisible) return;
+      if (isMetronome) return;
       const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
       const h = isMetronome ? currentMetronomeHeight : (isExpanded ? expandedHeight : normalHeight);
       
@@ -1003,71 +1010,31 @@ const {
     }
   }, [debouncedBpm, debouncedTimeSignature, isReady]);
 
-  // Generate click track buffer when BPM, Time Signature, or duration changes
+  // Sync metronome worklet: BPM and time signature
   useEffect(() => {
-    if (!audioContextRef.current || !metronomeEngineRef.current || !isReady || !metronomeEnabled) return;
-    
-    const beatsPerSecond = (debouncedBpm || 120) / 60;
-    const secondsPerBeat = 1 / beatsPerSecond;
-    const secondsPerBar = secondsPerBeat * (debouncedTimeSignature?.[0] || 4);
-    
-    const targetDuration = Math.max(useStore.getState().minProjectDurationMs / 1000, duration + 300);
-    const targetBars = Math.ceil(targetDuration / secondsPerBar);
-    const finalTargetDuration = targetBars * secondsPerBar;
-    
-    const metronomePhrases = (tracks || []).find(t => t.id === 'metronome')?.phrases || [];
-    
-    // Check if we need a completely new set of phrases (BPM or time signature changed)
-    const needsNewPhrases = metronomePhrases.length === 0 || 
-                           metronomeBufferRef.current?.bpm !== debouncedBpm || 
-                           metronomeBufferRef.current?.timeSignature !== debouncedTimeSignature;
-    
-    if (!needsNewPhrases && metronomePhrases[0] && metronomePhrases[0].duration >= finalTargetDuration) return;
-    
-    perfLogger.log(4);
-    
-    const fullBuffer = metronomeEngineRef.current!.generateClickTrackBuffer(
-      debouncedBpm,
-      debouncedTimeSignature,
-      finalTargetDuration
-    );
-    
-    metronomeBufferRef.current = { bpm: debouncedBpm, timeSignature: debouncedTimeSignature, buffer: fullBuffer };
-    
-    // Convert to WAV for WaveSurfer to render properly
-    const wav = audioBufferToWav(fullBuffer);
-    const blob = new Blob([wav], { type: 'audio/wav' });
-    const url = URL.createObjectURL(blob);
-    
-    const newPhrases = [{
-      id: 'metronome', // Consistent ID
-      url,
-      blob,
-      audioBuffer: fullBuffer,
-      startPosition: 0,
-      duration: fullBuffer.duration,
-      createdAt: Date.now(),
-      name: '',
-      color: '#718096',
-      volume: 1,
-      isMuted: false,
-      isSolo: false,
-      envelope: []
-    }];
-    
-    useStore.setState((state) => {
-      const newTracks = state.tracks.map(t => {
-        if (t.id === 'metronome') {
-          return {
-            ...t,
-            phrases: newPhrases
-          };
-        }
-        return t;
-      });
-      return { tracks: newTracks };
+    metronomeEngineRef.current?.updateConfig({
+      bpm: debouncedBpm,
+      timeSignature: debouncedTimeSignature,
     });
-  }, [debouncedBpm, debouncedTimeSignature, duration, isReady, tracks, secondsPerBar, waveformQuality, metronomeHeight]);
+  }, [debouncedBpm, debouncedTimeSignature]);
+
+  // Start/stop metronome worklet in sync with playback
+  useEffect(() => {
+    if (!metronomeEngineRef.current) return;
+    if (isPlaying) {
+      metronomeEngineRef.current.resetToFrame(0);
+    }
+    metronomeEngineRef.current.updateConfig({ isPlaying: isPlaying && metronomeEnabled });
+  }, [isPlaying, metronomeEnabled]);
+
+  // Sync metronome volume from track state — re-render click samples with baked gain
+  useEffect(() => {
+    const t = tracks.find(t => t.id === 'metronome');
+    if (metronomeEngineRef.current && t) {
+      const gain = t.isMuted ? 0 : t.volume * 0.5;
+      metronomeEngineRef.current.reloadSamples(gain);
+    }
+  }, [tracks]);
 
   const playPause = useCallback(async () => {
     if (!multitrackRef.current) return;
