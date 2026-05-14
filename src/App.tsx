@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize } from 'lucide-react';
+import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, RotateCcw } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -105,7 +105,9 @@ export default function App() {
     playPause, 
     seekTo, 
     startRecording, 
-    stopRecording 
+    stopRecording,
+    undoAndReRecord,
+    lastRecordingRef,
   } = useAudioEngine();
 
   // secondsPerBar is not used in App.tsx, so removed.
@@ -652,6 +654,11 @@ export default function App() {
 
               {/* Center Area: Transport controls (spans 2 rows, bigger) */}
               <div className="flex-1 flex items-center justify-center gap-2 px-4">
+                {lastRecordingRef.current && (
+                  <button onClick={undoAndReRecord} className={cn(getBtnClass(true), "text-amber-400 hover:text-amber-300 rounded-full")} title="Undo & Re-record">
+                    <RotateCcw size={headerIconSize} />
+                  </button>
+                )}
                 <button onClick={() => seekTo(0)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Rewind size={headerIconSize} /></button>
                 <button onClick={handleStop} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Square size={headerIconSize} fill="currentColor" /></button>
                 <button onClick={handlePlayPause} className={cn("w-12 h-12 rounded-full flex items-center justify-center", isPlaying ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-100 border border-zinc-700")}>
@@ -771,6 +778,11 @@ export default function App() {
               </div>
               
               <div className="flex items-center gap-1 sm:gap-3">
+                {lastRecordingRef.current && (
+                  <button onClick={undoAndReRecord} className={cn(getBtnClass(true), "text-amber-400 hover:text-amber-300 hover:bg-zinc-800 rounded-full")} title="Undo & Re-record">
+                    <RotateCcw size={headerIconSize} />
+                  </button>
+                )}
                 <button onClick={() => seekTo(0)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full")}><Rewind size={headerIconSize} /></button>
                 <button onClick={handleStop} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full")}><Square size={headerIconSize} fill="currentColor" /></button>
                 <button 

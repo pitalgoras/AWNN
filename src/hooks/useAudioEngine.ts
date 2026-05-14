@@ -50,6 +50,8 @@ export function useAudioEngine() {
   const metronomeEngineRef = useRef<MetronomeEngine | null>(null);
   const recordingEngineRef = useRef<RecordingEngine | null>(null);
   const wasPlayingRef = useRef(false);
+  // Track last recorded phrase for undo functionality
+  const lastRecordingRef = useRef<{ trackId: string; phraseId: string } | null>(null);
   // Dummy state to force a retry when AudioContext becomes available
   // AudioContext initialization & retry mechanism
 const { 
@@ -129,39 +131,7 @@ const {
         onAddPhrase: (trackId, phrase) => {
           console.log('callback: onAddPhrase', { trackId, startPosition: phrase.startPosition, duration: phrase.duration, anchoredFrame: phrase.anchoredFrame });
           useStore.getState().addPhrase(trackId, phrase);
-          // DIRECT: Also update multitrack immediately so it gets the anchoredFrame
-          const track = useStore.getState().tracks.find(t => t.id === trackId);
-          if (track && multitrackRef.current && phrase.anchoredFrame !== undefined) {
-            console.log('useAudioEngine: DIRECT update multitrack track', trackId, 'with anchoredFrame=', phrase.anchoredFrame);
-            // Update track.anchoredFrame
-            track.anchoredFrame = phrase.anchoredFrame;
-            const isMetronome = trackId === 'metronome';
-            const trackOffset = track.offset || 0;
-            console.log('useAudioEngine: addTrack startPosition conversion — UserTime:', phrase.startPosition, '→ RealTime:', isMetronome ? phrase.startPosition : phrase.startPosition + secondsPerBar + trackOffset, '(sPB:', secondsPerBar, 'offset:', trackOffset, ')');
-            // FIXED: Flatten audio data to top level so multitrack.initAudio() can find it
-            // initAudio reads track.audioBuffer/track.url directly, not from phrases[]
-            const trackOptions = {
-              id: track.id,
-              trackId: track.id,
-              name: track.name,
-              color: track.color,
-              isMuted: track.isMuted,
-              isSolo: track.isSolo,
-              volume: track.volume,
-              pan: track.pan,
-              offset: track.offset,
-              anchoredFrame: phrase.anchoredFrame,
-              // Top-level audio data from the latest phrase
-              url: phrase.url,
-              audioBuffer: phrase.audioBuffer,
-              peaks: phrase.peaks,
-              startPosition: isMetronome ? phrase.startPosition : phrase.startPosition + secondsPerBar + trackOffset,
-              duration: phrase.duration,
-              headLength: phrase.headLength,
-              originalAnchoredFrame: phrase.originalAnchoredFrame,
-            } as any;
-            multitrackRef.current.addTrack(trackOptions);
-          }
+          lastRecordingRef.current = { trackId, phraseId: phrase.id };
         },
         onSeekTo: (time, allowNegative) => {
           console.log('callback: seekTo', { time, allowNegative });
@@ -1051,13 +1021,17 @@ const {
     }
 
     if (useStore.getState().isRecording) {
-      // If recording, stop recording which will also stop playback
       if (recordingEngineRef.current) {
         if (isPreRollingRef.current) {
           recordingEngineRef.current.cancelRecording();
         } else {
           recordingEngineRef.current.stopRecording();
         }
+      }
+      // Pause playback when Play/Pause button pressed during recording
+      setIsPlaying(false);
+      if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
+        multitrackRef.current.pause();
       }
     } else {
       const newPlayingState = !isPlaying;
@@ -1120,6 +1094,14 @@ const {
     recordingEngineRef.current.stopRecording();
   }, []);
 
+  const undoAndReRecord = useCallback(async () => {
+    if (!lastRecordingRef.current) return;
+    const { trackId, phraseId } = lastRecordingRef.current;
+    lastRecordingRef.current = null;
+    useStore.getState().removePhrase(trackId, phraseId);
+    await startRecording(trackId);
+  }, [startRecording]);
+
   useEffect(() => {
     useStore.getState().setSeekTo(seekTo);
   }, [seekTo]);
@@ -1130,6 +1112,8 @@ const {
     playPause,
     seekTo,
     startRecording,
-    stopRecording
+    stopRecording,
+    undoAndReRecord,
+    lastRecordingRef,
   };
 }
