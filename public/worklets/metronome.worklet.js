@@ -39,6 +39,7 @@ class MetronomeWorklet extends AudioWorkletProcessor {
           this.pendingBeatsPerBar = data.beatsPerBar;
           break;
         case 'ENABLE':
+          console.log('MW ENABLE: ' + data.enabled);
           this.enabled = data.enabled;
           break;
         case 'RESET':
