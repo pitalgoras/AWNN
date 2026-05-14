@@ -20,6 +20,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const tracks = useStore(s => s.tracks);
   const selectedTrackId = useStore(s => s.selectedTrackId);
   const isRecording = useStore(s => s.isRecording);
+  const metronomeTrackVisible = useStore(s => s.metronomeTrackVisible);
   
   const envelopeLocked = useStore(s => s.envelopeLocked);
   const sidebarWidth = useStore(s => s.sidebarWidth);
@@ -75,7 +76,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
       className="bg-zinc-900/30 shrink-0 flex flex-col left-0 border-r border-zinc-800 select-none"
     >
       <div className="flex flex-col flex-1">
-        {(tracks || []).map((track) => {
+        {(tracks || []).filter(t => t.id !== 'metronome' || metronomeTrackVisible).map((track) => {
           const isMetronome = track.id === 'metronome';
           const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
           const currentHeight = isMetronome ? metronomeHeight : (isExpanded ? trackHeight * 1.5 : trackHeight);
