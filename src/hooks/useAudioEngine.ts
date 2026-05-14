@@ -1129,8 +1129,12 @@ const {
 
   const cancelAndJumpBack = useCallback(() => {
     recordingEngineRef.current?.cancelRecording();
+    setIsPlaying(false);
+    if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
+      multitrackRef.current.pause();
+    }
     seekTo(recordingStartPositionRef.current, true);
-  }, [seekTo]);
+  }, [seekTo, setIsPlaying]);
 
   useEffect(() => {
     useStore.getState().setSeekTo(seekTo);

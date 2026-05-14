@@ -404,6 +404,8 @@ export default function App() {
 
     const handleDoubleClick = (e: MouseEvent) => {
       const state = useStore.getState();
+      // Block seeking during recording
+      if (state.isRecording) return;
       const currentTracks = state.tracks;
       const currentSelectedTrackId = state.selectedTrackId;
       const currentEnvelopeLocked = state.envelopeLocked;

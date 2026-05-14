@@ -8,6 +8,12 @@ interface PlayheadSliderProps {
 export function PlayheadSlider({ seekTo }: PlayheadSliderProps) {
   const currentTime = useStore((state) => state.currentTime);
   const duration = useStore((state) => state.duration);
+  const isRecording = useStore((state) => state.isRecording);
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isRecording) return;
+    seekTo(Number(e.target.value));
+  };
 
   return (
     <div className="w-full h-2 bg-zinc-900 border-b border-zinc-800 relative z-10 group shrink-0">
@@ -17,7 +23,7 @@ export function PlayheadSlider({ seekTo }: PlayheadSliderProps) {
         max={duration || 1}
         step="0.01"
         value={Math.max(0, currentTime)}
-        onChange={(e) => seekTo(Number(e.target.value))}
+        onChange={handleSeek}
         className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
       />
       <div 
