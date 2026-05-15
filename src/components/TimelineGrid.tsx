@@ -60,7 +60,7 @@ export const TimelineGrid: React.FC = () => {
   
   const visibleBars = Array.from({ length: endBar - startBar }, (_, i) => startBar + i);
 
-  if (!barLinesEnabled) return null;
+  if (barLinesEnabled === 'none') return null;
 
   return (
     <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-30 overflow-hidden">
@@ -94,7 +94,7 @@ export const TimelineGrid: React.FC = () => {
               </div>
               
               {/* Beat Lines */}
-              {Array.from({ length: beatsPerBar - 1 }).map((_, j) => (
+              {barLinesEnabled === 'bars-beats' && Array.from({ length: beatsPerBar - 1 }).map((_, j) => (
                 <div 
                 key={`${i}-${j}`}
                 className="absolute top-0 bottom-0 border-l border-zinc-600/50"

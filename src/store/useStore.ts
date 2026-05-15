@@ -97,7 +97,7 @@ interface AppState {
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
   minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
   metronomeEnabled: boolean; // Master metronome toggle (default true)
-  barLinesEnabled: boolean; // Show vertical bar/beat lines (default true)
+  barLinesEnabled: 'none' | 'bars-beats' | 'bars-only'; // Show vertical bar/beat lines (default bars-beats)
   metronomeTrackVisible: boolean; // Show metronome waveform strip (default true)
   preRollMode: 'always' | 'recording' | 'none';
   waveformQuality: 'low' | 'medium' | 'high';
@@ -149,7 +149,8 @@ interface AppState {
   setBufferSafetyMs: (ms: number) => void;
   setMinProjectDurationMs: (ms: number) => void;
   setMetronomeEnabled: (v: boolean) => void;
-  setBarLinesEnabled: (v: boolean) => void;
+  setBarLinesEnabled: (v: 'none' | 'bars-beats' | 'bars-only') => void;
+  cycleBarLines: () => void;
   setMetronomeTrackVisible: (v: boolean) => void;
   setPreRollMode: (mode: 'always' | 'recording' | 'none') => void;
   setWaveformQuality: (quality: 'low' | 'medium' | 'high') => void;
@@ -194,7 +195,7 @@ const defaultSettings = {
   bufferSafetyMs: 100, // Default 100ms buffer safety margin (dangerous setting)
   minProjectDurationMs: 600000, // Default 600s minimum project duration (dangerous setting)
   metronomeEnabled: true,
-  barLinesEnabled: true,
+  barLinesEnabled: 'bars-beats' as const,
   metronomeTrackVisible: true,
   preRollMode: 'always' as const,
   waveformQuality: 'low' as const,
@@ -254,14 +255,19 @@ export const useStore = create<AppState>()(
         setMetronomeEnabled: (v) => set((state) => {
           state.metronomeEnabled = v;
           if (v) {
-            state.barLinesEnabled = true;
+            state.barLinesEnabled = 'bars-beats';
             state.metronomeTrackVisible = true;
           } else {
-            state.barLinesEnabled = false;
+            state.barLinesEnabled = 'none';
             state.metronomeTrackVisible = false;
           }
         }),
         setBarLinesEnabled: (v) => set({ barLinesEnabled: v }),
+        cycleBarLines: () => set((state) => {
+          const order = ['none', 'bars-beats', 'bars-only'] as const;
+          const idx = order.indexOf(state.barLinesEnabled);
+          state.barLinesEnabled = order[(idx + 1) % 3];
+        }),
         setMetronomeTrackVisible: (v) => set({ metronomeTrackVisible: v }),
         setSampleRate: (rate) => set({ sampleRate: rate }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),

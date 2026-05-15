@@ -1,6 +1,6 @@
 import React from 'react';
 import { useStore } from '../../store/useStore';
-import { Settings, Save, FolderOpen } from 'lucide-react';
+import { Settings, Save, FolderOpen, Volume2 } from 'lucide-react';
 import { ModalShell } from './ModalShell';
 import { ToggleRow } from '../settings/ToggleRow';
 import { exportProjectToJSON } from '../../audio/project/projectIO';
@@ -41,9 +41,16 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
         {/* Metronome */}
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">Metronome</label>
-          <div className="flex flex-col gap-1.5">
+          <div className="flex flex-col gap-2">
             <ToggleRow label="Metronome" enabled={metronomeEnabled} onToggle={() => useStore.getState().setMetronomeEnabled(!metronomeEnabled)} />
-            <ToggleRow label="Bar Lines" enabled={barLinesEnabled} onToggle={() => useStore.getState().setBarLinesEnabled(!barLinesEnabled)} useGreen />
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-zinc-400">Bar Lines</span>
+              <button onClick={() => useStore.getState().cycleBarLines()}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold transition-all bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+              >
+                {barLinesEnabled === 'bars-beats' ? 'Bars + Beats' : barLinesEnabled === 'bars-only' ? 'Bars Only' : 'None'}
+              </button>
+            </div>
           </div>
         </div>
 

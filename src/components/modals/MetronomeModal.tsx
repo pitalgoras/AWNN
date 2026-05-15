@@ -25,7 +25,7 @@ export const MetronomeModal: React.FC<Props> = ({ show, onClose }) => {
   };
 
   return (
-    <ModalShell show={show} onClose={onClose} title="Metronome & Grid">
+    <ModalShell show={show} onClose={onClose} title="Tempo and Time Signature">
       <div className="space-y-8">
       {/* BPM */}
       <div>
@@ -75,8 +75,15 @@ export const MetronomeModal: React.FC<Props> = ({ show, onClose }) => {
 
       {/* Toggles */}
       <div className="space-y-4">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-zinc-400">Bar Lines</span>
+          <button onClick={() => useStore.getState().cycleBarLines()}
+            className="px-4 py-1.5 rounded-lg text-xs font-bold transition-all bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
+          >
+            {barLinesEnabled === 'bars-beats' ? 'Bars + Beats' : barLinesEnabled === 'bars-only' ? 'Bars Only' : 'None'}
+          </button>
+        </div>
         <ToggleRow label="Metronome" enabled={metronomeEnabled} onToggle={() => useStore.getState().setMetronomeEnabled(!metronomeEnabled)} />
-        <ToggleRow label="Bar Lines" enabled={barLinesEnabled} onToggle={() => useStore.getState().setBarLinesEnabled(!barLinesEnabled)} useGreen />
       </div>
       </div>
     </ModalShell>
