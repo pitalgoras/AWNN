@@ -123,6 +123,7 @@ export default function App() {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
+  const audioImportInputRef = useRef<HTMLInputElement>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const muteLongPressTimer = useRef<{ [key: string]: NodeJS.Timeout | null }>({});
 
@@ -225,6 +226,19 @@ export default function App() {
     };
     document.addEventListener('pointerdown', handler, { once: true });
     return () => document.removeEventListener('pointerdown', handler);
+  }, []);
+
+  // Logo menu state
+  const [showLogoMenu, setShowLogoMenu] = useState(false);
+  const logoMenuRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (logoMenuRef.current && !logoMenuRef.current.contains(e.target as Node)) {
+        setShowLogoMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
   }, []);
 
   // Pinch-to-zoom on the multitask container
@@ -607,6 +621,15 @@ export default function App() {
     }
   };
 
+  const handleAudioImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+    // TODO: Open Import Audio modal for mapping files to tracks
+    alert(`Selected ${files.length} audio files. Import modal coming soon.`);
+    // Reset so re-selecting same files triggers onChange
+    (e.target as HTMLInputElement).value = '';
+  };
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-800 overflow-hidden">
       <StatusLogger />
@@ -618,6 +641,16 @@ export default function App() {
         className="hidden" 
         ref={fileInputRef} 
         onChange={handleFileImport} 
+      />
+      
+      {/* Hidden input for importing audio tracks */}
+      <input 
+        type="file" 
+        accept="audio/*"
+        multiple
+        className="hidden" 
+        ref={audioImportInputRef}
+        onChange={handleAudioImport}
       />
 
       {/* Loading Overlay */}
@@ -643,9 +676,7 @@ export default function App() {
             <div className="flex-1 flex items-stretch">
               {/* Left Area: 2 rows of items */}
               <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
-                  <div className="flex items-center gap-1">
-                  <button onClick={() => exportProjectToJSON(useStore.getState())} className={cn(getBtnClass(true), "rounded transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Export"><Save size={headerIconSize} /></button>
-                  <button onClick={() => fileInputRef.current?.click()} className={cn(getBtnClass(true), "rounded transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Import"><FolderOpen size={headerIconSize} /></button>
+                <div className="flex items-center gap-1">
                   <button onClick={() => setShowMetronomeSettings(true)} className={cn(getBtnClass(true), "rounded transition-colors flex items-center gap-1")} title="Metronome">
                     <Volume2 size={headerIconSize} className={cn(tracks.find(t => t.id === 'metronome')?.isMuted && "opacity-50")} />
                     <span className="text-[9px] font-bold uppercase">{mainToolbarLabel('Metro', 'M')}</span>
@@ -714,15 +745,43 @@ export default function App() {
           <>
             {/* Left: Logo & Project Actions */}
             <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start overflow-hidden">
-              <div className="flex items-center gap-2">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                  <Music className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-zinc-400" />
-                </div>
-                <h1 className="font-semibold text-xs sm:text-sm tracking-wide hidden lg:block">AWNN</h1>
-              </div>
-              <div className="hidden sm:flex items-center gap-1">
-                <button onClick={() => exportProjectToJSON(useStore.getState())} className={cn(getBtnClass(true), "rounded transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Export Project File"><Save size={headerIconSize} /></button>
-                <button onClick={() => fileInputRef.current?.click()} className={cn(getBtnClass(true), "rounded transition-colors text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Import Project File"><FolderOpen size={headerIconSize} /></button>
+              <div className="relative" ref={logoMenuRef}>
+                <button
+                  onClick={() => setShowLogoMenu(!showLogoMenu)}
+                  className="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-zinc-800 transition-colors"
+                  title="Menu"
+                >
+                  <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700">
+                    <Music className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-zinc-400" />
+                  </div>
+                  <h1 className="font-semibold text-xs sm:text-sm tracking-wide hidden lg:block">AWNN</h1>
+                </button>
+                {showLogoMenu && (
+                  <div className="absolute top-full left-0 mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[200] overflow-hidden">
+                    <button
+                      onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                    >
+                      <Save size={14} />
+                      Save Song
+                    </button>
+                    <button
+                      onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                    >
+                      <FolderOpen size={14} />
+                      Load Song
+                    </button>
+                    <div className="h-px bg-zinc-800 mx-3" />
+                    <button
+                      onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
+                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
+                    >
+                      <Upload size={14} />
+                      Import Audio Tracks
+                    </button>
+                  </div>
+                )}
               </div>
               
               {/* View Toggles */}
