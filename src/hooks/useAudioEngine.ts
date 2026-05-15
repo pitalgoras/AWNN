@@ -309,11 +309,12 @@ const {
 
   const trackStructureHash = useMemo(() => {
     // Only hash the structural elements that require a full engine rebuild
-    // Metronome is handled by AudioWorklet, excluded from multitrack
+    // BPM and timeSignature are handled by AudioWorklet + multitrack.setOptions
+    // Metronome is excluded from multitrack
     return (tracks || []).filter(t => t.id !== 'metronome').map(t =>
       `${t.id}:${(t.phrases || []).map(p => `${p.id}:${p.url}`).join('|')}`
-    ).join(',') + `|bpm:${bpm}|ts:${timeSignature?.[0]}/${timeSignature?.[1]}`;
-  }, [tracks, bpm, timeSignature]);
+    ).join(',');
+  }, [tracks]);
 
 // Initialize Multitrack
   useEffect(() => {
