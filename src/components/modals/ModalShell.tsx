@@ -21,7 +21,7 @@ export const ModalShell: React.FC<Props> = ({ show, onClose, title, children, ma
             <Square className="w-4 h-4 text-zinc-500" />
           </button>
         </div>
-        <div className="p-4 sm:p-6">
+        <div className="sm:columns-2 sm:gap-6 sm:[column-rule:1px_solid_rgb(39_39_42)] [&>*]:break-inside-avoid [&>*]:mb-6 p-4 sm:p-6">
           {children}
         </div>
       </div>

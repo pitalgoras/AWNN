@@ -27,7 +27,6 @@ export const MetronomeModal: React.FC<Props> = ({ show, onClose }) => {
   return (
     <ModalShell show={show} onClose={onClose} title="Tempo and Time Signature">
       <div className="space-y-8">
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
         {/* BPM */}
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">BPM</label>
@@ -73,7 +72,6 @@ export const MetronomeModal: React.FC<Props> = ({ show, onClose }) => {
             })}
           </div>
         </div>
-      </div>
 
       {/* Toggles */}
       <div className="space-y-4">
