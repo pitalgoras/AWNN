@@ -17,7 +17,7 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
   const loadProject = useStore(s => s.loadProject);
 
   return (
-    <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg" scrollable>
+    <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg">
       <div className="grid grid-cols-1 min-[400px]:grid-cols-2 gap-x-4 gap-y-6">
         {/* Latency Section */}
         <div className="col-span-1 min-[400px]:col-span-2">
