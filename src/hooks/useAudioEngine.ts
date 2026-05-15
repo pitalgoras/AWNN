@@ -185,7 +185,7 @@ const {
         metronomeEngineRef.current = null;
       }
     };
-  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, preRollMode]);
+  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, preRollMode]);
 
   // Separate effect to update isPlaying without destroying audioWorkletNode
   useEffect(() => {
