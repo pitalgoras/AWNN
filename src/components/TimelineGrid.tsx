@@ -15,10 +15,7 @@ export const TimelineGrid: React.FC = () => {
     const handleScroll = () => {
       if (!container) return;
       scrollLeftRef.current = container.scrollLeft;
-      if (gridRef.current) {
-        gridRef.current.style.transform = `translateX(-${scrollLeftRef.current}px)`;
-      }
-      // Throttle virtualization update to ~50ms via rAF
+      // Throttle virtualization update to rAF
       cancelAnimationFrame(rafId);
       rafId = requestAnimationFrame(() => {
         setRenderTick(t => t + 1);
@@ -75,7 +72,7 @@ export const TimelineGrid: React.FC = () => {
       <div
         ref={gridRef}
         className="relative h-full"
-        style={{ width: `${totalBars * pixelsPerBar}px` }}
+        style={{ width: `${totalBars * pixelsPerBar}px`, transform: `translateX(-${sl}px)` }}
       >
         {visibleBars.map((i) => {
           const left = i * pixelsPerBar;
