@@ -178,9 +178,11 @@ const {
     return () => {
       if (recordingEngineRef.current) {
         recordingEngineRef.current.cleanup();
+        recordingEngineRef.current = null;
       }
       if (metronomeEngineRef.current) {
         metronomeEngineRef.current.cleanup();
+        metronomeEngineRef.current = null;
       }
     };
   }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, bpm, timeSignature, preRollMode]);
