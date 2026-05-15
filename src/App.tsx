@@ -750,7 +750,7 @@ export default function App() {
           /* Normal Layout (landscape/medium/large) */
           <>
             {/* Left: Logo & Project Actions */}
-            <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start overflow-hidden">
+            <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start">
               <div className="relative" ref={logoMenuRef}>
                 <button
                   onClick={() => setShowLogoMenu(!showLogoMenu)}
