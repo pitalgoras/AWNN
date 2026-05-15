@@ -27,49 +27,51 @@ export const MetronomeModal: React.FC<Props> = ({ show, onClose }) => {
   return (
     <ModalShell show={show} onClose={onClose} title="Tempo and Time Signature">
       <div className="space-y-8">
-      {/* BPM */}
-      <div>
-        <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">BPM</label>
-        <div className="relative flex items-center justify-center min-h-[44px]">
-          <div className="text-4xl font-bold text-zinc-100 tabular-nums leading-none">{bpm}</div>
-          <div className="absolute right-0 flex gap-1">
-            <button onClick={() => setBpm(Math.max(40, bpm - 1))}
-              className="w-10 h-10 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-lg font-bold flex items-center justify-center transition-colors"
-            >−</button>
-            <button onClick={() => setBpm(Math.min(250, bpm + 1))}
-              className="w-10 h-10 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-lg font-bold flex items-center justify-center transition-colors"
-            >+</button>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+        {/* BPM */}
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">BPM</label>
+          <div className="relative flex items-center justify-center min-h-[44px]">
+            <div className="text-4xl font-bold text-zinc-100 tabular-nums leading-none">{bpm}</div>
+            <div className="absolute right-0 flex gap-1">
+              <button onClick={() => setBpm(Math.max(40, bpm - 1))}
+                className="w-10 h-10 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-lg font-bold flex items-center justify-center transition-colors"
+              >−</button>
+              <button onClick={() => setBpm(Math.min(250, bpm + 1))}
+                className="w-10 h-10 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-lg font-bold flex items-center justify-center transition-colors"
+              >+</button>
+            </div>
+          </div>
+          <div className="mt-3">
+            <input type="range" min="40" max="250" step="1" value={bpm}
+              onChange={(e) => setBpm(Number(e.target.value))}
+              className="w-full h-2 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
+            />
+            <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-0.5">
+              <span>40</span>
+              <span>250</span>
+            </div>
           </div>
         </div>
-        <div className="mt-3">
-          <input type="range" min="40" max="250" step="1" value={bpm}
-            onChange={(e) => setBpm(Number(e.target.value))}
-            className="w-full h-2 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
-          />
-          <div className="flex justify-between text-[10px] text-zinc-500 font-mono mt-0.5">
-            <span>40</span>
-            <span>250</span>
-          </div>
-        </div>
-      </div>
 
-      {/* Time Signature */}
-      <div>
-        <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">Time Signature</label>
-        <div className="grid grid-cols-3 gap-2">
-          {['4/4', '3/4', '2/4', '6/8', '12/8'].map((sig) => {
-            const isActive = `${timeSignature?.[0] || 4}/${timeSignature?.[1] || 4}` === sig;
-            return (
-              <button key={sig}
-                onClick={() => { const parts = sig.split('/'); handleSigChange([Number(parts[0]), Number(parts[1])]); }}
-                className={cn("py-3 rounded-xl text-sm font-mono transition-all border",
-                  isActive
-                    ? "bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
-                    : "bg-zinc-800/50 border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
-                )}
-              >{sig}</button>
-            );
-          })}
+        {/* Time Signature */}
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">Time Signature</label>
+          <div className="grid grid-cols-3 gap-2">
+            {['4/4', '3/4', '2/4', '6/8', '12/8'].map((sig) => {
+              const isActive = `${timeSignature?.[0] || 4}/${timeSignature?.[1] || 4}` === sig;
+              return (
+                <button key={sig}
+                  onClick={() => { const parts = sig.split('/'); handleSigChange([Number(parts[0]), Number(parts[1])]); }}
+                  className={cn("py-3 rounded-xl text-sm font-mono transition-all border",
+                    isActive
+                      ? "bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
+                      : "bg-zinc-800/50 border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
+                  )}
+                >{sig}</button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
