@@ -45,3 +45,29 @@ Currently no visual feedback from the worklet to the UI. Options:
 ### 4. Tempo/signature as cues
 
 Cues can carry `{ type: 'bpm', value: 140 }` or `{ type: 'signature', beatsPerBar: 3 }`. Reuse existing cues UI for creation, display, and snapping. Snapping logic: BPM cues snap to nearest beat, signature cues snap to nearest bar.
+
+### 5. Canvas-based grid rendering
+
+**Current:** Bar/beat lines rendered as absolutely-positioned `<div>` elements via React reconciliation. Scroll position updated via CSS `transform` on a ref (no re-render on scroll). Virtualization via `renderTick` state throttled to rAF (~16ms).
+
+**Performance ceiling:** React reconciles visible bar DOM on every virtualization tick. At high zoom levels where many bars are visible, reconciliation overhead grows linearly.
+
+**Canvas approach:** Replace the `<div>` grid with a `<canvas>` element. On scroll + zoom changes, redraw lines via `requestAnimationFrame` + `ctx.beginPath()` + `ctx.moveTo/lineTo/stroke`. Zero DOM nodes, zero React reconciliation. 60fps regardless of bar count.
+
+```typescript
+// Sketch:
+useEffect(() => {
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const draw = () => {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        for each visible bar:
+            ctx.beginPath();
+            ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
+            ctx.fillText(barNumber + '.1', x + 2, 12);
+    };
+    rafId = requestAnimationFrame(draw);
+}, [zoom, scrollLeft, totalBars]);
+```
+
+**Trade-off:** Canvas text rendering is less sharp than HTML text at small sizes. Would need a `devicePixelRatio` scaling pass for crisp text. Bar number labels at `9px`/`10px` may need slight size increase. This is purely a visual polish issue, solvable with a 2x resolution canvas pass.
