@@ -1,0 +1,30 @@
+import React from 'react';
+import { Square } from 'lucide-react';
+
+interface Props {
+  show: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+  maxWidth?: string;
+  scrollable?: boolean;
+}
+
+export const ModalShell: React.FC<Props> = ({ show, onClose, title, children, maxWidth = 'max-w-sm', scrollable }) => {
+  if (!show) return null;
+  return (
+    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4" onClick={onClose}>
+      <div className={`bg-zinc-900 border border-zinc-800 rounded-2xl w-full ${maxWidth} shadow-2xl ${scrollable ? 'overflow-y-auto max-h-[95vh]' : ''}`} onClick={e => e.stopPropagation()}>
+        <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
+          <h2 className="text-lg font-bold tracking-tight">{title}</h2>
+          <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
+            <Square className="w-4 h-4 text-zinc-500" />
+          </button>
+        </div>
+        <div className="p-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+};
