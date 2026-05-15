@@ -750,7 +750,7 @@ export default function App() {
           /* Normal Layout (landscape/medium/large) */
           <>
             {/* Left: Logo & Project Actions */}
-            <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start">
+            <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start overflow-hidden">
               <div className="relative" ref={logoMenuRef}>
                 <button
                   onClick={() => setShowLogoMenu(!showLogoMenu)}
@@ -763,29 +763,30 @@ export default function App() {
                   <h1 className="font-semibold text-xs sm:text-sm tracking-wide hidden lg:block">AWNN</h1>
                 </button>
                 {showLogoMenu && (
-                  <div className="absolute top-full left-0 mt-1 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl z-[200] overflow-hidden">
-                    <button
-                      onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                    >
-                      <Save size={14} />
-                      Save Song
-                    </button>
-                    <button
-                      onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                    >
-                      <FolderOpen size={14} />
-                      Load Song
-                    </button>
-                    <div className="h-px bg-zinc-800 mx-3" />
-                    <button
-                      onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
-                      className="w-full flex items-center gap-3 px-4 py-3 text-xs font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors"
-                    >
-                      <Upload size={14} />
-                      Import Audio Tracks
-                    </button>
+                  <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-6" onClick={() => setShowLogoMenu(false)}>
+                    <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
+                      <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
+                        <h2 className="text-base font-bold">Menu</h2>
+                        <button onClick={() => setShowLogoMenu(false)} className="p-1 hover:bg-zinc-800 rounded-full transition-colors">
+                          <Square className="w-4 h-4 text-zinc-500" />
+                        </button>
+                      </div>
+                      <div className="p-3 space-y-1">
+                        <button onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+                          <Save size={16} /> Save Song
+                        </button>
+                        <button onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+                          <FolderOpen size={16} /> Load Song
+                        </button>
+                        <div className="h-px bg-zinc-800 mx-2" />
+                        <button onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
+                          className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+                          <Upload size={16} /> Import Audio Tracks
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
