@@ -222,7 +222,7 @@ export const useStore = create<AppState>()(
       (set, get) => ({
         tracks: [
           { id: 'metronome', name: 'Metronome', color: '#718096', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-          { id: '1', name: 'Backtrack', color: '#4a5568', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+          { id: '1', name: 'Instruments', color: '#4a5568', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
           { id: '2', name: 'Sopranos', color: '#F6E05E', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
           { id: '3', name: 'Altos', color: '#F56565', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
           { id: '4', name: 'Tenors', color: '#48BB78', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },

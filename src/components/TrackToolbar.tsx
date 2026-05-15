@@ -6,16 +6,6 @@ import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 import { getContrastColor } from '../lib/utils';
 
-const VOICE_TOKENS: Record<string, string> = {
-  'Unison': '[ALL]',
-  'Soprano': '[S]',
-  'Alto': '[A]',
-  'Tenor': '[T]',
-  'Bass': '[B]',
-  'Soprano & Alto': '[S&A]',
-  'Tenor & Bass': '[T&B]',
-};
-
 export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const tracks = useStore(s => s.tracks);
   const selectedTrackId = useStore(s => s.selectedTrackId);
@@ -65,9 +55,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const singleRowThreshold = 80;
   const useSingleRow = trackHeight < singleRowThreshold;
   
-  const getShortLabel = (track: any) => {
-    return VOICE_TOKENS[track.label] || VOICE_TOKENS[track.name] || track.name.substring(0, 3);
-  };
+  const getShortLabel = (track: any) => track.name.substring(0, 4);
   
   return (
     <aside 

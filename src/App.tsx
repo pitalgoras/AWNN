@@ -4,6 +4,11 @@ import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind,
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
+import { SettingsModal } from './components/modals/SettingsModal';
+import { TrackManagerModal } from './components/modals/TrackManagerModal';
+import { MetronomeModal } from './components/modals/MetronomeModal';
+import { ImportAudioModal } from './components/modals/ImportAudioModal';
+import { autoMatchFileToTrack, trackNameFromFile } from './audio/import/importUtils';
 
 import { BpmInput } from './components/BpmInput';
 import { SyncTool } from './components/SyncTool';
@@ -116,6 +121,8 @@ export default function App() {
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTracksModal, setShowTracksModal] = useState(false);
   const [showMetronomeSettings, setShowMetronomeSettings] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importFiles, setImportFiles] = useState<File[]>([]);
   const [showCues, setShowCues] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
   const [isManualCalibrating, setIsManualCalibrating] = useState(false);
@@ -624,9 +631,8 @@ export default function App() {
   const handleAudioImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-    // TODO: Open Import Audio modal for mapping files to tracks
-    alert(`Selected ${files.length} audio files. Import modal coming soon.`);
-    // Reset so re-selecting same files triggers onChange
+    setImportFiles(Array.from(files));
+    setShowImportModal(true);
     (e.target as HTMLInputElement).value = '';
   };
 
@@ -1215,338 +1221,20 @@ export default function App() {
         </div>
       )}
 
-      {/* Settings Modal Overlay */}
       {/* Settings Modal */}
-      {showSettings && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-2" onClick={() => setShowSettings(false)}>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[95vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center shrink-0">
-              <h2 className="text-base font-bold tracking-tight">Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
-                <Square className="w-4 h-4 text-zinc-500" />
-              </button>
-            </div>
+      <SettingsModal
+        show={showSettings}
+        onClose={() => setShowSettings(false)}
+        onOpenAdvanced={() => { setShowSettings(false); setShowAdvancedSettings(true); }}
+        onOpenTracks={() => { setShowSettings(false); setShowTracksModal(true); }}
+      />
 
-            <div className="p-4 overflow-y-auto grid grid-cols-1 min-[400px]:grid-cols-2 gap-x-4 gap-y-6">
-              {/* Latency Section */}
-              <div className="col-span-1 min-[400px]:col-span-2">
-                <div className="flex justify-between items-center mb-3">
-                  <label className="text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500">
-                    Global Latency Offset
-                  </label>
-                  <span className="font-mono text-[10px] text-zinc-400">{globalLatencyMs}ms</span>
-                </div>
-                <div className="space-y-3">
-                  <input 
-                    type="range" 
-                    min="-200" max="200" step="1" 
-                    value={globalLatencyMs}
-                    onChange={(e: React.ChangeEvent<HTMLInputElement>) => setGlobalLatencyMs(parseInt(e.target.value))}
-                    className="w-full h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
-                  />
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => setIsLatencyCalibrating(true)}
-                      className="w-full py-2 px-1 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/20 rounded text-[9px] font-bold uppercase tracking-wider transition-all leading-tight"
-                    >
-                      Auto Calibrate
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Advanced Audio Section */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Advanced Settings
-                </label>
-                <div className="flex gap-2">
-                  <button 
-                    onClick={() => {
-                      setShowSettings(false);
-                      setShowAdvancedSettings(true);
-                    }}
-                    className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-                  >
-                    <Settings size={14} />
-                    Open Advanced Panel
-                  </button>
-                </div>
-              </div>
-
-              {/* Metronome Section */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Metronome
-                </label>
-                <div className="flex flex-col gap-1.5">
-                  <button
-                    onClick={() => useStore.getState().setMetronomeEnabled(!metronomeEnabled)}
-                    className={cn(
-                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
-                      metronomeEnabled
-                        ? "bg-emerald-600 text-white shadow-sm"
-                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
-                    )}
-                  >
-                    <Volume2 size={14} />
-                    {metronomeEnabled ? 'Enabled' : 'Disabled'}
-                  </button>
-                  <button
-                    onClick={() => useStore.getState().setBarLinesEnabled(!barLinesEnabled)}
-                    className={cn(
-                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
-                      barLinesEnabled
-                        ? "bg-emerald-600 text-white shadow-sm"
-                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
-                    )}
-                  >
-                    Bar Lines
-                  </button>
-                  <button
-                    onClick={() => useStore.getState().setMetronomeTrackVisible(!metronomeTrackVisible)}
-                    className={cn(
-                      "w-full h-9 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2",
-                      metronomeTrackVisible
-                        ? "bg-emerald-600 text-white shadow-sm"
-                        : "bg-zinc-800 text-zinc-500 hover:bg-zinc-700"
-                    )}
-                  >
-                    <Music size={14} />
-                    Track
-                  </button>
-                </div>
-              </div>
-
-              {/* Tracks Management Button */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Track Mgmt
-                </label>
-                <button 
-                  onClick={() => {
-                    setShowSettings(false);
-                    setShowTracksModal(true);
-                  }}
-                  className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-                >
-                  <Settings size={14} />
-                  Manage Tracks
-                </button>
-              </div>
-
-              {/* Project Section */}
-              <div className="col-span-1 min-[400px]:col-span-2">
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Project Actions
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button 
-                    onClick={saveProject}
-                    className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all"
-                  >
-                    Save
-                  </button>
-                  <button 
-                    onClick={loadProject}
-                    className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all"
-                  >
-                    Load
-                  </button>
-                  <button 
-                    onClick={() => {
-                      if (window.confirm('Are you sure you want to reset all settings to their defaults?')) {
-                        resetSettings();
-                      }
-                    }}
-                    className="col-span-2 mt-1 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded text-[10px] font-bold uppercase tracking-wider transition-all"
-                  >
-                    Reset All Settings
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Advanced Settings Modal */}
       {/* Tracks Modal */}
-      {showTracksModal && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[110] flex items-center justify-center p-4" onClick={() => setShowTracksModal(false)}>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center shrink-0">
-              <h2 className="text-lg font-bold tracking-tight">Manage Tracks</h2>
-              <button onClick={() => setShowTracksModal(false)} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
-                <Square className="w-4 h-4 text-zinc-500" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-4 overflow-y-auto flex-1">
-              <button 
-                onClick={() => {
-                  addTrack({
-                    name: `Track ${tracks.filter(t => t.id !== 'metronome').length + 1}`,
-                    color: '#3b82f6',
-                    isMuted: false,
-                    isSolo: false,
-                    volume: 0.8,
-                    pan: 0,
-                    offset: 0,
-                    phrases: [],
-                    envelope: []
-                  });
-                }}
-                className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold text-xs uppercase tracking-widest transition-all flex items-center justify-center gap-2 mb-4"
-              >
-                <Plus size={14} />
-                Add New Track
-              </button>
-
-              <div className="space-y-2">
-                {(tracks || []).filter(t => t.id !== 'metronome').map((track, index) => (
-                  <div key={track.id} className="bg-zinc-800/50 border border-zinc-800 rounded-xl p-4 flex items-center gap-4">
-                    <div 
-                      className="relative group/color shrink-0"
-                    >
-                      <div className="w-4 h-4 rounded-full shadow-inner border border-white/10" style={{ backgroundColor: track.color }} />
-                      <input 
-                        type="color" 
-                        value={track.color}
-                        onChange={(e) => updateTrack(track.id, { color: e.target.value })}
-                        className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
-                      />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <input 
-                        value={track.name}
-                        onChange={(e) => updateTrack(track.id, { name: e.target.value })}
-                        className="bg-transparent border-none focus:ring-0 text-sm font-bold text-zinc-100 p-0 w-full"
-                      />
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <button 
-                        onClick={() => reorderTracks(index, index - 1)}
-                        disabled={index === 0}
-                        className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 disabled:opacity-20"
-                      >
-                        <ChevronUp size={14} />
-                      </button>
-                      <button 
-                        onClick={() => reorderTracks(index, index + 1)}
-                        disabled={index === tracks.filter(t => t.id !== 'metronome').length - 1}
-                        className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400 disabled:opacity-20"
-                      >
-                        <ChevronDown size={14} />
-                      </button>
-                      <button 
-                        onClick={() => setEditingTrackId(track.id)}
-                        className="p-1.5 hover:bg-zinc-700 rounded text-zinc-400"
-                      >
-                        <Settings size={14} />
-                      </button>
-                      <button 
-                        onClick={() => removeTrack(track.id)}
-                        className="p-1.5 hover:bg-zinc-700 rounded text-red-400/50 hover:text-red-400"
-                      >
-                        <Trash2 size={14} />
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <TrackManagerModal show={showTracksModal} onClose={() => setShowTracksModal(false)} />
 
       {/* Metronome Settings Modal */}
-      {showMetronomeSettings && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4" onClick={() => setShowMetronomeSettings(false)}>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-sm shadow-2xl overflow-hidden" onClick={e => e.stopPropagation()}>
-            <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
-              <h2 className="text-lg font-bold tracking-tight">Metronome & Grid</h2>
-              <button onClick={() => setShowMetronomeSettings(false)} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
-                <Square className="w-4 h-4 text-zinc-500" />
-              </button>
-            </div>
-
-            <div className="p-6 space-y-8">
-              {/* BPM Section */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-4">
-                  Tempo (BPM)
-                </label>
-                <div className="flex items-center justify-center py-4 bg-zinc-800/30 rounded-xl border border-zinc-800/50">
-                  <BpmInput 
-                    key={`modal-${bpm}`}
-                    onPendingChange={(val) => setPendingChange({ type: 'bpm', value: val })}
-                  />
-                </div>
-              </div>
-
-              {/* Signature Section */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-4">
-                  Time Signature
-                </label>
-                <div className="grid grid-cols-3 gap-2">
-                  {['4/4', '3/4', '2/4', '6/8', '12/8'].map((sig) => (
-                    <button
-                      key={sig}
-                      onClick={() => {
-                        const parts = sig.split('/');
-                        const newVal = [Number(parts[0]), Number(parts[1])] as [number, number];
-                        if ((tracks || []).some(t => t.id !== 'metronome' && t.phrases.length > 0)) {
-                          setPendingChange({ type: 'timeSignature', value: newVal });
-                        } else {
-                          setTimeSignature(newVal);
-                        }
-                      }}
-                      className={cn(
-                        "py-3 rounded-xl text-xs font-mono transition-all border",
-                        `${(timeSignature?.[0] || 4)}/${(timeSignature?.[1] || 4)}` === sig
-                          ? "bg-blue-500/10 border-blue-500/50 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]"
-                          : "bg-zinc-800/50 border-zinc-700 text-zinc-500 hover:border-zinc-500 hover:text-zinc-300"
-                      )}
-                    >
-                      {sig}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* BPM Slider */}
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-4">
-                  Tempo Slider
-                </label>
-                <div className="py-2">
-                  <input
-                    type="range"
-                    min="40" max="250" step="1"
-                    value={bpm}
-                    onChange={(e) => {
-                      const val = Number(e.target.value);
-                      const hasAudio = (tracks || []).some(t => t.id !== 'metronome' && t.phrases.length > 0);
-                      if (hasAudio && val !== bpm) {
-                        setPendingChange({ type: 'bpm', value: val });
-                      } else {
-                        setBpm(val);
-                      }
-                    }}
-                    className="w-full h-2 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
-                  />
-                  <div className="flex justify-between items-center mt-1">
-                    <span className="text-[10px] text-zinc-500 font-mono">40</span>
-                    <span className="text-lg font-bold text-zinc-100">{bpm} BPM</span>
-                    <span className="text-[10px] text-zinc-500 font-mono">250</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      <MetronomeModal show={showMetronomeSettings} onClose={() => setShowMetronomeSettings(false)} />
 
       {/* Track Edit Modal */}
       {editingTrackId && (
@@ -1683,6 +1371,9 @@ export default function App() {
           </div>
         </div>
       )}
+      {/* Import Audio Modal */}
+      <ImportAudioModal show={showImportModal} onClose={() => setShowImportModal(false)} files={importFiles} />
+
       {/* Confirmation Modal for BPM/SIG changes */}
       {pendingChange && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
