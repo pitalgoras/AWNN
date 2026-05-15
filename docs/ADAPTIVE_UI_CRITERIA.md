@@ -53,6 +53,25 @@
 - The movement lock and envelope lock controls are **visible only when `appMode === 'mixer'`.** In `Lyrics` mode they are omitted entirely.
 - The rendering condition is implemented in `App.tsx` and only adds a `div` containing the lock buttons if `appMode === 'mixer'`.
 
+### Elastic Track Heights (2026-05-15)
+- Track height is no longer capped at 150px — **tracks expand elastically** to fill all available vertical space.
+- `totalUnits` uses actual visible track count (non-metronome tracks only — metronome has no visual waveform).
+- `minTrackHeight: 40px` remains as floor to prevent collapse.
+- Multitrack container uses `height: 100%; min-height: sum-of-track-heights` — fills flex parent while maintaining minimum.
+
+### Edit Text Button Placement (2026-05-15)
+- **Portrait (2-row toolbar):** Edit Text/Done icon button in head toolbar right area row 1, extreme right position, **tier 1** (always visible).
+- **Landscape (1-row toolbar):** Floating "Edit"/"Done" button at **top-right of the lyrics text box**, positioned `absolute top-2 right-2` inside the editor container. Not in the head toolbar.
+- `isEditMode` state lives in `App.tsx`, passed as props to `LyricsBuilder`.
+- Old `fixed top-4 left-4` floating buttons replaced with the above.
+
+### Toolbar Tier System (2026-05-15)
+- `toolbarProposal: 1 | 2 | 3` from Zustand store controls head toolbar button visibility.
+- `showTier(tier)` helper: visible when `toolbarProposal <= tier`.
+- Tier 1: Always visible (Logo, App mode, BPM/Sig, Transport)
+- Tier 2: Visible at proposal 1-2, hidden at proposal 3 (Metronome, Locks, Cues, Fullscreen, etc.)
+- Tier 3: Only at proposal 1 (Zoom slider, Settings)
+
 ### Miscellaneous UI Adaptations
 - **Button sizing via `useToolbarContext.screenSize`**: All buttons use per-component logic to set sizes:
   - `small` (portrait): `min-h-[36px] min-w-[36px] p-1 text-[9px]` (square for icons, rectangular for text)

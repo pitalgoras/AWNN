@@ -114,13 +114,12 @@ export default function AudioEditorView() {
       const headerHeight = window.innerWidth < 640 ? 48 : 64;
       const availableHeight = window.innerHeight - headerHeight - 4; // -4 for playhead slider height
       
-      const totalUnits = 5 + 0.8;
+      const nonMetronomeTracks = tracks.filter(t => t.id !== 'metronome');
+      const totalUnits = nonMetronomeTracks.length;
       let calculatedTrackHeight = Math.floor(availableHeight / totalUnits);
       
-      const maxTrackHeight = 150;
       const minTrackHeight = 40;
       
-      if (calculatedTrackHeight > maxTrackHeight) calculatedTrackHeight = maxTrackHeight;
       if (calculatedTrackHeight < minTrackHeight) calculatedTrackHeight = minTrackHeight;
       
       const calculatedMetronomeHeight = Math.floor(calculatedTrackHeight * 0.8);

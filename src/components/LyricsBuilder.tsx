@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useStore, VoicingSegment } from '../store/useStore';
 import { cn } from '../lib/utils';
-import { Palette, AlignLeft, Edit3, Anchor, Wand2, ArrowLeftRight, Mic, VolumeX, Volume2 } from 'lucide-react';
+import { Palette, AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, VolumeX, Volume2, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
 import { getContrastColor } from '../lib/utils';
 import { useToolbarContext } from '../hooks/useToolbarContext';
@@ -22,7 +22,12 @@ const STANDARD_VOICINGS = [
   { id: '#38B2AC', label: 'Tenor & Bass', tag: '[T&B]', trackId: null },
 ];
 
-export const LyricsBuilder: React.FC = () => {
+interface Props {
+  isEditMode: boolean;
+  setIsEditMode: (v: boolean) => void;
+}
+
+export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode }) => {
   const {
     lyricsText,
     setLyricsText,
@@ -42,7 +47,6 @@ export const LyricsBuilder: React.FC = () => {
 
   const { startRecording, stopRecording } = useAudioEngine();
 
-  const [isEditMode, setIsEditMode] = useState(false);
   const [isPainting, setIsPainting] = useState(false);
   
   const toolbarContext = useToolbarContext('vertical');
@@ -578,38 +582,6 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
           isEditMode && "overflow-hidden" // Hide scroll if edit mode uses full screen textarea
         )}
       >
-        {/* Floating Edit Text button when not in edit mode */}
-        {!isEditMode && (
-          <button
-            onClick={() => setIsEditMode(true)}
-            className={cn(
-              "fixed top-4 left-4 z-50 flex items-center gap-1 shadow-lg",
-              getBtnClass(false),
-              "rounded-lg bg-zinc-800 text-zinc-200 border border-zinc-700 hover:bg-zinc-700"
-            )}
-            title="Edit Lyrics Text"
-          >
-            <Edit3 size={btnIconSize} />
-            <span className={screenSize === 'small' ? 'text-[9px]' : screenSize === 'medium' ? 'text-[10px]' : 'text-xs'}>{lyricsGetLabel('Edit Text', 'Edit')}</span>
-          </button>
-        )}
-        
-        {/* Floating Done button in edit mode */}
-        {isEditMode && (
-          <button
-            onClick={() => setIsEditMode(false)}
-            className={cn(
-              "fixed top-4 left-4 z-50 flex items-center gap-1 shadow-lg",
-              getBtnClass(false),
-              "rounded-lg bg-zinc-100 text-zinc-900"
-            )}
-            title="Finish Editing"
-          >
-            <Edit3 size={btnIconSize} />
-            <span className={screenSize === 'small' ? 'text-[9px]' : screenSize === 'medium' ? 'text-[10px]' : 'text-xs'}>{lyricsGetLabel('Done', '✓')}</span>
-          </button>
-        )}
-        
         {/* Heatmap Layer */}
         {!isEditMode && <VerticalHeatmap scrollContainerRef={containerRef} />}
 
@@ -644,6 +616,22 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
 
         {/* Lyrics Editor / Canvas */}
         <div className={cn("flex-1 max-w-4xl", isEditMode ? "p-6" : "relative")}>
+          {!isPortrait && !isEditMode && (
+            <button onClick={() => setIsEditMode(true)}
+              className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-800 text-white hover:bg-zinc-700 shadow-sm"
+              title="Edit Lyrics Text"
+            >
+              <Edit3 size={14} /> Edit
+            </button>
+          )}
+          {!isPortrait && isEditMode && (
+            <button onClick={() => setIsEditMode(false)}
+              className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-900 shadow-sm"
+              title="Finish Editing"
+            >
+              <Edit3 size={14} /> Done
+            </button>
+          )}
           {isEditMode ? (
             <textarea
               className="w-full h-full min-h-[500px] bg-zinc-950 border border-zinc-800 rounded p-6 text-sm md:text-base font-serif text-zinc-200 outline-none resize-none leading-loose"

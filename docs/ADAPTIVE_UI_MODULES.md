@@ -536,7 +536,21 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
    - Bottom bar layout: single voices as vertical columns, multiple-voicing buttons flow right
    - Added `paletteBtnSize` (fixed small buttons) and `smallBtnClass` (compact M/R)
    - Removed `min-w` constraints
-7. **useToolbarContext.ts**: Simplified to CSS pixel breakpoints (<768px small, 768-1280px medium, >1280px large)
+  7. **useToolbarContext.ts**: Simplified to CSS pixel breakpoints (<768px small, 768-1280px medium, >1280px large)
+
+---
+
+## Recent Implementation Summary (2026-05-15) — UI Revamp
+
+### Completed Changes
+1. **Tier System (`showTier`)**: Added `showTier = (tier: 1|2|3) => toolbarProposal <= tier` in `App.tsx`. Each head toolbar button wrapped in its tier level. Logo = tier 1, most buttons = tier 2, Zoom + Settings = tier 3.
+2. **Elastic Track Heights**: Removed `maxTrackHeight=150` cap. `totalUnits` uses actual track count (filters out metronome). Container CSS changed to `height: 100%; min-height: totalHeight`.
+3. **Header Auto-Height**: `h-10`/`h-20` → `min-h-10`/`min-h-20`. Removed `overflow-hidden`. Header height measured via `mainToolbarRef.current?.offsetHeight` with proper portrait fallback (80px).
+4. **Logo Menu Unconditional**: Logo menu modal moved outside layout branches, works in both portrait and landscape. Portrait has compact logo button in left area. Settings added to logo menu.
+5. **Settings Tier 3**: Settings removed from portrait toolbar. In landscape, only at `showTier(3)` — hidden when `toolbarProposal > 1`.
+6. **Edit Text Relocation**: Portrait → right area tier 1. Landscape → floating top-right of lyrics text container. Props lifted to App.tsx.
+7. **TrackToolbar Horizontal Sync**: `Math.floor(trackHeight * 1.5)` matches `useAudioEngine.adjustLayout`.
+8. **Tempo & Metronome Closer**: Removed `ml-1` wrapper around metronome mute button. Direct child of BPM flex container.<｜end▁of▁thinking｜>
 8. **useAdaptiveLabels.ts**: Replaced inch-based calculations with CSS pixel thresholds (50px vertical, 30px horizontal per-item)
 
 ### Build Status

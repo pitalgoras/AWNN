@@ -21,7 +21,27 @@ This document tracks the features discussed, planned, implemented, and discarded
 - [x] **Intelligent Clip Selection:** Double-click on a track selects the clip currently under the playhead.
 - [x] **Envelope Follows Clip:** Moving a clip on the timeline automatically shifts its associated envelope nodes.
 - [x] **Drag-to-Delete Nodes:** Envelope nodes can be deleted by dragging them far outside the track boundaries.
- - [x] **Lyrics Builder Mode:** 
+ - [x] **UI Revamp — Toolbar Tier System (2026-05-15):**
+   - `toolbarProposal` 3-tier system (1=expanded, 2=compact, 3=minimal) controls head toolbar button visibility.
+   - `showTier` helper maps each button to its tier. Logo = tier 1 (always visible), most buttons = tier 2, Settings + Zoom = tier 3.
+- [x] **Elastic Track Heights (2026-05-15):**
+   - No maximum cap — tracks expand to fill available vertical space.
+   - Dynamic track count — `totalUnits` uses actual visible track count.
+   - Multitrack container fills its flex parent with `height: 100%`.
+- [x] **Settings in Logo Menu (2026-05-15):**
+   - Settings accessible from the AWNN logo menu modal in both portrait and landscape.
+   - Removed from portrait head toolbar. In landscape, only at toolbar tier 3 (hidden when cramped).
+- [x] **Header Auto-Height (2026-05-15):**
+   - Header uses `min-h-` instead of fixed `h-` to accommodate content growth.
+   - Actual header height measured via ref for accurate track height calculation.
+- [x] **Edit Text in Head Toolbar (Lyrics Mode, 2026-05-15):**
+   - Portrait: Edit Text/Done button in head toolbar right area, tier 1.
+   - Landscape: Floating button at top-right of lyrics text container.
+- [x] **TrackToolbar Horizontal Sync (2026-05-15):**
+   - Row heights use `Math.floor(trackHeight * 1.5)` to match timeline calculation exactly.
+- [x] **Tempo & Metronome Mute Integrated (2026-05-15):**
+   - Metronome mute button now sits directly in BPM section's flex container without extra gap.
+- [x] **Lyrics Builder Mode:** 
    - Toggle between Multitrack and Lyrics modes natively without halting playback or discarding project data.
    - Interactive "Paint Bucket" editor that allows assigning colors (voicings) to words.
    - Voicing labels are only inserted when the voicing **changes**. The algorithm:

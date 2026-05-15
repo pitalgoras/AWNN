@@ -69,7 +69,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
         {(tracks || []).filter(t => t.id !== 'metronome').map((track) => {
           const isMetronome = track.id === 'metronome';
           const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
-          const currentHeight = isMetronome ? metronomeHeight : (isExpanded ? trackHeight * 1.5 : trackHeight);
+          const currentHeight = isMetronome ? metronomeHeight : (isExpanded ? Math.floor(trackHeight * 1.5) : trackHeight);
           
           const shortLabel = getShortLabel(track);
           const trackColor = track.color || '#666';

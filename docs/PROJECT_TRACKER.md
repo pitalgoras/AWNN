@@ -21,3 +21,12 @@
     - [x] Compact settings layout with grid
     - [x] Reduced padding and margins on modals
     - [x] Flow sections horizontally in portrait settings
+- [ ] UI Revamp (2026-05-15)
+    - [x] Toolbar tier system (`showTier`, toolbarProposal 1/2/3)
+    - [x] Elastic track heights (removed max cap, dynamic count)
+    - [x] Logo menu unconditional (works in portrait + landscape)
+    - [x] Settings in logo menu + tier 3 in landscape toolbar
+    - [x] Header auto-height (`min-h-`, measured via ref)
+    - [x] Edit Text button: portrait toolbar right area, landscape floating
+    - [x] TrackToolbar horizontal sync (`Math.floor`)
+    - [x] Tempo & metronome mute closer together

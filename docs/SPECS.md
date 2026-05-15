@@ -50,7 +50,8 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 14. **Cues System:** A system for adding and managing cues (markers) on the timeline. Cues can be added from the transport bar or the cues panel. The cues panel can be toggled on/off and allows for deleting cues. The transport bar displays the current position in both time and `Bar.Beat` format.
 15. **Responsive & Mobile-Friendly Layout:** 
     * The track sidebar occupies a proportional **25% width** of the screen.
-    * Track heights are dynamic, ensuring at least 5 tracks + metronome fit on the screen (max ~150px).
+    * Track heights are **elastic** — no maximum cap. Tracks grow to fill all available vertical space, calculated as `(viewportHeight - headerHeight - 4) / visibleTrackCount`. Minimum 40px per track.
+    * Header height adjusts dynamically (`min-h-10`/`min-h-20`) and is measured via ref rather than hardcoded.
     * Range sliders (Volume, Offset, Zoom) feature larger hit areas (`h-3`) and "click-to-jump" behavior for better touch usability.
     * Optimized vertical space with reduced header and track margins.
 16. **Timeline Grid Virtualization:** The grid only renders visible beat/bar lines, ensuring smooth performance at all zoom levels.

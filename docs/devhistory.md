@@ -419,3 +419,58 @@ No accidental playhead movement during recording.
 - `f524e7c` — fix: Firefox — remove channelCountMode:explicit from calibrator worklet
 - `a4ec9c2` — fix: Firefox raw audio — restore all three constraints (echo, noise, AGC)
 - `5fa147b` — chore: add getSettings() logging to diagnose Firefox raw audio
+
+## 29. UI Revamp — Toolbar Tier System, Elastic Tracks, Edit Text Relocation (2026-05-15)
+
+**Branch:** `ui-revamp`
+
+### Changes
+
+**A. Logo Menu Modal**
+- Moved the logo menu (Save/Load/Import/Settings modal) from inside the Normal layout branch to a standalone element after `</header>`, making it unconditional — works in both portrait and landscape.
+- Added **Settings** option to the logo menu (with separator).
+- Portrait mode now also has a logo button (compact Music icon) in the left area row 1.
+
+**B. Toolbar Tier System (`toolbarProposal`)**
+- Introduced `showTier(tier: 1|2|3)` helper: `toolbarProposal <= tier`.
+- `toolbarProposal` values: 1 (expanded), 2 (compact), 3 (minimal).
+- Tier mapping for the head toolbar:
+
+  | Tier | Portrait | Normal |
+  |---|---|---|
+  | **1** (always) | Logo, App mode, BPM/Sig, Transport | Logo, View toggle, BPM/Sig, Transport |
+  | **2** (proposal ≤ 2) | Metronome, Locks, Pre-roll, Cues, Fullscreen | Metronome mute, Locks, TransportTimeDisplay, Pre-roll, Cues, Fullscreen |
+  | **3** (proposal = 1 only) | — | Zoom slider, Settings |
+
+- Settings is now tier 3 (replaced the old `!mainToolbarAbbreviated` check).
+
+**C. Elastic Track Heights**
+- Removed `maxTrackHeight = 150` cap — tracks grow unbounded to fill available vertical space.
+- `totalUnits` now uses actual track count (`tracks.filter(t => t.id !== 'metronome').length`) instead of hardcoded `5 + 0.8`.
+- Removed `metronomeHeight` from `totalUnits` calculation (metronome has no visual waveform track — it's just data).
+- `minTrackHeight = 40` kept as floor.
+
+**D. Header Auto-Height**
+- Header heights changed from fixed `h-10`/`h-20` to `min-h-10`/`min-h-20` so the header can grow naturally if buttons wrap.
+- Removed `overflow-hidden` from header to prevent clipping.
+- `headerHeight` in `handleResize` now uses `mainToolbarRef.current?.offsetHeight` (actual measured height) with fallback `isSmallPortrait ? 80 : ...` for portrait mode.
+
+**E. TrackToolbar Horizontal Sync**
+- TrackToolbar row heights now use `Math.floor(trackHeight * 1.5)` for expanded tracks, matching the timeline's exact calculation in `useAudioEngine.adjustLayout`. Previously used raw `trackHeight * 1.5` (could produce `.5` fractional pixel mismatch).
+
+**F. Multitrack Container CSS**
+- Changed from fixed `height: ${totalHeight}px` to `height: 100%; min-height: ${totalHeight}px` — the container fills its flex parent while maintaining a minimum height equal to the sum of all track rows.
+
+**G. Settings Relocation**
+- Settings button removed from portrait mode head toolbar entirely.
+- In landscape/normal layout, Settings is tier 3 (only visible at `toolbarProposal === 1`).
+- Settings is accessible via the logo menu in both layouts.
+
+**H. Edit Text Button Relocation (Lyrics Mode)**
+- **Portrait (2-row toolbar):** Edit Text/Done icon button in the head toolbar right area row 1, extreme right, tier 1.
+- **Landscape (1-row toolbar):** Floating "Edit"/"Done" button at top-right of the lyrics text box (inside the editor container).
+- Old floating buttons (`fixed top-4 left-4`) removed from `LyricsBuilder.tsx`.
+- `isEditMode` state lifted from `LyricsBuilder` to `App.tsx`, passed as props.
+
+**I. Tempo & Metronome Mute Closer Together**
+- Removed the wrapper `<div>` + `ml-1` gap around the metronome mute button in the normal layout. The button is now a direct child of the BPM section's flex container, sharing the parent `gap-2` spacing.<｜end▁of▁thinking｜>

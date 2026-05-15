@@ -234,9 +234,8 @@ const {
         --normal-track-h: ${normalHeight}px;
       }
       .multitrack-container > div > div {
-        height: ${totalHeight}px !important;
         min-height: ${totalHeight}px !important;
-        max-height: ${totalHeight}px !important;
+        height: 100% !important;
         overflow: hidden !important;
       }
     `;
