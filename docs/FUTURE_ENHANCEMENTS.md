@@ -31,6 +31,10 @@ worklet.port.postMessage({
 
 The worklet would need a new method handler that stores the timeline and switches BPM/sig at the correct bar boundary. Main thread: store timeline in a store field, reuse existing cues UI for editing (snap BPM cues to nearest beat, signature cues to nearest bar).
 
+### 3. BPM changes with existing audio clips
+
+Currently, changing BPM after clips are laid down shows a confirmation modal ("will NOT stretch existing audio clips — grid only"). This is correct for the current grid-only behavior. Future: per-bar BPM timeline means clips snap to the correct bar regardless of tempo at that point. No stretching needed — the clip's `startPosition` in UserTime maps to the correct RealTime via the BPM timeline.
+
 ### 3. Visual beat indicator
 
 Currently no visual feedback from the worklet to the UI. Options:
