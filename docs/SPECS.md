@@ -13,6 +13,7 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 
 ## Architecture
 * **Global State (`useStore.ts`):** Manages the source of truth for tracks, phrases (clips), envelope nodes, playback state (isPlaying, currentTime, duration), and UI state (zoom, active track, locks).
+* **ModalShell (`src/components/modals/ModalShell.tsx`):** A generic modal wrapper providing consistent backdrop (blur + click-to-close), header with title + X close button, and a CSS `columns-2` content area at the `sm:` breakpoint. Modals pass content as flat `<div>` children; CSS columns auto-distribute them into 2 balanced columns via `break-inside: avoid`. This eliminates per-modal column layout logic — modals must NOT use their own grid/flex column layout at the top level.
 * **Audio Engine Hook (`useAudioEngine.ts`):** Acts as the bridge between the React state and the imperative `wavesurfer-multitrack` instance. It handles:
   * Initializing the multitrack player with a shared `AudioContext` and `WebAudioPlayer` for stability.
   * Synchronizing React state changes (play/pause, volume, mute, solo) to the audio engine.

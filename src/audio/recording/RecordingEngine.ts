@@ -8,7 +8,7 @@
  * - When recording WHILE PLAYING: no head captured (recording starts at punch-in time)
  * 
  * startPosition calculation:
- * - From STOP (any preRoll): headLength = 1s, startPos = punchInUserTime - 1
+ * - From STOP (any preRoll): headLength = 500ms, startPos = punchInUserTime - 0.5
  * - While PLAYING: headLength = 0, startPos = punchInUserTime
  * 
  * REQUIREMENT: AudioWorklet is mandatory for this app to work correctly.
@@ -56,9 +56,12 @@ export class RecordingEngine {
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
 
+  // Idle timer: releases mic resources after 15s of inactivity
+  private stopTimer: ReturnType<typeof setTimeout> | null = null;
+
   // Rolling buffer head length from config (defaults to 1s)
   private get headLength(): number {
-    return this.config.headLength || 1.0;
+    return this.config.headLength || 0.5;
   }
 
   // AudioWorklet recording (shared clock with playback)
@@ -89,6 +92,7 @@ export class RecordingEngine {
   }
 
   async initializeForPlayback(): Promise<void> {
+    this.cancelStopTimer();
     if (this.continuousMicStream) {
       console.warn('initializeForPlayback: already have stream, returning');
       return;
@@ -122,6 +126,7 @@ export class RecordingEngine {
   }
 
   stopForPlayback(): void {
+    this.cancelStopTimer();
     if (!this.continuousMicStream) {
       console.warn('stopForPlayback: no stream, returning');
       return;
@@ -143,6 +148,21 @@ export class RecordingEngine {
     }
   }
 
+  scheduleStopPlayback(delay = 15000): void {
+    this.cancelStopTimer();
+    this.stopTimer = setTimeout(() => {
+      this.stopTimer = null;
+      this.stopForPlayback();
+    }, delay);
+  }
+
+  cancelStopTimer(): void {
+    if (this.stopTimer) {
+      clearTimeout(this.stopTimer);
+      this.stopTimer = null;
+    }
+  }
+
   updateConfig(config: Partial<RecordingConfig>) {
     this.config = { ...this.config, ...config };
   }
@@ -152,6 +172,7 @@ export class RecordingEngine {
   }
 
   async initStream(): Promise<void> {
+    this.cancelStopTimer();
     if (this.continuousMicStream) {
       this.continuousMicStream.getTracks().forEach(t => t.stop());
       this.continuousMicStream = null;
@@ -345,6 +366,7 @@ export class RecordingEngine {
 
     this.activeTrackId = null;
     this.callbacks.onSetIsRecording(false);
+    this.scheduleStopPlayback();
   }
 
   async startRecording(trackId: string): Promise<void> {
@@ -498,6 +520,7 @@ this.recordingCancelled = false;
   }
 
   cleanup(): void {
+    this.cancelStopTimer();
     if (this.audioWorkletNode) {
       this.audioWorkletNode.port.close();
       this.audioWorkletNode.disconnect();

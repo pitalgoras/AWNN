@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useStore } from '../../store/useStore';
-import { Square, Upload } from 'lucide-react';
+import { Upload } from 'lucide-react';
 import { autoMatchFileToTrack, decodeAudioFile, trackNameFromFile } from '../../audio/import/importUtils';
 import { TrackListEditor } from '../settings/TrackListEditor';
 import { calculatePeaksAsync } from '../../audio/processing/audioUtils';
+import { ModalShell } from './ModalShell';
 
 interface Props { show: boolean; onClose: () => void; files: File[] }
 
@@ -29,9 +30,7 @@ export const ImportAudioModal: React.FC<Props> = ({ show, onClose, files }) => {
     setMapping(map);
   }, [show, files, tracks]);
 
-  if (!show) return null;
-
-  const nonMetroTracks = tracks.filter(t => t.id !== 'metronome');
+  const nonMetroTracks = tracks;
 
   const runImport = async () => {
     if (!audioContextRef.current) {
@@ -80,16 +79,8 @@ export const ImportAudioModal: React.FC<Props> = ({ show, onClose, files }) => {
   const assignedCount = files.filter((_, i) => mapping.get(i) && mapping.get(i) !== '__new__').length;
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-zinc-900 border border-zinc-800 rounded-2xl w-full max-w-2xl shadow-2xl overflow-y-auto max-h-[95vh]" onClick={e => e.stopPropagation()}>
-        <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center sticky top-0 z-10">
-          <h2 className="text-lg font-bold tracking-tight">Import Audio Tracks</h2>
-          <button onClick={onClose} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
-            <Square className="w-4 h-4 text-zinc-500" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-6">
+    <ModalShell show={show} onClose={onClose} title="Import Audio Tracks" maxWidth="max-w-2xl" singleColumn>
+      <div className="space-y-6">
           {/* File list with assignment dropdowns */}
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-3">Files to import ({files.length})</label>
@@ -133,7 +124,6 @@ export const ImportAudioModal: React.FC<Props> = ({ show, onClose, files }) => {
             </button>
           </div>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 };

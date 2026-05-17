@@ -126,5 +126,15 @@ This document tracks the features discussed, planned, implemented, and discarded
   - **headLength changes in Advanced Settings don't take effect until page reload** — `headLength`, `startupDelayMs`, `bufferSafetyMs` missing from engine init effect dep array.
   - **Pre-roll recording doesn't show negative timeline during count-in** — `!state.isRecording` guard blocks `setRecordingMode(true)` in play/pause sync effect, preventing the scroll container from unlocking to show the PRE bar.
 
+## Version 2 (post v1)
+- [ ] **Per-bar BPM Timeline:**
+  - Replace single `{ bpm, timeSignature }` with a timeline array of `{ bar: number; bpm: number; beatsPerBar: number }` entries.
+  - Worklet switches BPM/sig at the correct bar boundary.
+  - UI: reuse cues-style editor for creating and snapping BPM/signature points.
+- [ ] **Custom Click Sounds:**
+  - Import WAV files for downbeat and/or offbeat click sounds.
+  - Post via `SET_CLICK_SOUNDS` to the metronome worklet (already supported).
+  - UI in the Tempo and Time Signature modal.
+
 ## Discarded
 - [x] **Playback-Level Offset for Latency:** Discarded because it causes the visual waveform to be out of sync with the audio playback, leading to a confusing UX.

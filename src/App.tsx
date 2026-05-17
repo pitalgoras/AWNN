@@ -4,6 +4,7 @@ import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind,
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
+import { ModalShell } from './components/modals/ModalShell';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TrackManagerModal } from './components/modals/TrackManagerModal';
 import { MetronomeModal } from './components/modals/MetronomeModal';
@@ -15,8 +16,8 @@ import { SyncTool } from './components/SyncTool';
 import { EnvelopeEditor } from './components/EnvelopeEditor';
 import { useToolbarContext, type ScreenSize, type ToolbarType } from './hooks/useToolbarContext';
 import { useAdaptiveLabels } from './hooks/useAdaptiveLabels';
-import { ManualCalibrationModal } from './components/ManualCalibrationModal';
-import { LatencyCalibrationModal } from './components/LatencyCalibrationModal';
+import { ManualCalibrationModal } from './components/modals/ManualCalibrationModal';
+import { LatencyCalibrationModal } from './components/modals/LatencyCalibrationModal';
 import { TimelineGrid } from './components/TimelineGrid';
 import { LyricsBuilder } from './components/LyricsBuilder';
 import { TrackToolbar } from './components/TrackToolbar';
@@ -236,16 +237,6 @@ export default function App() {
 
   // Logo menu state
   const [showLogoMenu, setShowLogoMenu] = useState(false);
-  const logoMenuRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (logoMenuRef.current && !logoMenuRef.current.contains(e.target as Node)) {
-        setShowLogoMenu(false);
-      }
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
 
   // Pinch-to-zoom on the multitask container
   const pinchRef = useRef({ dist: 0, zoom: 0 });
@@ -637,8 +628,6 @@ export default function App() {
 
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-800 overflow-hidden">
-      <StatusLogger />
-      
       {/* Hidden input for importing project JSON file */}
       <input 
         type="file" 
@@ -949,39 +938,29 @@ export default function App() {
         )}
       </header>
 
-      {/* Logo Menu Modal (unconditional) */}
-      {showLogoMenu && (
-        <div ref={logoMenuRef} className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-6" onClick={() => setShowLogoMenu(false)}>
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-full max-w-sm shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="p-5 border-b border-zinc-800 flex justify-between items-center">
-              <h2 className="text-base font-bold">Menu</h2>
-              <button onClick={() => setShowLogoMenu(false)} className="p-1 hover:bg-zinc-800 rounded-full transition-colors">
-                <Square className="w-4 h-4 text-zinc-500" />
-              </button>
-            </div>
-            <div className="p-3 space-y-1">
-              <button onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-                <Save size={16} /> Save Song
-              </button>
-              <button onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-                <FolderOpen size={16} /> Load Song
-              </button>
-              <div className="h-px bg-zinc-800 mx-2" />
-              <button onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-                <Upload size={16} /> Import Audio Tracks
-              </button>
-              <div className="h-px bg-zinc-800 mx-2" />
-              <button onClick={() => { setShowSettings(true); setShowLogoMenu(false); }}
-                className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-                <Settings size={16} /> Settings
-              </button>
-            </div>
-          </div>
+      {/* Logo Menu Modal */}
+      <ModalShell show={showLogoMenu} onClose={() => setShowLogoMenu(false)} title="Menu">
+        <div className="space-y-1">
+          <button onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+            <Save size={16} /> Save Song
+          </button>
+          <button onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+            <FolderOpen size={16} /> Load Song
+          </button>
+          <div className="h-px bg-zinc-800 mx-2" />
+          <button onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+            <Upload size={16} /> Import Audio Tracks
+          </button>
+          <div className="h-px bg-zinc-800 mx-2" />
+          <button onClick={() => { setShowSettings(true); setShowLogoMenu(false); }}
+            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+            <Settings size={16} /> Settings
+          </button>
         </div>
-      )}
+      </ModalShell>
 
       {/* Main Workspace */}
       <main className="flex-1 flex overflow-hidden relative">
@@ -1090,175 +1069,157 @@ export default function App() {
 
       </main>
 
-      {/* Manual Calibration Modal */}
-      {isManualCalibrating && (
-        <ManualCalibrationModal onClose={() => setIsManualCalibrating(false)} />
-      )}
+      <ManualCalibrationModal show={isManualCalibrating} onClose={() => setIsManualCalibrating(false)} />
 
-      {isLatencyCalibrating && (
-        <LatencyCalibrationModal onClose={() => setIsLatencyCalibrating(false)} />
-      )}
+      <LatencyCalibrationModal show={isLatencyCalibrating} onClose={() => setIsLatencyCalibrating(false)} />
 
-      {showAdvancedSettings && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-[100] flex items-center justify-center p-2" onClick={() => setShowAdvancedSettings(false)}>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-sm shadow-2xl overflow-hidden flex flex-col max-h-[95vh]" onClick={e => e.stopPropagation()}>
-            <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center shrink-0">
-              <div className="flex items-center gap-2">
-                <Settings className="w-4 h-4 text-zinc-400" />
-                <h2 className="text-base font-bold tracking-tight">Advanced Settings</h2>
-              </div>
-              <button onClick={() => setShowAdvancedSettings(false)} className="p-1.5 hover:bg-zinc-800 rounded-full transition-colors">
-                <Square className="w-4 h-4 text-zinc-500" />
-              </button>
+      <ModalShell show={showAdvancedSettings} onClose={() => setShowAdvancedSettings(false)} title="Advanced Settings">
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
+            Microphone Capture
+          </label>
+          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
+            <div className="pr-4">
+              <div className="text-sm font-bold text-zinc-100">Raw Capture</div>
+              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Disables browser echo cancellation, noise suppression, and AGC. Allows for lower latency, but requires headphones to avoid feedback.</div>
             </div>
+            <button 
+              onClick={() => useStore.getState().setRawRecordingMode(!useStore.getState().rawRecordingMode)}
+              className={cn("w-10 h-6 rounded-full relative transition-colors shrink-0", useStore.getState().rawRecordingMode ? "bg-green-500" : "bg-zinc-700")}
+            >
+              <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-transform", useStore.getState().rawRecordingMode ? "left-5" : "left-1")} />
+            </button>
+          </div>
 
-            <div className="p-4 overflow-y-auto space-y-6">
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Microphone Capture
-                </label>
-                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
-                  <div className="pr-4">
-                    <div className="text-sm font-bold text-zinc-100">Raw Capture</div>
-                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Disables browser echo cancellation, noise suppression, and AGC. Allows for lower latency, but requires headphones to avoid feedback.</div>
-                  </div>
-                  <button 
-                    onClick={() => useStore.getState().setRawRecordingMode(!useStore.getState().rawRecordingMode)}
-                    className={cn("w-10 h-6 rounded-full relative transition-colors shrink-0", useStore.getState().rawRecordingMode ? "bg-green-500" : "bg-zinc-700")}
-                  >
-                    <div className={cn("w-4 h-4 bg-white rounded-full absolute top-1 transition-transform", useStore.getState().rawRecordingMode ? "left-5" : "left-1")} />
-                  </button>
-                </div>
-
-                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
-                  <div className="pr-4">
-                    <div className="text-sm font-bold text-zinc-100">Head Length</div>
-                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Rolling buffer head duration before punch-in. New clips use this value.</div>
-                  </div>
-                  <input 
-                    type="number" 
-                    min="0" max="1" step="0.1"
-                    value={useStore.getState().headLength}
-                    onChange={(e) => {
-                      const val = parseFloat(e.target.value);
-                      if (!isNaN(val)) useStore.getState().setHeadLength(val);
-                    }}
-                    className="w-16 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-100 text-right"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Diagnostics
-                </label>
-                <button 
-                  onClick={() => {
-                    setShowAdvancedSettings(false);
-                    setIsManualCalibrating(true);
-                  }}
-                  className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-                >
-                  Start Loopback Latency Test
-                </button>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
-                  Button Sizes (CSS px)
-                </label>
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
-                    <span className="text-xs text-zinc-300">Small Screen</span>
-                    <input 
-                      type="number" 
-                      min="24" max="48" step="1"
-                      value={smallBtnSize}
-                      onChange={(e) => setSmallBtnSize(parseInt(e.target.value) || 36)}
-                      className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
-                    <span className="text-xs text-zinc-300">Medium Screen</span>
-                    <input 
-                      type="number" 
-                      min="32" max="56" step="1"
-                      value={mediumBtnSize}
-                      onChange={(e) => setMediumBtnSize(parseInt(e.target.value) || 44)}
-                      className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
-                    />
-                  </div>
-                  <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
-                    <span className="text-xs text-zinc-300">Large Screen</span>
-                    <input 
-                      type="number" 
-                      min="40" max="64" step="1"
-                      value={largeBtnSize}
-                      onChange={(e) => setLargeBtnSize(parseInt(e.target.value) || 52)}
-                      className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* Dangerous Settings */}
-              <div className="border-t border-red-900/30 pt-4 mt-4">
-                <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-red-500 mb-2">
-                  Dangerous Settings
-                </label>
-                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30">
-                  <div className="pr-4">
-                    <div className="text-sm font-bold text-zinc-100">Startup Delay</div>
-                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Estimated time (ms) between play start and actual audio context running. Higher = safer but slower.</div>
-                  </div>
-                  <input 
-                    type="number" 
-                    min="0" max="1000" step="10"
-                    value={useStore.getState().startupDelayMs}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      if (!isNaN(val)) useStore.getState().setStartupDelayMs(val);
-                    }}
-                    className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
-                  />
-                </div>
-                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
-                  <div className="pr-4">
-                    <div className="text-sm font-bold text-zinc-100">Buffer Safety</div>
-                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Extra wait (ms) after headLength to ensure rolling buffer is populated before recording starts.</div>
-                  </div>
-                  <input 
-                    type="number" 
-                    min="0" max="500" step="10"
-                    value={useStore.getState().bufferSafetyMs}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      if (!isNaN(val)) useStore.getState().setBufferSafetyMs(val);
-                    }}
-                    className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
-                  />
-                </div>
-                <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
-                  <div className="pr-4">
-                    <div className="text-sm font-bold text-zinc-100">Min Project Duration</div>
-                    <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Minimum timeline length (seconds). Playback won't stop before this. Also controls metronome buffer size.</div>
-                  </div>
-                  <input 
-                    type="number" 
-                    min="10" max="3600" step="10"
-                    value={Math.round(useStore.getState().minProjectDurationMs / 1000)}
-                    onChange={(e) => {
-                      const val = parseInt(e.target.value);
-                      if (!isNaN(val)) useStore.getState().setMinProjectDurationMs(val * 1000);
-                    }}
-                    className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
-                  />
-                </div>
-              </div>
+          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50 mt-2">
+            <div className="pr-4 flex-1 min-w-0">
+              <div className="text-sm font-bold text-zinc-100">Head Length</div>
+              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Rolling buffer head duration before punch-in. New clips use this value.</div>
+            </div>
+            <div className="flex items-center gap-3 shrink-0">
+              <span className="font-mono text-xs text-zinc-300 w-14 text-right tabular-nums">{useStore.getState().headLength.toFixed(3)}s</span>
+              <input 
+                type="range" 
+                min="0" max="1" step="0.001"
+                value={useStore.getState().headLength}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  if (!isNaN(val)) useStore.getState().setHeadLength(val);
+                }}
+                className="w-24 h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
+              />
             </div>
           </div>
         </div>
-      )}
+
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
+            Diagnostics
+          </label>
+          <button 
+            onClick={() => {
+              setShowAdvancedSettings(false);
+              setIsManualCalibrating(true);
+            }}
+            className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+          >
+            Start Loopback Latency Test
+          </button>
+        </div>
+
+        <div>
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
+            Button Sizes (CSS px)
+          </label>
+          <div className="space-y-3">
+            <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
+              <span className="text-xs text-zinc-300">Small Screen</span>
+              <input 
+                type="number" 
+                min="24" max="48" step="1"
+                value={smallBtnSize}
+                onChange={(e) => setSmallBtnSize(parseInt(e.target.value) || 36)}
+                className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
+              <span className="text-xs text-zinc-300">Medium Screen</span>
+              <input 
+                type="number" 
+                min="32" max="56" step="1"
+                value={mediumBtnSize}
+                onChange={(e) => setMediumBtnSize(parseInt(e.target.value) || 44)}
+                className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
+              />
+            </div>
+            <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-zinc-800/50">
+              <span className="text-xs text-zinc-300">Large Screen</span>
+              <input 
+                type="number" 
+                min="40" max="64" step="1"
+                value={largeBtnSize}
+                onChange={(e) => setLargeBtnSize(parseInt(e.target.value) || 52)}
+                className="w-16 bg-zinc-700 border border-zinc-600 rounded px-2 py-1 text-xs text-zinc-100 text-center"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Dangerous Settings */}
+        <div className="border-t border-red-900/30 pt-4">
+          <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-red-500 mb-2">
+            Dangerous Settings
+          </label>
+          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30">
+            <div className="pr-4">
+              <div className="text-sm font-bold text-zinc-100">Startup Delay</div>
+              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Estimated time (ms) between play start and actual audio context running. Higher = safer but slower.</div>
+            </div>
+            <input 
+              type="number" 
+              min="0" max="1000" step="10"
+              value={useStore.getState().startupDelayMs}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val)) useStore.getState().setStartupDelayMs(val);
+              }}
+              className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+            />
+          </div>
+          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
+            <div className="pr-4">
+              <div className="text-sm font-bold text-zinc-100">Buffer Safety</div>
+              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Extra wait (ms) after headLength to ensure rolling buffer is populated before recording starts.</div>
+            </div>
+            <input 
+              type="number" 
+              min="0" max="500" step="10"
+              value={useStore.getState().bufferSafetyMs}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val)) useStore.getState().setBufferSafetyMs(val);
+              }}
+              className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+            />
+          </div>
+          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
+            <div className="pr-4">
+              <div className="text-sm font-bold text-zinc-100">Min Project Duration</div>
+              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Minimum timeline length (seconds). Playback won't stop before this. Also controls metronome buffer size.</div>
+            </div>
+            <input 
+              type="number" 
+              min="10" max="3600" step="10"
+              value={Math.round(useStore.getState().minProjectDurationMs / 1000)}
+              onChange={(e) => {
+                const val = parseInt(e.target.value);
+                if (!isNaN(val)) useStore.getState().setMinProjectDurationMs(val * 1000);
+              }}
+              className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
+            />
+          </div>
+        </div>
+      </ModalShell>
 
       {/* Settings Modal */}
       <SettingsModal
@@ -1276,175 +1237,116 @@ export default function App() {
       <MetronomeModal show={showMetronomeSettings} onClose={() => setShowMetronomeSettings(false)} />
 
       {/* Track Edit Modal */}
-      {editingTrackId && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center" onClick={() => setEditingTrackId(null)}>
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-sm p-6 shadow-2xl" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-semibold">Track Settings</h2>
-              <button onClick={() => setEditingTrackId(null)} className="text-zinc-500 hover:text-zinc-300">
-                <Square className="w-4 h-4" />
-              </button>
-            </div>
-            
-            {(() => {
-              const track = tracks.find(t => t.id === editingTrackId);
-              if (!track) return null;
-              return (
-                <div className="space-y-6">
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">
-                      Volume
-                    </label>
-                    <div className="flex items-center gap-4">
-                      <Volume2 className="w-4 h-4 text-zinc-500" />
-                      <input 
-                        type="range" 
-                        min="0" max="1" step="0.01" 
-                        value={track.volume}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateTrack(track.id, { volume: parseFloat(e.target.value) })}
-                        className="flex-1 h-3 bg-zinc-800 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-zinc-100 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-zinc-400"
-                      />
-                      <span className="font-mono text-xs w-8 text-right">{Math.round(track.volume * 100)}%</span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">
-                      Offset (seconds)
-                    </label>
-                    <div className="flex items-center gap-4">
-                      <input 
-                        type="range" 
-                        min="-1" max="1" step="0.01" 
-                        value={track.offset || 0}
-                        onChange={(e: React.ChangeEvent<HTMLInputElement>) => updateTrack(track.id, { offset: parseFloat(e.target.value) })}
-                        className="flex-1 h-3 bg-zinc-800 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-zinc-100 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-zinc-400"
-                      />
-                      <span className="font-mono text-xs w-10 text-right">{(track.offset || 0).toFixed(2)}s</span>
-                    </div>
-                  </div>
-
-                  <div className="pt-4 border-t border-zinc-800 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <label className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Track Color</label>
-                      <div className="flex items-center gap-2">
-                        <input 
-                          type="color" 
-                          value={track.color}
-                          onChange={(e) => updateTrack(track.id, { color: e.target.value })}
-                          className="w-8 h-8 rounded cursor-pointer border-none bg-transparent"
-                        />
-                        <span className="text-[10px] font-mono text-zinc-500 uppercase">{track.color}</span>
-                      </div>
-                    </div>
-
-                    <input 
-                      type="file" 
-                      accept="audio/*" 
-                      className="hidden" 
-                      ref={audioInputRef}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (!file) return;
-                        
-                        perfLogger.log(10, file.name);
-                        const reader = new FileReader();
-                        reader.onload = async (event) => {
-                          perfLogger.log(13);
-                          const arrayBuffer = event.target?.result as ArrayBuffer;
-                          // Use a temporary AudioContext to decode the audio and get its exact duration
-                          const audioContext = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
-                          try {
-                            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
-                            const url = URL.createObjectURL(file);
-                            
-                            // Pre-calculate peaks to avoid main-thread spikes during WaveSurfer init
-                            const peaks = await calculatePeaksAsync(audioBuffer);
-                            
-                            useStore.getState().addPhrase(track.id, { 
-                              url, 
-                              blob: file,
-                              audioBuffer,
-                              peaks,
-                              startPosition: useStore.getState().currentTime,
-                              duration: audioBuffer.duration,
-                              headLength: useStore.getState().headLength,
-                              anchoredFrame: 0,
-                              originalAnchoredFrame: 0,
-                              createdAt: Date.now()
-                            });
-                          } catch (err) {
-                            console.error("Error decoding audio:", err);
-                            alert("Failed to import audio file.");
-                          } finally {
-                            audioContext.close();
-                          }
-                        };
-                        reader.readAsArrayBuffer(file);
-                        
-                        setEditingTrackId(null);
-                      }}
+      <ModalShell show={!!editingTrackId} onClose={() => setEditingTrackId(null)} title="Track Settings" singleColumn>
+        {(() => {
+          const track = tracks.find(t => t.id === editingTrackId);
+          if (!track) return null;
+          return (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">Volume</label>
+                <div className="flex items-center gap-4">
+                  <Volume2 className="w-4 h-4 text-zinc-500" />
+                  <input type="range" min="0" max="1" step="0.01" value={track.volume}
+                    onChange={(e) => updateTrack(track.id, { volume: parseFloat(e.target.value) })}
+                    className="flex-1 h-3 bg-zinc-800 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-zinc-100 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-zinc-400"
+                  />
+                  <span className="font-mono text-xs w-8 text-right">{Math.round(track.volume * 100)}%</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold uppercase tracking-widest text-zinc-500 mb-2">Offset (seconds)</label>
+                <div className="flex items-center gap-4">
+                  <input type="range" min="-1" max="1" step="0.01" value={track.offset || 0}
+                    onChange={(e) => updateTrack(track.id, { offset: parseFloat(e.target.value) })}
+                    className="flex-1 h-3 bg-zinc-800 rounded-full appearance-none cursor-pointer [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:bg-zinc-100 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:shadow-md [&::-webkit-slider-thumb]:border [&::-webkit-slider-thumb]:border-zinc-400"
+                  />
+                  <span className="font-mono text-xs w-10 text-right">{(track.offset || 0).toFixed(2)}s</span>
+                </div>
+              </div>
+              <div className="pt-4 border-t border-zinc-800 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Track Color</label>
+                  <div className="flex items-center gap-2">
+                    <input type="color" value={track.color}
+                      onChange={(e) => updateTrack(track.id, { color: e.target.value })}
+                      className="w-8 h-8 rounded cursor-pointer border-none bg-transparent"
                     />
-                    <button 
-                      onClick={() => audioInputRef.current?.click()}
-                      className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-sm font-medium transition-colors"
-                    >
-                      <Upload className="w-4 h-4" />
-                      Import Audio
-                    </button>
-                    
-                    <button 
-                      onClick={() => {
-                        fileInputRef.current?.click();
-                        setEditingTrackId(null);
-                      }}
-                      className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-sm font-medium transition-colors"
-                    >
-                      <Music className="w-4 h-4" />
-                      Import MIDI
-                    </button>
+                    <span className="text-[10px] font-mono text-zinc-500 uppercase">{track.color}</span>
                   </div>
                 </div>
-              );
-            })()}
-          </div>
-        </div>
-      )}
+                <input type="file" accept="audio/*" className="hidden" ref={audioInputRef}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    perfLogger.log(10, file.name);
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                      perfLogger.log(13);
+                      const arrayBuffer = event.target?.result as ArrayBuffer;
+                      const audioContext = new (window.AudioContext || (window as (typeof window & { webkitAudioContext: typeof AudioContext })).webkitAudioContext)();
+                      try {
+                        const audioBuffer = await audioContext.decodeAudioData(arrayBuffer.slice(0));
+                        const url = URL.createObjectURL(file);
+                        const peaks = await calculatePeaksAsync(audioBuffer);
+                        useStore.getState().addPhrase(track.id, {
+                          url, blob: file, audioBuffer, peaks,
+                          startPosition: useStore.getState().currentTime,
+                          duration: audioBuffer.duration,
+                          headLength: useStore.getState().headLength,
+                          anchoredFrame: 0, originalAnchoredFrame: 0,
+                          createdAt: Date.now()
+                        });
+                      } catch (err) {
+                        console.error("Error decoding audio:", err);
+                        alert("Failed to import audio file.");
+                      } finally {
+                        audioContext.close();
+                      }
+                    };
+                    reader.readAsArrayBuffer(file);
+                    setEditingTrackId(null);
+                  }}
+                />
+                <button onClick={() => audioInputRef.current?.click()}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-sm font-medium transition-colors">
+                  <Upload className="w-4 h-4" /> Import Audio
+                </button>
+                <button onClick={() => { fileInputRef.current?.click(); setEditingTrackId(null); }}
+                  className="w-full flex items-center justify-center gap-2 py-2 bg-zinc-800 hover:bg-zinc-700 rounded text-sm font-medium transition-colors">
+                  <Music className="w-4 h-4" /> Import MIDI
+                </button>
+              </div>
+            </div>
+          );
+        })()}
+      </ModalShell>
       {/* Import Audio Modal */}
       <ImportAudioModal show={showImportModal} onClose={() => setShowImportModal(false)} files={importFiles} />
 
       {/* Confirmation Modal for BPM/SIG changes */}
-      {pendingChange && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-xl shadow-2xl max-w-md w-full p-6 animate-in fade-in zoom-in duration-200">
-            <h3 className="text-lg font-bold mb-2">Confirm Project Change</h3>
-            <p className="text-sm text-zinc-400 mb-6 leading-relaxed">
-              Changing the {pendingChange.type === 'bpm' ? 'BPM' : 'Time Signature'} will alter the grid and click track, but will NOT stretch existing audio clips. This may cause misalignment.
-            </p>
-            <div className="flex gap-3 justify-end">
-              <button 
-                onClick={() => setPendingChange(null)}
-                className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors text-sm font-medium"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={() => {
-                  if (pendingChange.type === 'bpm') {
-                    setBpm(pendingChange.value as number);
-                  } else {
-                    setTimeSignature(pendingChange.value as [number, number]);
-                  }
-                  setPendingChange(null);
-                }}
-                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-sm font-medium shadow-lg shadow-emerald-900/20"
-              >
-                Proceed
-              </button>
-            </div>
-          </div>
+      <ModalShell show={!!pendingChange} onClose={() => setPendingChange(null)} title="Confirm Project Change" singleColumn>
+        <p className="text-sm text-zinc-400 mb-4 leading-relaxed">
+          Changing the {pendingChange?.type === 'bpm' ? 'BPM' : 'Time Signature'} will alter the grid and click track, but will NOT stretch existing audio clips. This may cause misalignment.
+        </p>
+        <div className="flex gap-3 justify-end">
+          <button onClick={() => setPendingChange(null)}
+            className="px-4 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors text-sm font-medium">
+            Cancel
+          </button>
+          <button onClick={() => {
+            if (pendingChange?.type === 'bpm') {
+              setBpm(pendingChange.value as number);
+            } else {
+              setTimeSignature(pendingChange.value as [number, number]);
+            }
+            setPendingChange(null);
+          }}
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-sm font-medium shadow-lg shadow-emerald-900/20">
+            Proceed
+          </button>
         </div>
-      )}
+      </ModalShell>
     </div>
   );
 }

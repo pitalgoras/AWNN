@@ -190,7 +190,7 @@ const defaultSettings = {
   moveLocked: true,
   envelopeLocked: true,
   rawRecordingMode: true,
-  headLength: 1.0, // Default 1 second rolling buffer head
+  headLength: 0.5, // Default 500ms rolling buffer head
   startupDelayMs: 150, // Default 150ms estimated startup latency (dangerous setting)
   bufferSafetyMs: 100, // Default 100ms buffer safety margin (dangerous setting)
   minProjectDurationMs: 600000, // Default 600s minimum project duration (dangerous setting)

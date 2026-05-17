@@ -27,6 +27,10 @@ interface ModalProps {
 
 Modals read state directly from `useStore()` internally — no prop drilling. The only exception is `ImportAudioModal` which also receives `files: File[]`.
 
+### CSS Columns Layout Rule
+
+`ModalShell` uses CSS `columns-2` at the `sm:` breakpoint to auto-distribute flat children across 2 columns. Modals must pass content as flat `<div>` children — NOT wrapped in a grid or flex container intended for column layout. The `break-inside: avoid` utility prevents items from splitting across columns. This eliminates per-modal column logic: each modal just provides semantically grouped sections, and CSS columns handle the spatial distribution.
+
 ## ImportAudioModal Architecture
 
 ```

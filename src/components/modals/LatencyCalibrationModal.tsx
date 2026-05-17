@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useStore } from '../store/useStore';
-import { X, Zap, Play, RotateCcw, Info } from 'lucide-react';
-import { LatencyCalibrator, LatencyCalibrationResult } from '../lib/audio/LatencyCalibrator';
+import { useStore } from '../../store/useStore';
+import { Zap, Play, RotateCcw, Info } from 'lucide-react';
+import { LatencyCalibrator, LatencyCalibrationResult } from '../../lib/audio/LatencyCalibrator';
+import { ModalShell } from './ModalShell';
 
 interface LatencyCalibrationModalProps {
+  show: boolean;
   onClose: () => void;
 }
 
-export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = ({ onClose }) => {
+export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = ({ show, onClose }) => {
   const globalLatencyMs = useStore(s => s.globalLatencyMs);
   const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
   const extraLatencyMs = useStore(s => s.extraLatencyMs);
@@ -70,29 +72,8 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   }, []);
 
   return (
-    <div className="fixed inset-0 bg-black/90 backdrop-blur-xl z-[250] flex items-center justify-center p-2 overflow-y-auto">
-      <div className="bg-zinc-900 border border-zinc-800 rounded-xl w-full max-w-md max-h-[95vh] overflow-hidden shadow-2xl relative flex flex-col">
-        <div className="p-4 border-b border-zinc-800 bg-zinc-900/50 shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-lg bg-blue-500/20 flex items-center justify-center">
-                <Zap className="w-4 h-4 text-blue-400" />
-              </div>
-              <div>
-                <h2 className="text-sm font-bold text-white">Auto Calibration</h2>
-                <p className="text-[10px] text-zinc-500">Sync your audio perfectly</p>
-              </div>
-            </div>
-            <button 
-              onClick={onClose}
-              className="p-1.5 hover:bg-zinc-800 rounded transition-colors"
-            >
-              <X className="w-4 h-4 text-zinc-500" />
-            </button>
-          </div>
-        </div>
-
-        <div className="p-4 overflow-y-auto flex-1 space-y-4 text-sm text-zinc-300 cursor-default">
+    <ModalShell show={show} onClose={onClose} title="Auto Calibration" maxWidth="max-w-md" singleColumn>
+      <div className="space-y-4 text-sm text-zinc-300 cursor-default">
           {/* Auto Calibration Section */}
           <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
             <div className="flex items-center justify-between mb-3">
@@ -237,15 +218,6 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
             </div>
           </div>
         </div>
-        <div className="p-3 bg-zinc-900/80 border-t border-zinc-800 shrink-0">
-          <button 
-            onClick={onClose}
-            className="w-full py-2.5 bg-zinc-100 hover:bg-white text-zinc-900 text-xs font-bold rounded-lg transition-all"
-          >
-            Done
-          </button>
-        </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 };

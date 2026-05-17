@@ -473,4 +473,17 @@ No accidental playhead movement during recording.
 - `isEditMode` state lifted from `LyricsBuilder` to `App.tsx`, passed as props.
 
 **I. Tempo & Metronome Mute Closer Together**
-- Removed the wrapper `<div>` + `ml-1` gap around the metronome mute button in the normal layout. The button is now a direct child of the BPM section's flex container, sharing the parent `gap-2` spacing.<｜end▁of▁thinking｜>
+- Removed the wrapper `<div>` + `ml-1` gap around the metronome mute button in the normal layout. The button is now a direct child of the BPM section's flex container, sharing the parent `gap-2` spacing.
+
+## 29. SettingsModal CSS Columns Layout Fix (2026-05-17)
+
+**Problem:** SettingsModal in landscape left the 2nd CSS column empty and required scrolling. `ModalShell` wraps children in CSS `columns-2`, but SettingsModal wrapped its content in a `<div className="grid grid-cols-1 min-[400px]:grid-cols-2">`. CSS columns saw a single child (the grid wrapper) → placed it entirely in column 1 → column 2 stayed empty.
+
+**Fix:**
+- Removed the grid wrapper from `SettingsModal.tsx`. Each section is now a flat `<div>` child of `ModalShell`.
+- CSS columns auto-distribute the 5 sections across 2 columns. No `col-span-*` needed.
+- Inner grids (e.g., Project Actions' Save/Load grid) remain — only the outer layout wrapper was removed.
+
+**Design Principle Documented:**
+- `ModalShell` owns column distribution via CSS columns. Modals must pass flat children — no grid/flex column layout at the top level.
+- Documented in `docs/SPECS.md` (Architecture section), `docs/plans/modularize-modals-and-import-audio.md` (CSS Columns Layout Rule), and this entry.<｜end▁of▁thinking｜>

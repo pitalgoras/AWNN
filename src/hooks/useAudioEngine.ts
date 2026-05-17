@@ -82,6 +82,9 @@ const {
   metronomeHeight,
   metronomeEnabled,
   metronomeTrackVisible,
+  headLength,
+  startupDelayMs,
+  bufferSafetyMs,
 } = useStore();
 
   const beatsPerSecond = (bpm || 120) / 60;
@@ -114,9 +117,9 @@ const {
         preRollMode,
         isPlaying,
         currentTime,
-        headLength: useStore.getState().headLength,
-        startupDelayMs: useStore.getState().startupDelayMs,
-        bufferSafetyMs: useStore.getState().bufferSafetyMs,
+        headLength,
+        startupDelayMs,
+        bufferSafetyMs,
         audioContextRef,
       };
 
@@ -159,9 +162,9 @@ const {
         timeSignature: timeSignature || [4, 4],
         preRollMode,
         currentTime,
-        headLength: useStore.getState().headLength,
-        startupDelayMs: useStore.getState().startupDelayMs,
-        bufferSafetyMs: useStore.getState().bufferSafetyMs,
+        headLength,
+        startupDelayMs,
+        bufferSafetyMs,
         isPlaying,
       });
     }
@@ -185,7 +188,7 @@ const {
         metronomeEngineRef.current = null;
       }
     };
-  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, preRollMode]);
+  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, preRollMode, headLength, startupDelayMs, bufferSafetyMs]);
 
   // Separate effect to update isPlaying without destroying audioWorkletNode
   useEffect(() => {
@@ -570,12 +573,8 @@ const {
           const isPreRolling = state.isRecording || isPreRollingRef.current;
           const clampedUserTime = isPreRolling ? userTime : Math.max(0, userTime);
           
-          // If we were pre-rolling and just passed Bar 1.1 (0s), hide the PRE bar
           if (isPreRollingRef.current && userTime >= 0 && !state.isRecording) {
             isPreRollingRef.current = false;
-            if (multitrackRef.current) {
-              multitrackRef.current.setRecordingMode(false);
-            }
           }
           
           // Increase resolution to 100ms for smoother UI while reducing re-renders
@@ -935,14 +934,12 @@ const {
         const state = useStore.getState();
         const currentTime = state.currentTime;
         
-        // Requirement 4: Strictly for count-ins for playing/recording started with the playhead between 1.1 to 2.1
-        // If we are between Bar 1.1 (0s) and Bar 2.1 (secondsPerBar), and not already recording, do a pre-roll
         const preRollMode = useStore.getState().preRollMode;
-        if (currentTime >= 0 && currentTime < secondsPerBar && !state.isRecording && preRollMode === 'always') {
-          multitrackRef.current.setTime(0); // Start at Bar 0 (RT 0)
-          multitrackRef.current.setRecordingMode(true); // Show PRE bar
-          
-          // We need to track that we are in a playback pre-roll to hide the PRE bar later
+        if (state.isRecording) {
+          multitrackRef.current.setRecordingMode(true);
+        } else if (currentTime >= 0 && preRollMode === 'always') {
+          multitrackRef.current.setTime(currentTime);
+          multitrackRef.current.setRecordingMode(true);
           isPreRollingRef.current = true;
         }
         
@@ -1053,7 +1050,7 @@ const {
       // Stop AudioWorklet when going from playing to stopped
       if (wasPlayingRef.current && !newPlayingState) {
         console.log('playPause: transitioning from playing to stopped, stopping AudioWorklet');
-        recordingEngineRef.current?.stopForPlayback();
+        recordingEngineRef.current?.scheduleStopPlayback();
       }
       
       wasPlayingRef.current = newPlayingState;
