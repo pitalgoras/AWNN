@@ -498,7 +498,7 @@ const {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trackStructureHash, waveformQuality, setDuration, metronomeTrackVisible, metronomeHeight]);
+  }, [trackStructureHash, waveformQuality, setDuration]);
 
   useEffect(() => {
     if (!multitrack) return;
