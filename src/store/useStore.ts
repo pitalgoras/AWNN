@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { mutative } from 'zustand-mutative';
 import localforage from 'localforage';
+import type { VoiceTag } from '../lib/utils';
 
 export interface Phrase {
   id: string;
@@ -70,6 +71,8 @@ interface AppState {
   lyricsSegments: VoicingSegment[];
   lyricsViewMode: 'fixed' | 'scaled';
   activeColorId: string;
+  customTags: VoiceTag[];
+  comboTagSeparator: '&' | '+';
   
   // Configurable button sizes (CSS pixels, editable in Advanced Settings)
   smallBtnSize: number;
@@ -173,6 +176,9 @@ interface AppState {
   setLyricsSegments: (segments: VoicingSegment[]) => void;
   setLyricsViewMode: (mode: 'fixed' | 'scaled') => void;
   setActiveColorId: (colorId: string) => void;
+  addCustomTag: (tag: VoiceTag) => void;
+  markCustomTagUsed: (id: string) => void;
+  setComboTagSeparator: (separator: '&' | '+') => void;
 
   getMultitrackTime: () => number;
   setMultitrackTimeGetter: (getter: () => number) => void;
@@ -211,7 +217,9 @@ const defaultSettings = {
   lyricsText: '',
   lyricsSegments: [] as VoicingSegment[],
   lyricsViewMode: 'fixed' as const,
-  activeColorId: '#FACC15', // Default unison color
+  activeColorId: '#FACC15',
+  customTags: [],
+  comboTagSeparator: '+' as const,
   sampleRate: 44100, // Default; updated when AudioContext is created
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
@@ -246,6 +254,29 @@ export const useStore = create<AppState>()(
         setLyricsSegments: (segments) => set({ lyricsSegments: segments }),
         setLyricsViewMode: (mode) => set({ lyricsViewMode: mode }),
         setActiveColorId: (colorId) => set({ activeColorId: colorId }),
+        addCustomTag: (tag) => set((state) => {
+          const voiceTracks = state.tracks.filter(t => t.id !== 'metronome' && !t.isInstrument);
+          const maxCustom = 4 + Math.max(0, (voiceTracks.length - 4) * 2);
+          if (state.customTags.length >= maxCustom) {
+            const replaceIdx = state.customTags.findIndex(t => !t.usedInSession);
+            const idx = replaceIdx >= 0 ? replaceIdx : 0;
+            state.customTags[idx] = { ...tag, usedInSession: false };
+          } else {
+            state.customTags.push({ ...tag, usedInSession: false });
+          }
+        }),
+        markCustomTagUsed: (id) => set((state) => {
+          const tag = state.customTags.find(t => t.id === id);
+          if (tag) tag.usedInSession = true;
+        }),
+        setComboTagSeparator: (separator) => set((state) => {
+          const old = state.comboTagSeparator;
+          if (old === separator) return;
+          state.comboTagSeparator = separator;
+          state.lyricsText = state.lyricsText
+            .replace(new RegExp(`\\[S\\${old}A\\]`, 'g'), `[S${separator}A]`)
+            .replace(new RegExp(`\\[T\\${old}B\\]`, 'g'), `[T${separator}B]`);
+        }),
 
         setMoveLocked: (locked) => set({ moveLocked: locked }),
         setEnvelopeLocked: (locked) => set({ envelopeLocked: locked }),
@@ -511,6 +542,8 @@ export const useStore = create<AppState>()(
         lyricsSegments: state.lyricsSegments,
         lyricsViewMode: state.lyricsViewMode,
         activeColorId: state.activeColorId,
+        customTags: state.customTags,
+        comboTagSeparator: state.comboTagSeparator,
         toolbarProposal: state.toolbarProposal,
         toolbarVisibleLabels: state.toolbarVisibleLabels,
       }),

@@ -30,7 +30,7 @@ export function getTrackInitials(name: string, existingInitials: string[]): stri
   return null;
 }
 
-function blendColors(hex1: string, hex2: string): string {
+export function blendColors(hex1: string, hex2: string): string {
   const r1 = parseInt(hex1.slice(1, 3), 16);
   const g1 = parseInt(hex1.slice(3, 5), 16);
   const b1 = parseInt(hex1.slice(5, 7), 16);
@@ -42,29 +42,19 @@ function blendColors(hex1: string, hex2: string): string {
   ).join('');
 }
 
-function getCombinations<T>(arr: T[], k: number): T[][] {
-  if (k === 0) return [[]];
-  if (arr.length === 0) return [];
-  const [first, ...rest] = arr;
-  const withFirst = getCombinations(rest, k - 1).map(c => [first, ...c]);
-  const withoutFirst = getCombinations(rest, k);
-  return [...withFirst, ...withoutFirst];
-}
-
 export interface VoiceTag {
   id: string;
   label: string;
   color: string;
   trackIds: string[];
   isComposite: boolean;
+  usedInSession?: boolean;
 }
 
 export function generateVoiceTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean; shortLabel?: string }[]): VoiceTag[] {
   const filtered = tracks.filter(t => t.id !== 'metronome');
-  const voices = filtered.filter(t => !t.isInstrument);
   const tags: VoiceTag[] = [];
 
-  // Individual tracks (all tracks including instrument)
   for (const t of filtered) {
     tags.push({
       id: t.id,
@@ -75,20 +65,6 @@ export function generateVoiceTags(tracks: { id: string; name: string; color: str
     });
   }
 
-  // 2-way combos (voice tracks only)
-  const pairs = getCombinations(voices, 2);
-  for (const pair of pairs) {
-    const [a, b] = pair;
-    tags.push({
-      id: `combo-${a.id}-${b.id}`,
-      label: `${getShortLabel(a.name, 1)}&${getShortLabel(b.name, 1)}`,
-      color: blendColors(a.color, b.color),
-      trackIds: [a.id, b.id],
-      isComposite: true,
-    });
-  }
-
-  // All (standalone — not a composite of tracks)
   tags.push({
     id: 'all',
     label: 'All',
@@ -107,19 +83,4 @@ export function generateVoiceTags(tracks: { id: string; name: string; color: str
   });
 
   return tags;
-}
-
-// 3-way combos (generated lazily for [+] expander) — voice tracks only
-export function generate3WayTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean; shortLabel?: string }[]): VoiceTag[] {
-  const voices = tracks.filter(t => t.id !== 'metronome' && !t.isInstrument);
-  if (voices.length < 3) return [];
-
-  const triples = getCombinations(voices, 3);
-  return triples.map(triple => ({
-    id: `combo-${triple.map(t => t.id).join('-')}`,
-    label: triple.map(t => getShortLabel(t.name, 1)).join('+'),
-    color: triple.reduce((acc, t) => blendColors(acc, t.color), triple[0].color),
-    trackIds: triple.map(t => t.id),
-    isComposite: true,
-  }));
 }

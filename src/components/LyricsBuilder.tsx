@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { useStore, VoicingSegment } from '../store/useStore';
+import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
 import { AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
@@ -7,18 +7,20 @@ import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 
 
-const STANDARD_VOICINGS = [
-  // Single voices (with trackId) – Right section, two rows with M/R
-  { id: '#4a5568', label: 'Accompaniment', tag: '[Acc]', trackId: '1' }, // TODO: Replace all "Backtrack" references later with "Accompaniment"
+const TAG_COLOR_MAP: Record<string, string> = {
+  '[ALL]': '#A0AEC0', '[S]': '#F6E05E', '[A]': '#F56565',
+  '[T]': '#48BB78', '[B]': '#4299E1', '[Acc]': '#4a5568',
+  '[S&A]': '#ED8936', '[S+A]': '#ED8936',
+  '[T&B]': '#38B2AC', '[T+B]': '#38B2AC',
+};
+
+const BASE_VOICINGS = [
+  { id: '#4a5568', label: 'Accompaniment', tag: '[Acc]', trackId: '1' },
   { id: '#F6E05E', label: 'Soprano', tag: '[S]', trackId: '2' },
   { id: '#F56565', label: 'Alto', tag: '[A]', trackId: '3' },
   { id: '#48BB78', label: 'Tenor', tag: '[T]', trackId: '4' },
   { id: '#4299E1', label: 'Bass', tag: '[B]', trackId: '5' },
-  
-  // Non-single voices (no trackId) – Left section, single row only
   { id: '#A0AEC0', label: 'Unison', tag: '[ALL]', trackId: null },
-  { id: '#ED8936', label: 'Soprano & Alto', tag: '[S&A]', trackId: null },
-  { id: '#38B2AC', label: 'Tenor & Bass', tag: '[T&B]', trackId: null },
 ];
 
 interface Props {
@@ -43,11 +45,21 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     isRecording,
     setIsRecording,
     setSelectedTrackId,
-  selectedTrackId,
+    selectedTrackId,
+    comboTagSeparator,
   } = useStore();
 
   const [isPainting, setIsPainting] = useState(false);
-  
+
+  const standardVoicings = useMemo(() => {
+    const sep = comboTagSeparator;
+    return [
+      ...BASE_VOICINGS,
+      { id: '#ED8936', label: `Soprano ${sep} Alto`, tag: `[S${sep}A]`, trackId: null },
+      { id: '#38B2AC', label: `Tenor ${sep} Bass`, tag: `[T${sep}B]`, trackId: null },
+    ];
+  }, [comboTagSeparator]);
+
   const toolbarContext = useToolbarContext('vertical');
   const isPortrait = toolbarContext.isPortrait;
   const screenSize = toolbarContext.screenSize;
@@ -98,7 +110,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     let charIndex = 0;
 
     // Tokenize: TimeTags, VoiceTags, Newlines, Words, Whitespace
-    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|S&A|T&B)\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
+    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|Acc|S[+&]A|T[+&]B)\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
     let match;
 
     while ((match = regex.exec(lyricsText)) !== null) {
@@ -114,7 +126,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
         currentLine.elements.push({ type: 'time-tag', text: matchText, startChar, endChar, time: currentLine.time });
       } else if (match[3]) {
         // Voice Tag
-        const vId = STANDARD_VOICINGS.find(v => v.tag === match[3])?.id;
+        const vId = TAG_COLOR_MAP[match[0]];
         if (vId) currentVoiceColor = vId;
         
         currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
@@ -163,13 +175,13 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     }).join('\n');
 
     // Rule: [ALL] overwrites others nearby (simplification)
-    cleaned = cleaned.replace(/\[(S|A|T|B|S&A|T&B)\]\s*\[ALL\]/g, '[ALL]');
-    cleaned = cleaned.replace(/\[ALL\]\s*\[(S|A|T|B|S&A|T&B)\]/g, '[ALL]');
+    cleaned = cleaned.replace(/\[(S|A|T|B|S[+&]A|T[+&]B)\]\s*\[ALL\]/g, '[ALL]');
+    cleaned = cleaned.replace(/\[ALL\]\s*\[(S|A|T|B|S[+&]A|T[+&]B)\]/g, '[ALL]');
     
 // Rule: remove duplicate voicing tags with text between them (line-by-line)
      cleaned = cleaned.split('\n').map(line => {
        let lastTag = null;
-       return line.replace(/\[(ALL|S|A|T|B|S&A|T&B)\]/g, (match, tag) => {
+       return line.replace(/\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g, (match, tag) => {
          if (tag === lastTag) return ''; // Remove duplicate
          lastTag = tag;
          return match;
@@ -178,7 +190,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     
     // Rule: if multiple conflicting voices, just keep the last painted one (this is tricky to regex perfectly, but we'll prune obvious ones)
     // E.g. [S] [A] -> [A]
-    cleaned = cleaned.replace(/(\[(S|A|T|B|S&A|T&B|ALL)\]\s*)+\[(S|A|T|B|S&A|T&B|ALL)\]/g, (match, p1, p2, p3) => {
+    cleaned = cleaned.replace(/(\[(S|A|T|B|S[+&]A|T[+&]B|ALL)\]\s*)+\[(S|A|T|B|S[+&]A|T[+&]B|ALL)\]/g, (match, p1, p2, p3) => {
       // Return just the last tag in the sequence
       const tags = match.match(/\[.*?\]/g);
       const lastTag = tags ? tags[tags.length - 1] : match;
@@ -193,12 +205,12 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
   if (isEditMode) return;
 
   // Target tag from active color
-  const voiceObj = STANDARD_VOICINGS.find(v => v.id === activeColorId) || STANDARD_VOICINGS[0];
+  const voiceObj = standardVoicings.find(v => v.id === activeColorId) || standardVoicings[0];
   const targetTag = voiceObj.tag; // e.g., "[S]"
 
   // Helper: scan forward from a position and remove all targetTag occurrences until a different voicing tag appears
   const removeForwardDuplicates = (text: string, fromIndex: number): string => {
-    const voicingTagPattern = /\[(ALL|S|A|T|B|S&A|T&B)\]/g;
+    const voicingTagPattern = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g;
     let output = text.slice(0, fromIndex);
     let rest = text.slice(fromIndex);
     let match: RegExpExecArray | null;
@@ -221,7 +233,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
 
   // 1. Backward scan for nearest voicing tag V
   const textBefore = lyricsText.slice(0, startChar);
-  const tagRegex = /\[(ALL|S|A|T|B|S&A|T&B)\]/g;
+  const tagRegex = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g;
   let lastMatch: RegExpExecArray | null = null;
   let m: RegExpExecArray | null;
   while ((m = tagRegex.exec(textBefore)) !== null) {
@@ -239,7 +251,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
     // Check if cleaned contains any non-whitespace
     const hasText = /\S/.test(cleaned);
     // Check if there is any voicing tag in afterV (should not happen, but just in case)
-    const hasVoicing = /\[(ALL|S|A|T|B|S&A|T&B)\]/.test(afterV);
+    const hasVoicing = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/.test(afterV);
     isRightBefore = !hasText && !hasVoicing;
   }
 

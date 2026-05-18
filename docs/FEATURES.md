@@ -58,6 +58,12 @@ This document tracks the features discussed, planned, implemented, and discarded
 - [x] **Standalone `.awnn` File Export/Import:** Support for self-contained Base64 encoded JSON project saving and loading for robust offline and server-shared architectures.
 
 ## Discussed / Planned
+- [ ] **Section Tags (Lyrics Mode):**
+  - Text markers (e.g., `[Intro]`, `[Verse 1]`, `[Chorus]`, `[Bridge]`, `[Outro]`) inserted into lyrics text to structure the song.
+  - **Not related to voicings/combo tags** — pure text labels for song sections.
+  - Configurable list of section names (defaults: Intro, Verse, Chorus, Bridge, Outro) via Settings.
+  - Insert button in lyrics edit view that places `[SectionName]` at the cursor.
+  - Styled distinctly in lyrics display (e.g., gray italic header-like appearance) but remain editable as plain text.
 - [x] **Latency Compensation (Data-Level):** 
   - Offset newly recorded clips by subtracting a global latency value (e.g., in milliseconds) from their `startPosition` so visuals match the audio.
   - **Output Latency Compensation:** The visual playhead position is now compensated by the browser's `outputLatency`, ensuring the cursor matches the audible sound.

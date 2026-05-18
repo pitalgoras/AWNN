@@ -531,7 +531,9 @@ export default function App() {
       return;
     }
     
-    setSelectedTrackId(trackId);
+    if (appMode !== 'lyrics') {
+      setSelectedTrackId(trackId);
+    }
     
     if (trackId === 'metronome') {
       alert("Recording on the metronome track is not allowed.");

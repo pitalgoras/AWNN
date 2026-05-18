@@ -15,6 +15,8 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
   const barLinesEnabled = useStore(s => s.barLinesEnabled);
   const saveProject = useStore(s => s.saveProject);
   const loadProject = useStore(s => s.loadProject);
+  const comboTagSeparator = useStore(s => s.comboTagSeparator);
+  const setComboTagSeparator = useStore(s => s.setComboTagSeparator);
 
   return (
     <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg">
@@ -55,6 +57,22 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
             </button>
           </ModalRow>
         </div>
+      </div>
+
+      {/* Combo Tag Separator */}
+      <div>
+        <ModalHeading>Combo Tag Separator</ModalHeading>
+        <ModalRow>
+          <ModalLabel>Separator character</ModalLabel>
+          <button onClick={() => setComboTagSeparator(comboTagSeparator === '+' ? '&' : '+')}
+            className={cn(
+              "px-4 py-1.5 rounded-lg text-xs font-bold transition-all",
+              "bg-zinc-700 text-zinc-300"
+            )}
+          >
+            {comboTagSeparator}
+          </button>
+        </ModalRow>
       </div>
 
       {/* Track Management */}
