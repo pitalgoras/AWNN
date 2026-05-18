@@ -179,8 +179,8 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                     <button
                       onClick={() => mode === 'lyrics' ? setActiveColorId(track.color) : useStore.getState().setSelectedTrackId(track.id)}
                       className={cn(
-                        "w-full h-full rounded flex items-center justify-center font-bold transition-all",
-                        mode === 'lyrics' ? getToolbarBtnClass(true) : "text-[10px]",
+                        "rounded flex items-center justify-center font-bold transition-all",
+                        mode === 'lyrics' ? getToolbarBtnClass(true) : "w-full h-full text-[10px]",
                         mode === 'lyrics' && (activeColorId === track.color ? "ring-2 ring-white scale-105" : "hover:scale-105")
                       )}
                       style={{ 
