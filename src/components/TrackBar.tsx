@@ -65,8 +65,9 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
 
   return mode === 'lyrics' && isPortrait && screenSize === 'small' ? (
     /* Portrait lyrics: fixed bottom bar with per-track columns + composite tags */
-    <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 border-t border-zinc-800 p-1.5 gap-1.5 flex-row items-start flex overflow-x-auto">
-      {(tracks || []).filter(t => t.id !== 'metronome').map(track => (
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 border-t border-zinc-800 p-1.5 gap-1.5 flex-row items-start flex flex-wrap">
+      <div className="flex flex-row gap-1.5 shrink-0">
+        {(tracks || []).filter(t => t.id !== 'metronome').map(track => (
         <div key={track.id} className="flex flex-col items-center gap-1 shrink-0">
           <button
             onClick={() => handleRecord(track.id)}
@@ -103,6 +104,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
           </button>
         </div>
       ))}
+      </div>
       {tags.length > 0 && <div className="w-px self-stretch bg-zinc-800 mx-1.5 shrink-0" />
       }
       {tags.filter(t => t.trackIds.length !== 1).concat(tags3Way).map(tag => (
@@ -110,23 +112,19 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
           key={tag.id}
           onClick={() => setActiveColorId(tag.color)}
           className={cn(
-            "rounded font-bold transition-all select-none shrink-0 self-center",
+            "rounded font-bold transition-all select-none",
             getToolbarBtnClass(true),
             activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
           )}
           style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
         >
-          {tag.label.split(/(&)/).map((seg, i) =>
-            seg === '&'
-              ? <span key={i} className="text-[9px]">&</span>
-              : <span key={i} className="text-[10px]">{seg}</span>
-          )}
+          {tag.label}
         </button>
       ))}
       {!show3Way && (
         <button
           onClick={() => setShow3Way(true)}
-          className={cn("rounded font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors shrink-0 self-center", getToolbarBtnClass(true))}
+          className={cn("rounded font-bold transition-all select-none", getToolbarBtnClass(true), "bg-zinc-800 text-zinc-400 hover:bg-zinc-700")}
         >+</button>
       )}
     </div>
@@ -353,21 +351,16 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   className={cn(
                     "rounded font-bold transition-all select-none",
                     getToolbarBtnClass(true),
-                    activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105",
-                    tag.id === 'all' ? 'opacity-80' : ''
+                    activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
                   )}
                   style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                 >
-          {tag.label.split(/(&)/).map((seg, i) =>
-            seg === '&'
-              ? <span key={i} className="text-[9px]">&</span>
-              : <span key={i} className="text-[10px]">{seg}</span>
-          )}
+                  {tag.label}
                 </button>
               ))}
               {!show3Way && <button
                 onClick={() => setShow3Way(true)}
-                className={cn("rounded font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors", getToolbarBtnClass(true))}
+                className={cn("rounded font-bold transition-all select-none bg-zinc-800 text-zinc-400 hover:bg-zinc-700", getToolbarBtnClass(true))}
               >+</button>}
             </div>
           </div>

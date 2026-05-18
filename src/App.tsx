@@ -175,7 +175,7 @@ export default function App() {
       const effectiveUnits = totalUnits + (hasExpanded ? 0.5 : 0);
       let calculatedTrackHeight = Math.floor(availableHeight / effectiveUnits);
       
-      const minTrackHeight = 40;
+      const minTrackHeight = 44;
       if (calculatedTrackHeight < minTrackHeight) calculatedTrackHeight = minTrackHeight;
       
       const calculatedMetronomeHeight = Math.floor(calculatedTrackHeight * 0.8);
