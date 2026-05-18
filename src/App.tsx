@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from './store/useStore';
 import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3 } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -43,6 +43,11 @@ export default function App() {
   const moveLocked = useStore(s => s.moveLocked);
   const envelopeLocked = useStore(s => s.envelopeLocked);
   const selectedPhraseId = useStore(s => s.selectedPhraseId);
+  
+  const nonMetronomeCount = useMemo(
+    () => tracks.filter(t => t.id !== 'metronome').length,
+    [tracks]
+  );
   
   const isReady = useStore(s => s.isReady);
   const setIsPlaying = useStore(s => s.setIsPlaying);
@@ -147,7 +152,7 @@ export default function App() {
     }
   }, [isReady, seekTo]);
 
-  // Handle Responsive Layout
+  // Handle Responsive Layout — recalculates on resize, track count, or selection change
   useEffect(() => {
     // Force-reset persisted layout state that might cause issues
     useStore.setState({ 
@@ -157,22 +162,24 @@ export default function App() {
     });
     
     const handleResize = () => {
-      const headerHeight = mainToolbarRef.current?.offsetHeight ?? (isSmallPortrait ? 80 : window.innerWidth < 640 ? 48 : 64);
-      const availableHeight = window.innerHeight - headerHeight - 4; // -4 for playhead slider height
+      const state = useStore.getState();
+      const headerHeight = mainToolbarRef.current?.offsetHeight ?? (window.innerWidth < 640 && window.innerHeight > window.innerWidth ? 80 : window.innerWidth < 640 ? 48 : 64);
+      const availableHeight = window.innerHeight - headerHeight - 4;
       
-      // Distribute available height among tracks
-      const nonMetronomeTracks = tracks.filter(t => t.id !== 'metronome');
+      const nonMetronomeTracks = state.tracks.filter(t => t.id !== 'metronome');
       const totalUnits = nonMetronomeTracks.length;
-      let calculatedTrackHeight = Math.floor(availableHeight / totalUnits);
+      if (totalUnits === 0) return;
+      
+      // Account for selected expanded track (1.5x height)
+      const hasExpanded = state.selectedTrackId && !state.envelopeLocked;
+      const effectiveUnits = totalUnits + (hasExpanded ? 0.5 : 0);
+      let calculatedTrackHeight = Math.floor(availableHeight / effectiveUnits);
       
       const minTrackHeight = 40;
-      
       if (calculatedTrackHeight < minTrackHeight) calculatedTrackHeight = minTrackHeight;
       
       const calculatedMetronomeHeight = Math.floor(calculatedTrackHeight * 0.8);
       const calculatedSidebarWidth = Math.floor(window.innerWidth * 0.25);
-      
-      // Hide labels if screen is too narrow (e.g., mobile portrait)
       const shouldShowLabels = window.innerWidth > 500;
 
       setResponsiveLayout({
@@ -186,7 +193,7 @@ export default function App() {
     handleResize();
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
-  }, [setResponsiveLayout]);
+  }, [setResponsiveLayout, nonMetronomeCount, selectedTrackId, envelopeLocked]);
 
   // Close modals on Escape and handle Spacebar for Play/Pause
   useEffect(() => {
