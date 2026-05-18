@@ -18,6 +18,10 @@ export function getShortLabel(name: string, maxLen: number = 3): string {
   return name.substring(0, maxLen);
 }
 
+export function getTrackShortLabel(track: { name: string; shortLabel?: string }, maxLen: number = 3): string {
+  return track.shortLabel || track.name.substring(0, maxLen);
+}
+
 export function getTrackInitials(name: string, existingInitials: string[]): string | null {
   for (const len of [3, 2, 1]) {
     const candidate = name.substring(0, len);
@@ -55,7 +59,7 @@ export interface VoiceTag {
   isComposite: boolean;
 }
 
-export function generateVoiceTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean }[]): VoiceTag[] {
+export function generateVoiceTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean; shortLabel?: string }[]): VoiceTag[] {
   const filtered = tracks.filter(t => t.id !== 'metronome');
   const voices = filtered.filter(t => !t.isInstrument);
   const tags: VoiceTag[] = [];
@@ -64,7 +68,7 @@ export function generateVoiceTags(tracks: { id: string; name: string; color: str
   for (const t of filtered) {
     tags.push({
       id: t.id,
-      label: getShortLabel(t.name, 3),
+      label: getTrackShortLabel(t, 3),
       color: t.color,
       trackIds: [t.id],
       isComposite: false,
@@ -106,7 +110,7 @@ export function generateVoiceTags(tracks: { id: string; name: string; color: str
 }
 
 // 3-way combos (generated lazily for [+] expander) — voice tracks only
-export function generate3WayTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean }[]): VoiceTag[] {
+export function generate3WayTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean; shortLabel?: string }[]): VoiceTag[] {
   const voices = tracks.filter(t => t.id !== 'metronome' && !t.isInstrument);
   if (voices.length < 3) return [];
 

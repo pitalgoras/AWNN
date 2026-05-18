@@ -38,6 +38,7 @@ export interface Track {
   offset: number; // Latency compensation / manual nudge in seconds
   anchoredFrame?: number; // Frame offset from UserTime 0 (for stable sync)
   isInstrument?: boolean; // Instrument track — excluded from voice composites
+  shortLabel?: string; // Custom short label (overrides name-based auto-derivation)
   phrases: Phrase[];
   envelope: EnvelopeNode[];
 }

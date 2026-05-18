@@ -1,7 +1,6 @@
 import React, { useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
-import { cn } from '../lib/utils';
-import { getContrastColor, generateVoiceTags, generate3WayTags } from '../lib/utils';
+import { cn, getContrastColor, generateVoiceTags, generate3WayTags, getTrackShortLabel } from '../lib/utils';
 import { Mic, Activity, RotateCcw } from 'lucide-react';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
@@ -60,13 +59,9 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   const singleRowThreshold = 80;
   const useSingleRow = (trackHeight * lyricsHeightMultiplier) < singleRowThreshold;
   
-  const getShortLabel = (track: any) => track.name.substring(0, 4);
-  
   const [show3Way, setShow3Way] = useState(false);
   const tags = React.useMemo(() => mode === 'lyrics' ? generateVoiceTags(tracks) : [], [mode, tracks]);
   const tags3Way = React.useMemo(() => mode === 'lyrics' && show3Way ? generate3WayTags(tracks) : [], [mode, tracks, show3Way]);
-  
-  const get3LetterLabel = (name: string) => name.substring(0, 3);
 
   return mode === 'lyrics' && isPortrait && screenSize === 'small' ? (
     /* Portrait lyrics: fixed bottom bar with per-track columns + composite tags */
@@ -104,7 +99,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
             )}
             style={{ backgroundColor: track.color, color: getContrastColor(track.color) }}
           >
-            {get3LetterLabel(track.name)}
+            {getTrackShortLabel(track, 3)}
           </button>
         </div>
       ))}
@@ -146,7 +141,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
           const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
           const currentHeight = isMetronome ? metronomeHeight : Math.floor((isExpanded ? trackHeight * 1.5 : trackHeight) * lyricsHeightMultiplier);
           
-          const shortLabel = getShortLabel(track);
+          const shortLabel = getTrackShortLabel(track, 4);
           const trackColor = track.color || '#666';
           const contrastColor = getContrastColor(trackColor);
           
