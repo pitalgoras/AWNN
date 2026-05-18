@@ -116,7 +116,11 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
           )}
           style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
         >
-          {tag.label}
+          {tag.label.split(/(&)/).map((seg, i) =>
+            seg === '&'
+              ? <span key={i} className="text-[9px]">&</span>
+              : <span key={i} className="text-[10px]">{seg}</span>
+          )}
         </button>
       ))}
       {!show3Way && (
@@ -178,7 +182,8 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                       onClick={() => mode === 'lyrics' ? setActiveColorId(track.color) : useStore.getState().setSelectedTrackId(track.id)}
                       className={cn(
                         "w-full h-full rounded flex items-center justify-center font-bold transition-all",
-                        mode === 'lyrics' ? getToolbarBtnClass(true) : "text-[10px]"
+                        mode === 'lyrics' ? getToolbarBtnClass(true) : "text-[10px]",
+                        mode === 'lyrics' && (activeColorId === track.color ? "ring-2 ring-white scale-105" : "hover:scale-105")
                       )}
                       style={{ 
                         backgroundColor: trackColor,
@@ -353,7 +358,11 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   )}
                   style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                 >
-                  {tag.label}
+          {tag.label.split(/(&)/).map((seg, i) =>
+            seg === '&'
+              ? <span key={i} className="text-[9px]">&</span>
+              : <span key={i} className="text-[10px]">{seg}</span>
+          )}
                 </button>
               ))}
               {!show3Way && <button
