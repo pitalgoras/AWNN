@@ -47,6 +47,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     setSelectedTrackId,
     selectedTrackId,
     comboTagSeparator,
+    sectionTags,
   } = useStore();
 
   const [isPainting, setIsPainting] = useState(false);
@@ -109,8 +110,8 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     let currentVoiceColor = 'transparent';
     let charIndex = 0;
 
-    // Tokenize: TimeTags, VoiceTags, Newlines, Words, Whitespace
-    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|Acc|S[+&]A|T[+&]B)\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
+    // Tokenize: TimeTags, VoiceTags, SectionTags, Newlines, Words, Whitespace
+    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|Acc|S[+&]A|T[+&]B)\])|(\[[A-Za-z][A-Za-z0-9\s\-]*?\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
     let match;
 
     while ((match = regex.exec(lyricsText)) !== null) {
@@ -131,14 +132,17 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
         
         currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
       } else if (match[5]) {
+        // Section Tag
+        currentLine.elements.push({ type: 'section-tag', text: matchText, startChar, endChar });
+      } else if (match[6]) {
         // Newline
         currentLine.endIndex = endChar;
         list.push(currentLine);
         currentLine = { id: list.length, time: null, elements: [], startIndex: endChar };
-      } else if (match[6]) {
+      } else if (match[7]) {
         // Word
         currentLine.elements.push({ type: 'word', text: matchText, startChar, endChar, colorId: currentVoiceColor });
-      } else if (match[7]) {
+      } else if (match[8]) {
         // Whitespace (keep it for alignment/spacing)
         // Let's color the whitespace with the CURRENT voice color so sentences look continuous
         currentLine.elements.push({ type: 'space', text: matchText, startChar, endChar, colorId: currentVoiceColor });
@@ -298,6 +302,18 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
     setLyricsCleanText(newText.slice(0, lineStartIndex) + tTag + newText.slice(lineStartIndex));
   };
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const insertSectionTag = (tagName: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentEditText = textarea.value;
+    const newEditText = currentEditText.slice(0, start) + `[${tagName}]\n` + currentEditText.slice(end);
+    handleEditTextChange({ target: { value: newEditText } } as React.ChangeEvent<HTMLTextAreaElement>);
+  };
+
   const handleAutoSync = () => {
     let newText = lyricsText;
     let addedOffset = 0;
@@ -383,7 +399,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
         )}
 
         {/* Lyrics Editor / Canvas */}
-        <div className={cn("flex-1 max-w-4xl", isEditMode ? "p-6" : "relative")}>
+        <div className={cn("flex-1 max-w-4xl", isEditMode ? "p-6 h-full" : "relative")}>
           {!isPortrait && !isEditMode && (
             <button onClick={() => setIsEditMode(true)}
               className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-800 text-white hover:bg-zinc-700 shadow-sm"
@@ -401,12 +417,26 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
             </button>
           )}
           {isEditMode ? (
-            <textarea
-              className="w-full h-full min-h-[500px] bg-zinc-950 border border-zinc-800 rounded p-6 text-sm md:text-base font-serif text-zinc-200 outline-none resize-none leading-loose"
-              placeholder="Paste or type lyrics here... \nUse [ALL], [S], [A], [T], [B] to tag voicings."
-              value={editTextValue}
-              onChange={handleEditTextChange}
-            />
+            <div className="flex flex-col h-full">
+              <div className="flex flex-wrap gap-1.5 p-3 border-b border-zinc-800 bg-zinc-900">
+                {sectionTags.filter(Boolean).map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => insertSectionTag(tag)}
+                    className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[9px] font-bold uppercase tracking-wider transition-all"
+                  >
+                    [{tag}]
+                  </button>
+                ))}
+              </div>
+              <textarea
+                ref={textareaRef}
+                className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded p-6 text-sm md:text-base font-serif text-zinc-200 outline-none resize-none leading-loose"
+                placeholder="Paste or type lyrics here...\nUse [ALL], [S], [A], [T], [B] to tag voicings."
+                value={editTextValue}
+                onChange={handleEditTextChange}
+              />
+            </div>
           ) : (
             <div 
               className={cn("w-full font-serif cursor-crosshair select-none", lyricsViewMode === 'scaled' ? "h-full" : "p-6")}
@@ -459,6 +489,19 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                       // Render Voice Tags (Hidden by default based on spec)
                       if (el.type === 'voice-tag') {
                         return null;
+                      }
+                      
+                      // Render Section Tags as styled headers
+                      if (el.type === 'section-tag') {
+                        const name = el.text.slice(1, -1); // strip brackets
+                        return (
+                          <span
+                            key={`el-${idx}-${eIdx}`}
+                            className="w-full block text-[10px] font-bold text-zinc-500 italic uppercase tracking-[0.15em] mb-1 mt-2 select-none"
+                          >
+                            {name}
+                          </span>
+                        );
                       }
                       
                       const isPainted = el.colorId && el.colorId !== 'transparent';

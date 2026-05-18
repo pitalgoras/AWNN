@@ -56,14 +56,24 @@ This document tracks the features discussed, planned, implemented, and discarded
      5. **Cleanup**: `setLyricsCleanText` removes duplicate tags with text between them (line-by-line).
    - Vertical Heatmap that translates WebAudio peaks to a VAD (Voice Activity Detection) visualization per track.
 - [x] **Standalone `.awnn` File Export/Import:** Support for self-contained Base64 encoded JSON project saving and loading for robust offline and server-shared architectures.
-
-## Discussed / Planned
-- [ ] **Section Tags (Lyrics Mode):**
-  - Text markers (e.g., `[Intro]`, `[Verse 1]`, `[Chorus]`, `[Bridge]`, `[Outro]`) inserted into lyrics text to structure the song.
+- [x] **Section Tags (Lyrics Mode, 2026-05-18):**
+  - Text markers (e.g., `[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`) inserted into lyrics text to structure the song.
   - **Not related to voicings/combo tags** — pure text labels for song sections.
-  - Configurable list of section names (defaults: Intro, Verse, Chorus, Bridge, Outro) via Settings.
-  - Insert button in lyrics edit view that places `[SectionName]` at the cursor.
-  - Styled distinctly in lyrics display (e.g., gray italic header-like appearance) but remain editable as plain text.
+  - Configurable list of section names via Settings (defaults: Intro, Verse, Chorus, Bridge, Outro).
+  - Insert buttons above lyrics textarea in edit mode — click inserts `[Name]\n` at cursor position via `insertSectionTag`.
+  - Styled in display mode as `text-zinc-500 italic uppercase tracking-[0.15em] text-[10px]` with `select-none`.
+  - Parser regex updated: section tag group `(\[[A-Za-z][A-Za-z0-9\s\-]*?\])` added after voice tags, before newlines.
+  - Section tags are plain `[Name]` markers — they don't affect voicings, colors, or paint bucket logic.
+  - Editable as regular text in textarea (users can type/delete manually).
+- [x] **LVL — Forced Single-Row + Resize-Adaptive Combo Bar (2026-05-18):**
+  - Tracks always use single-row layout in lyrics mode (`useSingleRow = true`).
+  - Old double-row-per-track behavior eliminated for lyrics sidebar.
+  - Separate left 2-col combo panel removed.
+  - A `ResizeObserver` monitors the aside's `clientHeight`. Computes whether `tracks × (btnSize + 6) + (btnSize + 26)` fits.
+  - **When tracks fit with room:** left 2-col panel hidden → lyrics viewer gains width; LVP-style `grid grid-cols-3` combo bar fills empty vertical space below tracks inside the aside.
+  - **When tracks overflow:** left 2-col panel visible (always accessible); bottom bar hidden (would scroll away uselessly).
+  - Combo bar reuses exact LVP markup: `displayTags.slice(0, 8)` + `+` button, `grid grid-cols-3`.
+  - Track data files: `TrackBar.tsx` (all layout logic), `useStore.ts` (`btnSize`, `tracks`).
 - [x] **Latency Compensation (Data-Level):** 
   - Offset newly recorded clips by subtracting a global latency value (e.g., in milliseconds) from their `startPosition` so visuals match the audio.
   - **Output Latency Compensation:** The visual playhead position is now compensated by the browser's `outputLatency`, ensuring the cursor matches the audible sound.

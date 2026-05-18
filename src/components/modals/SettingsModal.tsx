@@ -17,6 +17,8 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
   const loadProject = useStore(s => s.loadProject);
   const comboTagSeparator = useStore(s => s.comboTagSeparator);
   const setComboTagSeparator = useStore(s => s.setComboTagSeparator);
+  const sectionTags = useStore(s => s.sectionTags);
+  const setSectionTags = useStore(s => s.setSectionTags);
 
   return (
     <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg">
@@ -73,6 +75,36 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
             {comboTagSeparator}
           </button>
         </ModalRow>
+      </div>
+
+      {/* Section Tags */}
+      <div>
+        <ModalHeading>Section Tags</ModalHeading>
+        <p className="text-[10px] text-zinc-500 mb-2">Markers inserted as [Name] in lyrics, rendered as styled headers in display mode.</p>
+        <div className="flex flex-col gap-1.5">
+          {sectionTags.map((tag, i) => (
+            <ModalRow key={i}>
+              <input type="text" value={tag}
+                onChange={(e) => {
+                  const next = [...sectionTags];
+                  next[i] = e.target.value;
+                  setSectionTags(next);
+                }}
+                className="flex-1 bg-zinc-800 border border-zinc-700 rounded px-2 py-1 text-xs text-zinc-200 outline-none focus:border-blue-500"
+              />
+              <button onClick={() => setSectionTags(sectionTags.filter((_, j) => j !== i))}
+                className="px-2 py-1 text-[10px] text-red-400 hover:text-red-300 font-bold"
+              >
+                Remove
+              </button>
+            </ModalRow>
+          ))}
+        </div>
+        <button onClick={() => setSectionTags([...sectionTags, ''])}
+          className="mt-2 w-full h-8 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all"
+        >
+          + Add Tag
+        </button>
       </div>
 
       {/* Track Management */}

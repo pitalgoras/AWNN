@@ -65,6 +65,14 @@
 - `isEditMode` state lives in `App.tsx`, passed as props to `LyricsBuilder`.
 - Old `fixed top-4 left-4` floating buttons replaced with the above.
 
+### LVL — Forced Single-Row + Adaptive Combo Bar (2026-05-18)
+- **Single-row always**: In lyrics landscape mode, `useSingleRow = true` — tracks use one row with all buttons side-by-side.
+- **Adaptive combo relocation**: A `ResizeObserver` monitors the aside height. Computes whether `tracks × (btnSize + 6) + (btnSize + 26) ≤ aside.clientHeight`.
+- **Room exists**: Left 2-col combo panel hidden → sidebar collapses → lyrics viewer gets width. LVP-style `grid grid-cols-3` combo bar fills empty vertical space below tracks inside the aside.
+- **No room**: Left 2-col combo panel visible (always accessible). Bottom bar hidden (would scroll away).
+- **Formula rationale**: Uses `btnSize` (fixed button dimension) not elastic `trackHeight` — buttons have a minimum size regardless of elastic track expansion. `+6` per track = 2px padding-top + 1px border-bottom + 3px breathing room. `+26` for bar = 1px border-top + 24px p-1.5 + 1px safety.
+- **Combo bar cloned from LVP**: `displayTags.slice(0, 8)` + `+` button, `grid grid-cols-3`, `p-1.5 border-t`.
+
 ### Toolbar Tier System (2026-05-15)
 - `toolbarProposal: 1 | 2 | 3` from Zustand store controls head toolbar button visibility.
 - `showTier(tier)` helper: visible when `toolbarProposal <= tier`.

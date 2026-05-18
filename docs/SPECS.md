@@ -65,6 +65,7 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 22. **Seek Paths Blocked During Recording:** PlayheadSlider, double-click, container click all return early when isRecording is true.
     * Offers side-by-side VAD (Voice Activity Detection) visualizations (`VerticalHeatmap.tsx`) generated from track audio peaks to assist mapping.
      * "Scaled View" intelligently spaces lyric lines proportional to their tagged playback times, forming a visual timeline.
+     * **Section Tags:** Plain `[Name]` markers (e.g., `[Verse]`, `[Chorus]`) parsed into `type: 'section-tag'` elements by the tokenizer regex. Rendered as styled headers in display mode. Configurable via Settings → Section Tags. Insertable from button bar above textarea in edit mode. Not related to voicings/combo tags.
      * **Voicing Label Algorithm:** Tags are only inserted when the voicing changes. The logic for applying a voicing label `X` to a word at position `startChar` is:
        1. **Backward scan:** From `startChar`, scan backwards (SOF) to find the nearest voicing tag `V` (`[ALL]`, `[S]`, `[A]`, `[T]`, `[B]`, `[S&A]`, `[T&B]`). If none, treat as default `[ALL]`.
        2. **"Right before" test:** `V` is "right before" the word if between `V`'s closing `]` and `startChar` there is only whitespace and/or non-voicing tags (e.g., `[T:12.5]`). No other text or voicing tags allowed.
@@ -77,7 +78,17 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
           - If no `V` (default `[ALL]`): insert `X` at `startChar`, then forward scan.
        4. **Forward scan:** Starting after the word (`endChar`), scan forward (cross-line, EOF) and remove every `X` tag encountered until a **different** voicing tag `Y` (`Y ≠ X`) appears. Stop at `Y`.
        5. **Cleanup:** `setLyricsCleanText` performs line-by-line duplicate removal as a safety net (e.g., `[S]Hello [S]World` → `[S]Hello World`).
-19. **AWNN Project IO:** Projects (including the Base64-encoded recorded audio buffers, cues, BPM, and lyrics) can be fully exported/imported as a unified `.awnn` (JSON) representation.
+ 19. **AWNN Project IO:** Projects (including the Base64-encoded recorded audio buffers, cues, BPM, and lyrics) can be fully exported/imported as a unified `.awnn` (JSON) representation.
+ 20. **LVL (Landscape Lyrics Sidebar) Layout (2026-05-18):**
+     * Tracks are always single-row in lyrics mode (no double-row even at large track heights).
+     * A `ResizeObserver` on the aside detects whether tracks + combo bar have vertical room:
+       - **Formula:** `tracks.length × (btnSize + 6) + (btnSize + 26) ≤ aside.clientHeight`
+       - `btnSize + 6` = minimum per-track height (button + tight padding)
+       - `btnSize + 26` = combo bar height (button + border-top + p-1.5)
+     * **When room exists (tracksFit=true):** Left 2-col combo panel is not rendered → sidebar shrinks → lyrics viewer gets the width. LVP-style `grid grid-cols-3` combo bar renders below tracks inside the aside, filling empty vertical space.
+     * **When no room (tracksFit=false):** Left 2-col combo panel renders as always-accessible column. Bottom bar is hidden (would scroll away).
+     * Combo bar uses exact LVP markup: `displayTags.slice(0, 8)` buttons + `+` button, `grid grid-cols-3`, `p-1.5` with `border-t`.
+     * Initial state is `false` (left panel shown) to avoid layout flash; observer corrects on first frame.
 
 ## Known Limitations / Workarounds
 * `wavesurfer-multitrack` does not reliably emit `timeupdate` events in all environments, so a safe `requestAnimationFrame` polling mechanism is used to update the global `currentTime`.

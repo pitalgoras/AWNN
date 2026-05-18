@@ -486,4 +486,101 @@ No accidental playhead movement during recording.
 
 **Design Principle Documented:**
 - `ModalShell` owns column distribution via CSS columns. Modals must pass flat children — no grid/flex column layout at the top level.
-- Documented in `docs/SPECS.md` (Architecture section), `docs/plans/modularize-modals-and-import-audio.md` (CSS Columns Layout Rule), and this entry.<｜end▁of▁thinking｜>
+- Documented in `docs/SPECS.md` (Architecture section), `docs/plans/modularize-modals-and-import-audio.md` (CSS Columns Layout Rule), and this entry.
+
+## 30. Section Tags + LVL Single-Row Combo Bar Relocation (2026-05-18)
+
+### A. Section Tags (Lyrics Mode)
+
+**What:** Configurable plain-text `[Name]` markers inserted in lyrics for structure, rendered as styled headers in display mode. Not related to voicings/combo tags.
+
+**Store (`useStore.ts`):**
+- Added `sectionTags: string[]` state (default: `['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro']`)
+- Added `setSectionTags` action
+- Persisted to localforage
+
+**Parser (`LyricsBuilder.tsx`):**
+- Tokenizer regex updated from 5 groups to 6:
+  ```
+  (TimeTag)|(VoiceTag)|(SectionTag)|(Newline)|(Word)|(Whitespace)
+  ```
+- Section tag group: `(\[[A-Za-z][A-Za-z0-9\s\-]*?\])` — matches `[Name]` where name starts with a letter, allows letters/digits/spaces/hyphens.
+- Placed after voice tags (already consumed known tags like `[S]`, `[ALL]`), before newlines.
+- Creates element with `type: 'section-tag'`, stores raw text including brackets.
+
+**Renderer:**
+- `type: 'section-tag'` renders as:
+  ```tsx
+  <span className="w-full block text-[10px] font-bold text-zinc-500 italic uppercase tracking-[0.15em] mb-1 mt-2 select-none">
+    {name} {/* brackets stripped */}
+  </span>
+  ```
+
+**Edit Mode Insertion (`LyricsBuilder.tsx`):**
+- `textareaRef` added to the textarea.
+- `insertSectionTag(tagName)` reads cursor position from `textareaRef`, inserts `[TagName]\n` at cursor, then passes through `handleEditTextChange` (preserving time tag mapping).
+- Button bar above textarea renders `sectionTags.filter(Boolean).map(tag => <button>[{tag}]</button>)`.
+
+**Settings (`SettingsModal.tsx`):**
+- "Section Tags" section with editable text inputs, Remove buttons, and + Add Tag button.
+
+**Cleanup Preservation:**
+- All cleanup regexes in `setLyricsCleanText` target only known voice tags (`[ALL]`, `[S]`, `[A]`, etc.) and time tags (`[T:...]`). Section tags pass through untouched.
+
+**Why no separate cleanup hook:** The cleanup logic is inline in `LyricsBuilder.setLyricsCleanText` — no separate `useLyricsCleanText.ts` file exists.
+
+### B. LVL — Forced Single-Row + Adaptive Combo Bar Relocation
+
+**Problem:** Tracks used double-row layout at large track heights, wasting vertical space. The separate 2-col combo panel to the left of tracks could be removed when tracks are short, giving the lyrics viewer more width. The combo bar could then fill the empty vertical space below tracks inside the aside.
+
+**Solution (`TrackBar.tsx`):**
+
+**1. Force single-row for LVL:**
+```tsx
+const useSingleRow = mode === 'lyrics' ? true : (trackHeight * lyricsHeightMultiplier) < singleRowThreshold;
+```
+
+**2. Adaptive combo relocation via ResizeObserver:**
+```tsx
+const asideRef = useRef<HTMLElement>(null);
+const [tracksFit, setTracksFit] = useState(false);
+
+useEffect(() => {
+  const aside = asideRef.current;
+  if (!aside) return;
+  const ro = new ResizeObserver(() => {
+    const nonMetro = (tracks || []).filter(t => t.id !== 'metronome');
+    const cap = btnSize + 6;
+    const needTrackH = nonMetro.length * cap;
+    const barH = btnSize + 26;
+    setTracksFit(needTrackH + barH <= aside.clientHeight);
+  });
+  ro.observe(aside);
+  return () => ro.disconnect();
+}, [tracks, btnSize]);
+```
+
+**3. Layout logic:**
+- **tracksFit=true** (room exists): Left 2-col panel hidden, 3-col combo bar renders below tracks inside aside.
+- **tracksFit=false** (tracks overflow): Left 2-col panel shown, bottom bar hidden.
+- Initial state `false` prevents flash; observer corrects on next frame.
+
+**4. Left panel restored** as original 2-col grid with fixedComboTags + customTags + `+` button.
+
+**5. Bottom combo bar** cloned from LVP markup: `displayTags.slice(0, 8)` + `+` in `grid grid-cols-3`.
+
+**6. `useSingleRow` used throughout track rendering** — all tracks use the single-row `flex-row` path in lyrics mode.
+
+### C. Key Debugging Iterations
+
+1. **First attempt:** Measured `tracksContainerRef.scrollHeight <= aside.clientHeight`. Problem: track container fills the aside (`flex-1`), so scrollHeight always equals clientHeight. No room detected.
+
+2. **Second attempt:** Computed track height from store values: `tracks × trackHeight + 5px each`. Problem: elastic layout grows `trackHeight` to fill space, so computed height always matches aside height.
+
+3. **Third attempt:** DOM measurement using `scrollHeight <= aside.clientHeight - barH`. Problem: elastic layout fills space, never free room.
+
+4. **Final fix:** Compute from fixed `btnSize` dimension (not elastic trackHeight):
+   - `per-track = btnSize + 6` (button + tight padding, independent of elastic layout)
+   - `barH = btnSize + 26`
+   - Compare `tracks × (btnSize + 6) + (btnSize + 26) ≤ aside.clientHeight`
+   - This works because buttons have a fixed minimum size regardless of elastic track expansion.<｜end▁of▁thinking｜>

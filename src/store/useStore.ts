@@ -73,6 +73,7 @@ interface AppState {
   activeColorId: string;
   customTags: VoiceTag[];
   comboTagSeparator: '&' | '+';
+  sectionTags: string[];
   
   // Configurable button sizes (CSS pixels, editable in Advanced Settings)
   smallBtnSize: number;
@@ -179,6 +180,7 @@ interface AppState {
   addCustomTag: (tag: VoiceTag) => void;
   markCustomTagUsed: (id: string) => void;
   setComboTagSeparator: (separator: '&' | '+') => void;
+  setSectionTags: (tags: string[]) => void;
 
   getMultitrackTime: () => number;
   setMultitrackTimeGetter: (getter: () => number) => void;
@@ -220,6 +222,7 @@ const defaultSettings = {
   activeColorId: '#FACC15',
   customTags: [],
   comboTagSeparator: '+' as const,
+  sectionTags: ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'],
   sampleRate: 44100, // Default; updated when AudioContext is created
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
@@ -277,6 +280,7 @@ export const useStore = create<AppState>()(
             .replace(new RegExp(`\\[S\\${old}A\\]`, 'g'), `[S${separator}A]`)
             .replace(new RegExp(`\\[T\\${old}B\\]`, 'g'), `[T${separator}B]`);
         }),
+        setSectionTags: (tags) => set({ sectionTags: tags }),
 
         setMoveLocked: (locked) => set({ moveLocked: locked }),
         setEnvelopeLocked: (locked) => set({ envelopeLocked: locked }),
@@ -544,6 +548,7 @@ export const useStore = create<AppState>()(
         activeColorId: state.activeColorId,
         customTags: state.customTags,
         comboTagSeparator: state.comboTagSeparator,
+        sectionTags: state.sectionTags,
         toolbarProposal: state.toolbarProposal,
         toolbarVisibleLabels: state.toolbarVisibleLabels,
       }),

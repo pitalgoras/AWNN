@@ -35,3 +35,4 @@
 - Stick strictly to approved plans - do not add extra actions
 - When in doubt about a file's purpose, ask the user before deleting
 - Report untracked files found during analysis, but do not delete them
+- **Ask questions one at a time** — never bundle multiple questions in a single message
