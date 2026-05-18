@@ -1,12 +1,11 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useStore, VoicingSegment } from '../store/useStore';
 import { cn } from '../lib/utils';
-import { Palette, AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, VolumeX, Volume2, Edit3 } from 'lucide-react';
+import { AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
-import { getContrastColor } from '../lib/utils';
 import { useToolbarContext } from '../hooks/useToolbarContext';
-import { useAudioEngine } from '../hooks/useAudioEngine';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
+
 
 const STANDARD_VOICINGS = [
   // Single voices (with trackId) – Right section, two rows with M/R
@@ -25,9 +24,11 @@ const STANDARD_VOICINGS = [
 interface Props {
   isEditMode: boolean;
   setIsEditMode: (v: boolean) => void;
+  startRecording: (trackId: string) => void;
+  stopRecording: () => void;
 }
 
-export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode }) => {
+export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, startRecording, stopRecording }) => {
   const {
     lyricsText,
     setLyricsText,
@@ -44,8 +45,6 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode }) =>
     setSelectedTrackId,
   selectedTrackId,
   } = useStore();
-
-  const { startRecording, stopRecording } = useAudioEngine();
 
   const [isPainting, setIsPainting] = useState(false);
   
@@ -73,10 +72,6 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode }) =>
   const getBtnClass = (isSquare = false) => cn(btnClassBase, isSquare ? 'aspect-square' : '');
   const btnIconSize = screenSize === 'small' ? 12 : screenSize === 'medium' ? 14 : 16;
   
-  // Palette voicing buttons: small fixed size, not full-width
-  const paletteBtnSize = screenSize === 'small' ? 'h-8 w-8 min-h-0 text-[9px]' : 'h-10 w-10 min-h-0 text-[10px]';
-  // M/R buttons below voices: compact size
-  const smallBtnClass = screenSize === 'small' ? 'h-6 px-2 text-[9px]' : 'h-7 px-2 text-[10px]';
   
   const containerRef = useRef<HTMLDivElement>(null);
   
@@ -333,246 +328,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
   return (
     <div className="flex-1 flex flex-row overflow-hidden bg-zinc-950 text-zinc-200">
        
-      {/* LEFT MARGIN TOOLBAR - Split into Left/Right sections */}
-      <div className={cn(
-        "border-t border-zinc-800 p-1 gap-1",
-        isPortrait && screenSize === 'small'
-          ? "fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 flex-row items-start" // Bottom bar
-          : "w-56 flex-col items-start overflow-y-auto" // Left sidebar
-      )}>
-        {!isPortrait && <Palette size={14} className="text-zinc-500 mb-1 self-center" />}
-        
-        {/* Split voicings into single (with trackId) and non-single */}
-        {(() => {
-          const nonSingleVoicings = STANDARD_VOICINGS.filter(v => !v.trackId);
-          const singleVoicings = STANDARD_VOICINGS.filter(v => v.trackId);
-          
-          if (isPortrait && screenSize === 'small') {
-            // Bottom bar: single voices as vertical columns, multiple-voicing buttons to the right
-            return (
-              <div className="flex flex-row items-start flex-1">
-                {/* Single voices as vertical columns (voice + M/R below each) */}
-                <div className="flex flex-row gap-1 flex-shrink-0">
-                  {singleVoicings.map(v => {
-                    const track = v.trackId ? tracks.find(t => t.id === v.trackId) : null;
-                    const contrastColor = getContrastColor(v.id);
-                    
-                    return (
-                      <div key={v.id} className="flex flex-col gap-1 items-center">
-                        <button
-                          onClick={() => setActiveColorId(v.id)}
-                          className={cn(
-                            "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
-                            paletteBtnSize,
-                            activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
-                          )}
-                          style={{
-                            backgroundColor: v.id,
-                            color: contrastColor,
-                            borderColor: activeColorId === v.id ? '#fff' : 'transparent'
-                          }}
-                          title={v.label}
-                        >
-                          {v.tag}
-                        </button>
-                       
-                        {/* Mute & Record buttons below voice button */}
-                        {track && (
-                          <>
-                            <button 
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                updateTrack(track.id, { isMuted: !track.isMuted });
-                              }}
-                              className={cn(
-                                "rounded flex items-center justify-center text-[10px] font-bold transition-all",
-                                smallBtnClass,
-                                track.isMuted 
-                                  ? "bg-red-500/20 text-red-400" 
-                                  : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                              )}
-                              title="Toggle Mute"
-                            >
-                              M
-                            </button>
-                            {v.trackId !== '1' && !isRecording && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
-                                className={cn(
-                                  "rounded flex items-center justify-center transition-colors",
-                                  smallBtnClass,
-                                  "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
-                                )}
-                                title="Record"
-                              >
-                                R
-                              </button>
-                            )}
-                            {v.trackId !== '1' && isRecording && selectedTrackId === track.id && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
-                                className={cn(
-                                  "rounded flex items-center justify-center transition-colors",
-                                  smallBtnClass,
-                                  "bg-red-500 text-white animate-pulse"
-                                )}
-                                title="Stop Recording"
-                              >
-                                ■
-                              </button>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-                
-                {/* Divider */}
-                <div className="w-px h-full bg-zinc-800 mx-1 flex-shrink-0" />
-                
-                {/* Multiple-voicing buttons flowing to the right */}
-                <div className="flex flex-row gap-1 items-center flex-shrink-0">
-                  {nonSingleVoicings.map(v => {
-                    const contrastColor = getContrastColor(v.id);
-                    return (
-                      <button
-                        key={v.id}
-                        onClick={() => setActiveColorId(v.id)}
-                        className={cn(
-                          "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
-                          paletteBtnSize,
-                          activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
-                        )}
-                        style={{
-                          backgroundColor: v.id,
-                          color: contrastColor,
-                          borderColor: activeColorId === v.id ? '#fff' : 'transparent'
-                        }}
-                        title={v.label}
-                      >
-                        {v.tag}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            );
-          }
-          
-          // Sidebar layout (portrait large or landscape)
-          return (
-            <>
-              {/* Non-single voices (top-aligned, single row, no M/R) */}
-              <div className="flex gap-1 flex-1 flex-col justify-start w-full py-1">
-                {nonSingleVoicings.map(v => {
-                  const contrastColor = getContrastColor(v.id);
-                  return (
-                    <div key={v.id} className="flex items-center justify-center">
-                      <button
-                        onClick={() => setActiveColorId(v.id)}
-                        className={cn(
-                          "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
-                          paletteBtnSize,
-                          activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
-                        )}
-                        style={{
-                          backgroundColor: v.id,
-                          color: contrastColor,
-                          borderColor: activeColorId === v.id ? '#fff' : 'transparent'
-                        }}
-                        title={v.label}
-                      >
-                        {v.tag}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-              
-              {/* Divider */}
-              <div className="w-full h-px bg-zinc-800 my-1" />
-              
-              {/* Single voices (two rows: voice → M/R) */}
-              <div className="flex gap-1 flex-1 flex-col w-full py-1">
-                {singleVoicings.map(v => {
-                  const track = v.trackId ? tracks.find(t => t.id === v.trackId) : null;
-                  const contrastColor = getContrastColor(v.id);
-                  
-                  return (
-                    <div key={v.id} className="flex flex-col gap-1">
-                      <button
-                        onClick={() => setActiveColorId(v.id)}
-                        className={cn(
-                          "rounded-full border-2 transition-transform shadow-sm flex items-center justify-center",
-                          paletteBtnSize,
-                          activeColorId === v.id ? "scale-110 shadow-[0_0_12px_rgba(255,255,255,0.4)] z-10" : "scale-90 border-transparent hover:scale-100 opacity-60 hover:opacity-100"
-                        )}
-                        style={{
-                          backgroundColor: v.id,
-                          color: contrastColor,
-                          borderColor: activeColorId === v.id ? '#fff' : 'transparent'
-                        }}
-                        title={v.label}
-                      >
-                        {v.tag}
-                      </button>
-                    
-                      {/* Mute & Record buttons below voice button */}
-                      {track && (
-                        <div className="flex flex-col gap-1 w-full">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              updateTrack(track.id, { isMuted: !track.isMuted });
-                            }}
-                            className={cn(
-                              "rounded flex items-center justify-center text-[10px] font-bold transition-all",
-                              smallBtnClass,
-                              track.isMuted 
-                                ? "bg-red-500/20 text-red-400" 
-                                : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700 hover:text-zinc-200"
-                            )}
-                            title="Toggle Mute"
-                          >
-                            M
-                          </button>
-                            {v.trackId !== '1' && !isRecording && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
-                                className={cn(
-                                  "rounded flex items-center justify-center transition-colors",
-                                  smallBtnClass,
-                                  "bg-zinc-800 text-red-400 hover:bg-zinc-700 hover:text-red-300"
-                                )}
-                                title="Record"
-                              >
-                                R
-                              </button>
-                            )}
-                            {v.trackId !== '1' && isRecording && selectedTrackId === track.id && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleRecord(track.id); }}
-                                className={cn(
-                                  "rounded flex items-center justify-center transition-colors",
-                                  smallBtnClass,
-                                  "bg-red-500 text-white animate-pulse"
-                                )}
-                                title="Stop Recording"
-                              >
-                                ■
-                              </button>
-                            )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          );
-        })()}
-      </div>
+
       
       {/* Main Workspace: Syncing container with 2-finger scroll */}
       <div 

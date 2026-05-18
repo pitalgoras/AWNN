@@ -1,14 +1,16 @@
-import React, { useRef } from 'react';
+import React, { useRef, useState } from 'react';
 import { useStore } from '../store/useStore';
 import { cn } from '../lib/utils';
+import { getContrastColor, generateVoiceTags, generate3WayTags } from '../lib/utils';
 import { Mic, Activity, RotateCcw } from 'lucide-react';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
-import { getContrastColor } from '../lib/utils';
 
-export const TrackToolbar = ({ handlers }: { handlers: any }) => {
+export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer' | 'lyrics'; handlers: any }) => {
   const tracks = useStore(s => s.tracks);
   const selectedTrackId = useStore(s => s.selectedTrackId);
+  const activeColorId = useStore(s => s.activeColorId);
+  const setActiveColorId = useStore(s => s.setActiveColorId);
   const isRecording = useStore(s => s.isRecording);
   
   const envelopeLocked = useStore(s => s.envelopeLocked);
@@ -17,7 +19,9 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   const metronomeHeight = useStore(s => s.metronomeHeight);
   const toolbarProposal = useStore(s => s.toolbarProposal);
   const toolbarVisibleLabels = useStore(s => s.toolbarVisibleLabels);
-  const { screenSize } = useToolbarContext('vertical');
+  const toolbarVertical = useToolbarContext('vertical');
+  const screenSize = toolbarVertical.screenSize;
+  const isPortrait = toolbarVertical.isPortrait;
   
   // Responsive sizing based on screenSize
   const { smallBtnSize, mediumBtnSize, largeBtnSize } = useStore();
@@ -52,12 +56,83 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
   
   // Determine if single-row layout is needed based on track height
   // If track height < 80px, force single row (label + mute/record side-by-side)
+  const lyricsHeightMultiplier = mode === 'lyrics' ? 0.6 : 1;
   const singleRowThreshold = 80;
-  const useSingleRow = trackHeight < singleRowThreshold;
+  const useSingleRow = (trackHeight * lyricsHeightMultiplier) < singleRowThreshold;
   
   const getShortLabel = (track: any) => track.name.substring(0, 4);
   
-  return (
+  const [show3Way, setShow3Way] = useState(false);
+  const tags = React.useMemo(() => mode === 'lyrics' ? generateVoiceTags(tracks) : [], [mode, tracks]);
+  const tags3Way = React.useMemo(() => mode === 'lyrics' && show3Way ? generate3WayTags(tracks) : [], [mode, tracks, show3Way]);
+  
+  const get3LetterLabel = (name: string) => name.substring(0, 3);
+
+  return mode === 'lyrics' && isPortrait && screenSize === 'small' ? (
+    /* Portrait lyrics: fixed bottom bar with per-track columns + composite tags */
+    <div className="fixed bottom-0 left-0 right-0 z-50 bg-zinc-900 border-t border-zinc-800 p-1.5 gap-1.5 flex-row items-start flex overflow-x-auto">
+      {(tracks || []).filter(t => t.id !== 'metronome').map(track => (
+        <div key={track.id} className="flex flex-col items-center gap-1 shrink-0">
+          <button
+            onClick={() => handleRecord(track.id)}
+            className={cn(
+              "rounded flex items-center justify-center transition-colors",
+              getToolbarBtnClass(true),
+              isRecording && selectedTrackId === track.id
+                ? "bg-red-500 text-white animate-pulse"
+                : "bg-zinc-800 text-red-400 hover:bg-zinc-700"
+            )}
+          >
+            <Mic className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => useStore.getState().updateTrack?.(track.id, { isMuted: !track.isMuted })}
+            className={cn(
+              "rounded flex items-center justify-center font-bold transition-colors",
+              getToolbarBtnClass(true),
+              track.isMuted ? "bg-red-500/20 text-red-400" : "bg-zinc-800 text-zinc-400 hover:bg-zinc-700"
+            )}
+          >
+            M
+          </button>
+          <button
+            onClick={() => setActiveColorId(track.color)}
+            className={cn(
+              "rounded font-bold transition-all select-none",
+              getToolbarBtnClass(true),
+              activeColorId === track.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+            )}
+            style={{ backgroundColor: track.color, color: getContrastColor(track.color) }}
+          >
+            {get3LetterLabel(track.name)}
+          </button>
+        </div>
+      ))}
+      {tags.length > 0 && <div className="w-px self-stretch bg-zinc-800 mx-1.5 shrink-0" />
+      }
+      {tags.filter(t => t.trackIds.length !== 1).concat(tags3Way).map(tag => (
+        <button
+          key={tag.id}
+          onClick={() => setActiveColorId(tag.color)}
+          className={cn(
+            "rounded font-bold transition-all select-none shrink-0 self-center",
+            getToolbarBtnClass(true),
+            activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+          )}
+          style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
+        >
+          {tag.label}
+        </button>
+      ))}
+      {!show3Way && (
+        <button
+          onClick={() => setShow3Way(true)}
+          className={cn("rounded font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors shrink-0 self-center", getToolbarBtnClass(true))}
+        >+</button>
+      )}
+    </div>
+  ) : (
+    /* Landscape sidebar - current behavior */
     <aside 
       style={{
         width: isCompact ? '64px' : sidebarWidth,
@@ -69,7 +144,7 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
         {(tracks || []).filter(t => t.id !== 'metronome').map((track) => {
           const isMetronome = track.id === 'metronome';
           const isExpanded = track.id === selectedTrackId && !envelopeLocked && !isMetronome;
-          const currentHeight = isMetronome ? metronomeHeight : (isExpanded ? Math.floor(trackHeight * 1.5) : trackHeight);
+          const currentHeight = isMetronome ? metronomeHeight : Math.floor((isExpanded ? trackHeight * 1.5 : trackHeight) * lyricsHeightMultiplier);
           
           const shortLabel = getShortLabel(track);
           const trackColor = track.color || '#666';
@@ -105,12 +180,15 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
                     useSingleRow ? "flex-1" : "w-full"
                   )}>
                     <button
-                      onClick={() => useStore.getState().setSelectedTrackId(track.id)}
-                      className="w-full h-full rounded flex items-center justify-center text-[10px] font-bold transition-all"
+                      onClick={() => mode === 'lyrics' ? setActiveColorId(track.color) : useStore.getState().setSelectedTrackId(track.id)}
+                      className={cn(
+                        "w-full h-full rounded flex items-center justify-center font-bold transition-all",
+                        mode === 'lyrics' ? getToolbarBtnClass(true) : "text-[10px]"
+                      )}
                       style={{ 
                         backgroundColor: trackColor,
                         color: contrastColor,
-                        minHeight: '44px'
+                        minHeight: mode === 'lyrics' ? undefined : '44px'
                       }}
                       title={track.name}
                     >
@@ -264,6 +342,32 @@ export const TrackToolbar = ({ handlers }: { handlers: any }) => {
             </div>
           );
         })}
+        
+        {mode === 'lyrics' && (
+          <div className="border-t border-zinc-800 p-2">
+            <div className="grid grid-flow-col grid-rows-3 gap-1.5">
+              {[...tags.filter(t => t.trackIds.length !== 1), ...tags3Way].map(tag => (
+                <button
+                  key={tag.id}
+                  onClick={() => setActiveColorId(tag.color)}
+                  className={cn(
+                    "rounded font-bold transition-all select-none",
+                    getToolbarBtnClass(true),
+                    activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                    tag.id === 'all' ? 'opacity-80' : ''
+                  )}
+                  style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
+                >
+                  {tag.label}
+                </button>
+              ))}
+              {!show3Way && <button
+                onClick={() => setShow3Way(true)}
+                className={cn("rounded font-bold bg-zinc-800 text-zinc-400 hover:bg-zinc-700 transition-colors", getToolbarBtnClass(true))}
+              >+</button>}
+            </div>
+          </div>
+        )}
       </div>
     </aside>
   );

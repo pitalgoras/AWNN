@@ -20,7 +20,7 @@ import { ManualCalibrationModal } from './components/modals/ManualCalibrationMod
 import { LatencyCalibrationModal } from './components/modals/LatencyCalibrationModal';
 import { TimelineGrid } from './components/TimelineGrid';
 import { LyricsBuilder } from './components/LyricsBuilder';
-import { TrackToolbar } from './components/TrackToolbar';
+import { TrackBar } from './components/TrackBar';
 import { exportProjectToJSON, importProjectFromJSON } from './audio/project/projectIO';
 
 import { TransportTimeDisplay } from './components/TransportTimeDisplay';
@@ -965,107 +965,102 @@ export default function App() {
       {/* Main Workspace */}
       <main className="flex-1 flex overflow-hidden relative">
         
-        {appMode === 'lyrics' && (
-          <div className="absolute inset-0 z-[100] bg-zinc-950">
-            <LyricsBuilder isEditMode={lyricsEditMode} setIsEditMode={setLyricsEditMode} />
-          </div>
-        )}
+        {/* TrackBar - persistent left sidebar, shared across modes */}
+        <TrackBar mode={appMode === 'lyrics' ? 'lyrics' : 'mixer'} handlers={{
+          handleTrackPointerDown,
+          handleTrackPointerUp,
+          handleTrackPointerLeave,
+          handleRecord,
+          handleMutePointerDown,
+          handleMutePointerUp,
+          handleUndoRecording: undoLastRecording,
+        }} />
         
-        {/* We ALWAYS render Multitrack so the engine is never destroyed, but might hide it */}
-        <div className={cn("flex-1 flex flex-col overflow-hidden", appMode === 'lyrics' && "opacity-0 pointer-events-none")}>
-            
-            {/* Main content: Left Sidebar (Track Controls) + Center (Waveforms) */}
+        {/* Right panel - swaps per mode */}
+        <div className="flex-1 flex flex-col overflow-hidden">
+          {appMode === 'mixer' ? (
             <div className="flex-1 flex flex-row">
-               
-              {/* Left Sidebar - Track Controls (always on left edge) */}
-              <TrackToolbar handlers={{
-                handleTrackPointerDown,
-                handleTrackPointerUp,
-                handleTrackPointerLeave,
-                handleRecord,
-                handleMutePointerDown,
-                handleMutePointerUp,
-                handleUndoRecording: undoLastRecording,
-              }} />
-            
-            {/* Center - Waveforms */}
-            <section className="flex-1 bg-zinc-950 relative overflow-hidden">
-              {/* Cues Overlay */}
-              <div className="absolute top-0 left-0 right-0 h-6 z-40 pointer-events-none overflow-hidden">
-                {cues.map((cue) => (
-                  <div 
-                    key={cue.id}
-                    className="absolute top-0 bottom-0 w-px bg-yellow-500/50 group cursor-pointer pointer-events-auto"
-                    style={{ left: `${(cue.time / (duration || 1)) * 100}%` }}
-                    onClick={() => seekTo(cue.time)}
-                  >
-                    <div className="absolute top-6 -translate-x-1/2 bg-zinc-900/90 border border-yellow-500/30 text-yellow-500 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity shadow-xl">
-                      {cue.label}
+              {/* Waveforms */}
+              <section className="flex-1 bg-zinc-950 relative overflow-hidden">
+                {/* Cues Overlay */}
+                <div className="absolute top-0 left-0 right-0 h-6 z-40 pointer-events-none overflow-hidden">
+                  {cues.map((cue) => (
+                    <div 
+                      key={cue.id}
+                      className="absolute top-0 bottom-0 w-px bg-yellow-500/50 group cursor-pointer pointer-events-auto"
+                      style={{ left: `${(cue.time / (duration || 1)) * 100}%` }}
+                      onClick={() => seekTo(cue.time)}
+                    >
+                      <div className="absolute top-6 -translate-x-1/2 bg-zinc-900/90 border border-yellow-500/30 text-yellow-500 text-[9px] px-1.5 py-0.5 rounded whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity shadow-xl">
+                        {cue.label}
+                      </div>
+                      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.5)]" />
                     </div>
-                    <div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(234,179,8,0.5)]" />
-                  </div>
-                ))}
-              </div>
+                  ))}
+                </div>
 
-              <div 
-                ref={containerRef} 
-                className="w-full multitrack-container timeline-container relative z-20 touch-none overscroll-none" 
-                onClickCapture={handleContainerClick}
-              />
-              {isReady && <TimelineGrid />}
-              {isReady && <SyncTool />}
-              {isReady && <EnvelopeEditor />}
-            </section>
-          </div>
-        </div>
-        
-        {/* Right Sidebar - Cues List */}
-        {showCues && (
-          <aside className="w-64 border-l border-zinc-800 bg-zinc-900/30 flex flex-col shrink-0 animate-in slide-in-from-right duration-200">
-            
-            {/* Cues List */}
-            <div className="p-3 border-b border-zinc-800 sticky top-0 bg-zinc-900/90 backdrop-blur-sm z-10 flex justify-between items-center">
-              <span className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Cues</span>
-              <button 
-                onClick={() => addCue({ time: useStore.getState().currentTime, label: `Cue ${cues.length + 1}` })}
-                className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-100 transition-colors"
-                title="Add Cue"
-              >
-                <Plus className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-2 space-y-1">
-              {cues.length === 0 ? (
-                <div className="text-center p-4 text-xs text-zinc-600">No cues added yet.</div>
-              ) : (
-                cues.map((cue, index) => (
-                  <div 
-                    key={cue.id}
-                    className="flex items-center justify-between p-2 rounded hover:bg-zinc-800/50 cursor-pointer group text-sm"
-                  >
-                    <div className="flex items-center gap-3 flex-1" onClick={() => seekTo(cue.time)}>
-                      <span className="text-zinc-600 font-mono text-xs w-4">{index + 1}</span>
-                      <span className="text-zinc-300">{cue.label}</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-zinc-500 font-mono text-xs">{formatBarBeat(cue.time, bpm, timeSignature)}</span>
-                      <button 
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          removeCue(cue.id);
-                        }}
-                        className="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                      >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
-                    </div>
+                <div 
+                  ref={containerRef} 
+                  className="w-full multitrack-container timeline-container relative z-20 touch-none overscroll-none" 
+                  onClickCapture={handleContainerClick}
+                />
+                {isReady && <TimelineGrid />}
+                {isReady && <SyncTool />}
+                {isReady && <EnvelopeEditor />}
+              </section>
+              
+              {/* Right Sidebar - Cues List */}
+              {showCues && (
+                <aside className="w-64 border-l border-zinc-800 bg-zinc-900/30 flex flex-col shrink-0 animate-in slide-in-from-right duration-200">
+                  
+                  {/* Cues List */}
+                  <div className="p-3 border-b border-zinc-800 sticky top-0 bg-zinc-900/90 backdrop-blur-sm z-10 flex justify-between items-center">
+                    <span className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Cues</span>
+                    <button 
+                      onClick={() => addCue({ time: useStore.getState().currentTime, label: `Cue ${cues.length + 1}` })}
+                      className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-100 transition-colors"
+                      title="Add Cue"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
                   </div>
-                ))
+                  <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                    {cues.length === 0 ? (
+                      <div className="text-center p-4 text-xs text-zinc-600">No cues added yet.</div>
+                    ) : (
+                      cues.map((cue, index) => (
+                        <div 
+                          key={cue.id}
+                          className="flex items-center justify-between p-2 rounded hover:bg-zinc-800/50 cursor-pointer group text-sm"
+                        >
+                          <div className="flex items-center gap-3 flex-1" onClick={() => seekTo(cue.time)}>
+                            <span className="text-zinc-600 font-mono text-xs w-4">{index + 1}</span>
+                            <span className="text-zinc-300">{cue.label}</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-zinc-500 font-mono text-xs">{formatBarBeat(cue.time, bpm, timeSignature)}</span>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeCue(cue.id);
+                              }}
+                              className="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                </aside>
               )}
             </div>
-
-          </aside>
-        )}
+          ) : (
+            <LyricsBuilder isEditMode={lyricsEditMode} setIsEditMode={setLyricsEditMode} startRecording={startRecording} stopRecording={stopRecording} />
+          )}
+        </div>
 
       </main>
 
