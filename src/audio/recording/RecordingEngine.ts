@@ -347,6 +347,22 @@ export class RecordingEngine {
     const wavBlob = new Blob([audioBufferToWav(audioBuffer)], { type: 'audio/wav' });
     const finalAudioUrl = URL.createObjectURL(wavBlob);
 
+    const anchoredFrameTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : 0;
+    const simpleDelta = this.punchInUserTime - (anchoredFrameTime - secondsPerBar);
+    const beatDelta = simpleDelta / secondsPerBeat;
+    console.log('RECORDING_DELTA', {
+      punchInUserTime: this.punchInUserTime,
+      startPos,
+      headLength: this.headLength,
+      anchoredFrame,
+      anchoredFrameAsTime: anchoredFrameTime,
+      secondsPerBar,
+      secondsPerBeat,
+      userTimeAtAnchor: anchoredFrameTime - secondsPerBar,
+      deltaSec: simpleDelta,
+      deltaBeats: beatDelta,
+      tracksFit: null, // placeholder
+    });
     perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {
       url: finalAudioUrl,
