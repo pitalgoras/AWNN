@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useStore } from '../../store/useStore';
 import { Zap, Play, RotateCcw, Info } from 'lucide-react';
-import { LatencyCalibrator, LatencyCalibrationResult } from '../../lib/audio/LatencyCalibrator';
+import { LatencyCalibrator, LatencyCalibrationResult, ProbeCycleData } from '../../lib/audio/LatencyCalibrator';
 import { ModalShell } from './ModalShell';
+import { ProbeMonitor } from './ProbeMonitor';
 
 interface LatencyCalibrationModalProps {
   show: boolean;
   onClose: () => void;
+  autoStart?: boolean;
 }
 
-export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = ({ show, onClose }) => {
+export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = ({ show, onClose, autoStart }) => {
   const globalLatencyMs = useStore(s => s.globalLatencyMs);
   const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
   const extraLatencyMs = useStore(s => s.extraLatencyMs);
@@ -17,16 +19,35 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
 
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
+  const [statusText, setStatusText] = useState<string | null>(null);
   const [lastDetectedLatency, setLastDetectedLatency] = useState<number | null>(null);
+  const [lastSignalQuality, setLastSignalQuality] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [continuousProbe, setContinuousProbe] = useState(false);
+  const [probeCycles, setProbeCycles] = useState<ProbeCycleData[]>([]);
+  const [probeActive, setProbeActive] = useState(false);
 
   const calibratorRef = useRef<LatencyCalibrator | null>(null);
+
+  const stopProbe = () => {
+    if (calibratorRef.current) {
+      calibratorRef.current.cancel();
+      calibratorRef.current = null;
+      setIsCalibrating(false);
+      setProbeActive(false);
+      setStatusText(null);
+    }
+  };
 
   const runAutoCalibration = async () => {
     setIsCalibrating(true);
     setCalibrationProgress(0);
+    setStatusText(null);
     setError(null);
     setLastDetectedLatency(null);
+    setLastSignalQuality(null);
+    setProbeCycles([]);
+    setProbeActive(true);
 
     // Cancel any existing calibration
     if (calibratorRef.current) {
@@ -36,12 +57,19 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
     const calibrator = new LatencyCalibrator(
       {
         onProgress: (progress) => setCalibrationProgress(progress),
-        onComplete: (result: LatencyCalibrationResult) => {
+        onStatus: (status) => setStatusText(status),
+        onProbeReading: (data: ProbeCycleData, history: ProbeCycleData[]) => {
+          setProbeCycles([...history]);
+        },
+        onComplete: (result: LatencyCalibrationResult & { signalQuality?: string }) => {
           setIsCalibrating(false);
+          setProbeActive(false);
           setCalibrationProgress(100);
+          setStatusText(null);
 
           if (result.success && result.averageLatencyMs > 0) {
             setLastDetectedLatency(result.averageLatencyMs);
+            setLastSignalQuality((result as any).signalQuality || 'good');
             setGlobalLatencyMs(result.averageLatencyMs);
           } else {
             setError(result.error || "Could not detect the test tone. Ensure your speakers are audible to the microphone.");
@@ -51,10 +79,12 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
         onError: (errorMsg: string) => {
           setError(errorMsg);
           setIsCalibrating(false);
+          setProbeActive(false);
+          setStatusText(null);
           calibratorRef.current = null;
         }
       },
-      { numTests: 5 }
+      { continuousProbe }
     );
 
     calibratorRef.current = calibrator;
@@ -71,6 +101,15 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
     };
   }, []);
 
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (show && autoStart && !autoStartedRef.current) {
+      autoStartedRef.current = true;
+      runAutoCalibration();
+    }
+    if (!show) autoStartedRef.current = false;
+  }, [show, autoStart]);
+
   return (
     <ModalShell show={show} onClose={onClose} title="Auto Calibration" maxWidth="max-w-md" singleColumn>
       <div className="space-y-4 text-sm text-zinc-300 cursor-default">
@@ -79,36 +118,73 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Auto Calibration</h3>
               {lastDetectedLatency !== null && (
-                <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20">
-                  Detected: {lastDetectedLatency}ms
+                <span className="text-[9px] font-bold bg-emerald-500/10 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/20 flex items-center gap-1.5">
+                  <span>{lastDetectedLatency}ms</span>
+                  {lastSignalQuality === 'good' && <span className="text-emerald-400">●</span>}
+                  {lastSignalQuality === 'weak' && <span className="text-amber-400">●</span>}
+                  {lastSignalQuality === 'clipping' && <span className="text-red-400">●</span>}
                 </span>
               )}
             </div>
             
             <p className="text-[10px] text-zinc-500 mb-4 leading-snug">
-              Plays a 100ms tone through speakers, measures round-trip latency via microphone energy detection.
+              Plays a continuous noise pattern through speakers, measures round-trip latency via microphone correlation.
             </p>
 
             {isCalibrating ? (
               <div className="space-y-3">
                 <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
-                  <div 
+                  <div
                     className="h-full bg-blue-500 transition-all duration-300"
                     style={{ width: `${calibrationProgress}%` }}
                   />
                 </div>
-                <div className="text-center text-[9px] font-bold text-blue-400 animate-pulse uppercase tracking-widest">
-                  Calibrating... Keep it quiet
-                </div>
+                {statusText && (
+                  <div className="text-center text-[9px] text-zinc-400 leading-snug">
+                    {statusText}
+                  </div>
+                )}
+
+                {/* Live probe monitor */}
+                {probeActive && probeCycles.length > 0 && (
+                  <div className="bg-zinc-900/50 rounded p-2 border border-zinc-800">
+                    {/* Stop button — always visible, fixed position */}
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-zinc-500">Live Probe</span>
+                      <button onClick={stopProbe}
+                        className="px-3 py-1 bg-red-600 hover:bg-red-500 text-white font-bold rounded text-[10px] transition-all"
+                      >
+                        {continuousProbe ? 'Stop' : 'Stop (auto)'}
+                      </button>
+                    </div>
+                    <ProbeMonitor
+                      cycle={probeCycles[probeCycles.length - 1]}
+                      cycleCount={probeCycles.length}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
-              <button 
-                onClick={runAutoCalibration}
-                className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-md transition-all flex items-center justify-center gap-1.5 group text-xs text-[10px]"
-              >
-                <Play className="w-3.5 h-3.5 fill-current group-hover:scale-110 transition-transform" />
-                Run Calibrator
-              </button>
+              <div className="space-y-2">
+                <button
+                  onClick={runAutoCalibration}
+                  className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-md transition-all flex items-center justify-center gap-1.5 group text-xs text-[10px]"
+                >
+                  <Play className="w-3.5 h-3.5 fill-current group-hover:scale-110 transition-transform" />
+                  Run Calibrator
+                </button>
+
+                {/* Non-stop debug toggle */}
+                <label className="flex items-center gap-2 text-[9px] text-zinc-500 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={continuousProbe}
+                    onChange={(e) => setContinuousProbe(e.target.checked)}
+                    className="accent-zinc-500"
+                  />
+                  Non-stop debug mode (probe keeps running after auto-stop would trigger)
+                </label>
+              </div>
             )}
 
             {error && (

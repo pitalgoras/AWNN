@@ -1,14 +1,15 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../lib/utils';
-import { Settings, Save, FolderOpen } from 'lucide-react';
+import { Settings, Save, FolderOpen, Zap } from 'lucide-react';
 import { ModalShell, ModalHeading, ModalRow, ModalLabel } from './ModalShell';
 import { ToggleRow } from '../settings/ToggleRow';
-import { exportProjectToJSON } from '../../audio/project/projectIO';
+import { LatencyCalibrationModal } from './LatencyCalibrationModal';
 
 interface Props { show: boolean; onClose: () => void; onOpenAdvanced: () => void; onOpenTracks: () => void }
 
 export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, onOpenTracks }) => {
+  const [latencyCal, setLatencyCal] = useState<'closed' | 'manual' | 'auto'>('closed');
   const globalLatencyMs = useStore(s => s.globalLatencyMs);
   const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
   const metronomeEnabled = useStore(s => s.metronomeEnabled);
@@ -20,18 +21,23 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
   const sectionTags = useStore(s => s.sectionTags);
   const setSectionTags = useStore(s => s.setSectionTags);
 
-  return (
+  return (<>
     <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg">
       {/* Latency Section */}
       <div>
-        <div className="flex justify-between items-center mb-3">
-          <ModalHeading>Global Latency Offset</ModalHeading>
-          <span className="font-mono text-[10px] text-zinc-400">{globalLatencyMs}ms</span>
+        <ModalHeading>Audio Latency Compensation</ModalHeading>
+        <div className="flex gap-2 mt-2">
+          <button onClick={() => { console.log('SettingsModal: Auto Calibration clicked'); setLatencyCal('auto'); }}
+            className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+          >
+            <Zap size={14} /> Auto Calibration
+          </button>
+          <button onClick={() => { console.log('SettingsModal: ms button clicked', globalLatencyMs + 'ms'); setLatencyCal('manual'); }}
+            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-[10px] font-mono font-bold transition-all"
+          >
+            {globalLatencyMs}ms
+          </button>
         </div>
-        <input type="range" min="-200" max="200" step="1" value={globalLatencyMs}
-          onChange={(e) => setGlobalLatencyMs(parseInt(e.target.value))}
-          className="w-full h-1.5 bg-zinc-800 rounded-full appearance-none cursor-pointer accent-blue-500"
-        />
       </div>
 
       {/* Advanced Audio */}
@@ -128,5 +134,6 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
         </div>
       </div>
     </ModalShell>
-  );
+      <LatencyCalibrationModal show={latencyCal !== 'closed'} onClose={() => setLatencyCal('closed')} autoStart={latencyCal === 'auto'} />
+    </>);
 };

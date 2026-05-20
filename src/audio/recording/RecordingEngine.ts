@@ -1,19 +1,10 @@
-/**
- * RecordingEngine - Encapsulates all recording logic
- * Extracted from useAudioEngine.ts for modularity
- * 
- * Recording Logic (user time = timeline position):
- * - Rolling buffer captures 1s of audio BEFORE recording starts (when pressed from stop)
- * - This "head" contains audio from the rolling buffer (garbage, should be skipped)
- * - When recording WHILE PLAYING: no head captured (recording starts at punch-in time)
- * 
- * startPosition calculation:
- * - From STOP (any preRoll): headLength = 500ms, startPos = punchInUserTime - 0.5
- * - While PLAYING: headLength = 0, startPos = punchInUserTime
- * 
- * REQUIREMENT: AudioWorklet is mandatory for this app to work correctly.
- * No fallback to MediaRecorder is provided.
- */
+ /**
+  * RecordingEngine - Encapsulates all recording logic
+  * Extracted from useAudioEngine.ts for modularity
+  * 
+  * REQUIREMENT: AudioWorklet is mandatory for this app to work correctly.
+  * No fallback to MediaRecorder is provided.
+  */
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
 import { perfLogger } from '../../utils/PerformanceLogger';
@@ -52,6 +43,7 @@ export class RecordingEngine {
   private activeTrackId: string | null = null;
   private punchInTime = 0;
   private punchInUserTime = 0; // User Time where user pressed Record (for clip startPos)
+  private punchInUserTime_Real = 0; // AudioContext clock time when recording starts (for worklet sync)
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
@@ -333,7 +325,8 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    const startPos = this.punchInUserTime - this.headLength;
+    const latencyCompMs = (this.config.globalLatencyMs || 0) + (this.config.extraLatencyMs || 0);
+    const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -348,20 +341,24 @@ export class RecordingEngine {
     const finalAudioUrl = URL.createObjectURL(wavBlob);
 
     const anchoredFrameTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : 0;
-    const simpleDelta = this.punchInUserTime - (anchoredFrameTime - secondsPerBar);
-    const beatDelta = simpleDelta / secondsPerBeat;
+    const ctxTimeNow = audioContext.currentTime;
+    const clockDomainDelta = this.punchInUserTime_Real - this.punchInUserTime;
+    const workletFrameAge = ctxTimeNow - anchoredFrameTime;
+    const beatDelta = clockDomainDelta / secondsPerBeat;
     console.log('RECORDING_DELTA', {
       punchInUserTime: this.punchInUserTime,
+      punchInUserTime_Real: this.punchInUserTime_Real,
       startPos,
+      latencyCompMs,
       headLength: this.headLength,
+      clockDomainDeltaSec: clockDomainDelta,
+      clockDomainDeltaBeats: beatDelta,
       anchoredFrame,
       anchoredFrameAsTime: anchoredFrameTime,
+      ctxTimeAtStop: ctxTimeNow,
+      workletFrameAgeSec: workletFrameAge,
       secondsPerBar,
       secondsPerBeat,
-      userTimeAtAnchor: anchoredFrameTime - secondsPerBar,
-      deltaSec: simpleDelta,
-      deltaBeats: beatDelta,
-      tracksFit: null, // placeholder
     });
     perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {
@@ -420,6 +417,8 @@ export class RecordingEngine {
       if (!this.continuousMicStream) {
         await this.initStream();
         perfLogger.log(20, this.recordingSessionId, 0);
+      } else {
+        this.cancelStopTimer();
       }
 
       const preRollMode = this.config.preRollMode;
@@ -480,6 +479,8 @@ this.recordingCancelled = false;
         const timeFromPlaybackStartToPunchIn = punchInUserTime - recordStartUserTime;
         punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn;
       }
+
+      this.punchInUserTime_Real = punchInUserTime_Real;
 
       if (!this.audioWorkletNode) {
         throw new Error('AudioWorklet not initialized. This should not happen.');
