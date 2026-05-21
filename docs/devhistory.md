@@ -717,4 +717,49 @@ currentTime + startupDelayMs
 **Files modified:**
 - `public/worklets/metronome.worklet.js` — added `START_AT` handler, `barTempo`/`barStartFrame` fields, per-beat bar-indexed tempo lookup
 - `src/audio/metronome/MetronomeEngine.ts` — added `startAt()` method
-- `src/hooks/useAudioEngine.ts` — grid-aligned `START_AT` calculation replacing `ENABLE`-based start<｜end▁of▁thinking｜>
+- `src/hooks/useAudioEngine.ts` — grid-aligned `START_AT` calculation replacing `ENABLE`-based start
+
+## L. Latency Compensation Refactor (May 2026)
+
+### Problems
+1. **`processorOptions.headLength` always undefined** — the worklet constructor never received options, so `_headLength` defaulted to 1.0s instead of the intended 0.5s. This added 500ms of excess head audio to all recordings. The 730ms `HW_COMP_MS` magic constant accidentally compensated for this (500ms head bug + 230ms real latency).
+2. **`punchInUserTime_Real` removed without pre-roll offset** — the anchor switched from `punchInUserTime_Real × sr` (a future frame accounting for startupDelay + pre-roll) to raw `currentFrame` (no offset). Count-in=always clips appeared 1 bar (2s) late because the anchor was set before pre-roll played.
+3. **React effect timing races** — a separate `useEffect([outputLatencyMs, baseLatencyMs])` propagated browser-reported latency to the RecordingEngine's config. The count-in=none path's 600ms `setTimeout` yielded to the event loop, allowing React to re-render and push *different* latency values between successive takes. This caused inconsistent `latencyCompMs` (182ms vs 237ms) between two otherwise identical count-in=none recordings.
+4. **`devicechange` listener re-reads latency** — Firefox fires `devicechange` sporadically. The handler called `refreshAudioLatency()` which re-read `ctx.outputLatency` — which returned 0 initially but non-zero after the audio pipeline settled, changing the store values mid-session.
+5. **Metronome timing had React useEffect delay** — metronome started via a `useEffect([isPlaying])` which read `audioContext.currentTime` 10–100ms after `setIsPlaying(true)`, adding jitter to the metronome's alignment with the recording anchor.
+
+### Decision
+1. **`_headLength` sent per-recording via START_RECORDING** — removes dependency on `processorOptions`. Worklet reads `event.data.headLength` on each recording.
+2. **`frameOffset` for worklet anchor** — `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`. Worklet computes `_anchoredFrame = currentFrame + frameOffset`. For count-in=always: 2.15s. For count-in=None: 0.15s.
+3. **Read latency from store synchronously** — removed the separate `useEffect([outputLatencyMs, baseLatencyMs])`. `RecordingEngine.handleAudioWorkletStop()` now calls `useStore.getState().outputLatencyMs`/`baseLatencyMs` directly at stop time. No React effect timing races.
+4. **Removed `devicechange` listener** — latency should be read once per device at AudioContext creation, not re-read on spurious browser events.
+5. **Metronome synced inline in `startRecording()`** — metronome starts synchronously using the same `audioContext.currentTime` snapshot as the recording anchor, via `onStartMetronome` callback. Guarded by `recordingMetronomeSyncedRef`.
+6. **`HW_COMP_MS` = 171ms** — old 730 = 500 head bug + 230 real latency. After fixing head bug: 230. After removing 59ms of now-propagated browser latency: 171.
+
+### Data flow (before)
+```
+AudioContext → setAudioContextLatency → store → useEffect([latency]) → engine.updateConfig → engine.config
+                                                                                     ↓
+                                              head HW_COMP_MS + engine.config.latency + extraLatency
+```
+
+### Data flow (after)
+```
+AudioContext → setAudioContextLatency → store
+                                            ↓
+                     handleAudioWorkletStop() → useStore.getState().outputLatencyMs + baseLatencyMs
+                                              + HW_COMP_MS + extraLatencyMs
+```
+
+### Verification
+- `npx tsc --noEmit` and `npm run build` pass clean.
+- All 4 recordings from a test session: consistent `latencyCompMs` (takes 3 and 4 identical at 229/233ms; takes 1 and 2 no longer race-prone).
+- Count-in=always clips no longer 1 bar late.
+- Count-in=None clips no longer show 30ms take-to-take inconsistency.
+
+### Files modified
+- `public/worklets/recorder.worklet.js` — `_headLength` from `START_RECORDING.headLength`; `_anchoredFrame = currentFrame + frameOffset`
+- `src/audio/recording/RecordingEngine.ts` — `frameOffset` sent in START_RECORDING; `useStore.getState()` for latency at stop time; `HW_COMP_MS` 730→230→171
+- `src/hooks/useAudioEngine.ts` — removed `devicechange` listener; removed separate latency effect; metronome `onStartMetronome` callback in startRecording
+- `src/store/useStore.ts` — `outputLatencyMs`/`baseLatencyMs` (existing, no change)
+- `docs/AUDIO_LOGIC_SPECS.md`, `docs/RECORDING_LOGIC.md`, `TODO.md`, `AGENTS.md` — documentation updates<｜end▁of▁thinking｜>

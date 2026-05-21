@@ -9,7 +9,8 @@
 | **Recording** | Final saved audio (includes head if present) |
 | **Head** | Audio already in rolling buffer (up to `headLength` seconds) when definitive recording starts — extracted by `_flush()` from the single buffer. The rolling buffer stops trimming at `_recordingStartFrame`, preserving the head window through the end of the recording. |
 | **Pre-roll** | 1 bar (2s at 120 BPM) of PLAYBACK before punch-in — for timing, NOT recording |
-| **Anchor (anchoredFrame)** | AudioContext clock frame number from `punchInUserTime_Real × sampleRate`, marking where definitive audio starts. Source of truth for sync, Reset, and Undo. |
+| **Anchor (anchoredFrame)** | AudioContext clock frame number = `currentFrame + frameOffset` in the worklet, where `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`. Marks where definitive audio starts. Source of truth for sync, Reset, and Undo. |
+| **frameOffset** | Sent in START_RECORDING message. For count-in=always: `startupDelay + secondsPerBar`. For count-in=None: `startupDelay`. Worklet adds to `currentFrame` to compute `_anchoredFrame`, aligning the anchor with bar 1's AudioContext time. |
 | **startupDelay** | Estimated time (150ms default) between `onSetIsPlaying(true)` call and actual AudioContext playback start in the AudioWorklet |
 | **bufferSafety** | Extra wait margin (100ms default) after headLength to ensure rolling buffer is populated before START_RECORDING is posted |
 
@@ -39,11 +40,11 @@
 ### Recording Flow
 1. Rolling buffer captures continuously during playback (2s ring buffer in AudioWorklet)
 2. User presses Record at punchInTime
-3. `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn` computed for AudioWorklet sync
-4. AudioWorklet sets `_recordingStartFrame = _anchoredFrame`. Rolling buffer **stops trimming** at this frame, preserving everything from `_recordingStartFrame - rollingBufferDuration` onward in one contiguous buffer.
+3. `START_RECORDING` sent with `headLength` (per-clip) and `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`
+4. Worklet sets `_anchoredFrame = currentFrame + frameOffset`, `_recordingStartFrame = _anchoredFrame`. Rolling buffer **stops trimming** at this frame.
 5. Audio continues flowing into the single buffer until STOP_RECORDING.
-6. `_flush()` extracts: [head: last `headLength` seconds before `_recordingStartFrame`] + [definitive recording from `_recordingStartFrame` onward], all from the same rolling buffer. No separate `_audioData` stream.
-7. `startPosition = punchInUserTime − headLength` places the visual clip directly from UserTime
+6. `_flush()` extracts: [head: last `headLength` seconds before `_recordingStartFrame`] + [definitive recording from `_recordingStartFrame` onward].
+7. `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs = store.outputLatencyMs + store.baseLatencyMs + HW_COMP_MS + extraLatencyMs` (all read synchronously from store at stop time)
 
 ### Playback Flow
 1. WaveSurfer reaches `startPosition` (which includes the head before the definitive audio)
@@ -75,10 +76,9 @@
 
 ### RecordingEngine.ts
 - Calculate `punchInUserTime` when Record pressed (UserTime). When `isCurrentlyPlaying`, use `storeState.currentTime` (multitrack playhead position), NOT `audioCtx.currentTime` (fixes clip-in-future bug)
-- `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn` (AudioContext clock)
-- Send `punchInUserTime_Real` to AudioWorklet via message
-- Worklet computes `_anchoredFrame = Math.floor(punchInUserTime_Real × sampleRate)` and returns it as `anchoredFrame`
-- `startPosition = punchInUserTime − headLength` (direct UserTime, independent of anchorFrame)
+- Send `START_RECORDING { headLength, frameOffset }` to AudioWorklet — `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`
+- Worklet computes `_anchoredFrame = currentFrame + frameOffset`
+- `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs` reads `outputLatencyMs`/`baseLatencyMs` from `useStore.getState()` synchronously
 
 ### RecorderWorklet (worklet)
 - Single rolling buffer for both head and definitive recording (no separate `_audioData`)
@@ -104,7 +104,8 @@
 - Tracks `sampleRate` from AudioContext for accurate frame←→time conversions
 - Tracks `startupDelayMs` (default 150ms) and `bufferSafetyMs` (default 100ms) for recording timing — editable in Dangerous Settings
 - `updatePhrasePosition` recalculates `anchoredFrame` when clip is moved
-- `headLength` per-clip metadata (0–1s, default 1.0s)
+- `headLength` per-clip metadata (0–1s, default 0.5s)
+- `outputLatencyMs` and `baseLatencyMs` — set once when AudioContext is created, read synchronously by `RecordingEngine.handleAudioWorkletStop()`
 
 ---
 

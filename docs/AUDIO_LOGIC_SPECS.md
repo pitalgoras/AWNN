@@ -46,7 +46,7 @@ To prevent accidental destructive edits during playback and mixing, the applicat
 
 *   **Visual Sync ($L_{vis}$):** The visual playhead position is calculated as `currentTime - outputLatency`. This ensures the cursor visually matches the sound hitting the user's ears.
 *   **Recording Sync ($L_{rt}$):** Recorded clips use `anchoredFrame` (shared-clock frame number) as the ground truth for sync. This frame number represents the exact moment in the AudioContext clock where the definitive recording begins.
-    *   **Hardware compensation (`HW_COMP_MS` = 230ms):** Firefox + Linux audio pipeline adds ~230ms of unaccounted playback delay beyond `outputLatency + baseLatency` (PipeWire/PulseAudio/ALSA buffering not reflected in `outputLatency`). This constant is hardcoded in `RecordingEngine.handleAudioWorkletStop()` and applied on top of browser-reported latency. Revisit if the audio pipeline changes or if a proper fix is found.
+    *   **Hardware compensation (`HW_COMP_MS` = 171ms):** unaccounted playback delay beyond browser-reported `outputLatency + baseLatency` (audio pipeline buffering not reflected in `outputLatency`). Hardcoded in `RecordingEngine.handleAudioWorkletStop()`. Revisit if a proper fix is found.
     *   **`anchoredFrame`** = `floor(punchInUserTime_Real × sampleRate)` — absolute frame from AudioContext clock. `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`.
     *   **`headLength`** (per clip, default 1.0s) — rolling buffer audio prepended before anchor. Single-buffer approach: `_flush()` extracts head from the last `headLength` seconds of buffer before `_recordingStartFrame`; no separate `_audioData` stream.
     *   **`originalAnchoredFrame`** — snapshot at creation for Reset/Undo
@@ -106,9 +106,9 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 *   **Main Thread Impact:** Because Web Workers are blocked, Monaco is forced to perform heavy operations (like syntax highlighting, parsing, and formatting) on the main UI thread.
 *   **UI Freezes:** This limitation causes noticeable UI freezes and unresponsiveness ("long pauses") when editing code, especially in large files. This is an environmental constraint, not a flaw in the application's React or Audio Engine architecture.
 
-## 7. Recent Changes (anchorFrame Migration — May 2026)
+## 7. Recent Changes (Latency Compensation — May 2026)
 
-### What Changed
+### anchorFrame Migration
 1. ✅ **AudioWorklet mandatory** — `MediaRecorder` fallback removed entirely
 2. ✅ **`anchoredFrame`** stores absolute AudioContext clock frame of punch-in (`punchInUserTime_Real × sampleRate`)
 3. ✅ **`startPosition = punchInUserTime - headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
@@ -124,6 +124,13 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 13. ✅ **Pattern-based latency calibration** — new `calibration.worklet.js` for sample-accurate rising edge detection. Test signal: 500ms sustain (wakes Bluetooth) + 5 peaks at non-regular intervals [100,140,100,100,140]ms. Pattern matching eliminates false positives. `LatencyCalibrator.ts` rewritten to use worklet + pattern matching.
 14. ✅ **Metronome frame counter fix** — replaced private `this.currentFrame` with global `currentFrame` in `metronome.worklet.js`. The private counter diverged from the audio clock when Chromium skipped render quanta under CPU load (scrolling), causing permanent offset between live metronome and recorded playback. Removed `resetToFrame(0)` call from `useAudioEngine.ts` which reset metronome to frame 0 while multitrack started from `currentTime`. See `docs/devhistory.md` section J.
 15. ✅ **Metronome `START_AT` + `barTempo`** — first beat now aligns to the next grid bar.beat after `currentTime + startupDelayMs`, not to raw `currentFrame`. Worklet accepts `START_AT { nextBeatFrame, beatIndex, beatsPerBar, barTempo[], barStartFrame }`. `barTempo` indexed by bar number, extensible for per-bar tempo maps. `barStartFrame` provides the AudioContext origin of bar 0 for bar-indexed lookups. `MetronomeEngine.startAt()` method added. See `docs/devhistory.md` section K.
+
+### Latency Compensation Refactor (May 2026)
+16. ✅ **`_headLength` sent per-recording via START_RECORDING** — removed broken `this.processorOptions.headLength` (always undefined). Worklet now receives `headLength` in the START_RECORDING message, matching the per-clip setting. Rolling buffer set to 2.0s (headLength never exceeds 1s).
+17. ✅ **`frameOffset` for pre-roll alignment** — worklet anchor = `currentFrame + frameOffset` where `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`. Eliminates 1-bar offset in count-in=always mode.
+18. ✅ **Synchronous latency read from store** — removed the separate `useEffect([outputLatencyMs, baseLatencyMs])` and the `devicechange` listener. `handleAudioWorkletStop()` now reads `useStore.getState().outputLatencyMs` + `baseLatencyMs` synchronously at stop time. No more React effect timing races between recordings.
+19. ✅ **HW_COMP_MS = 171ms** — browser-reported outputLatency + baseLatency propagated correctly, 59ms removed from magic constant.
+20. ✅ **Metronome synced from `startRecording()` inline** — metronome started synchronously with the same `audioContext.currentTime` snapshot, guarded by `recordingMetronomeSyncedRef`. Eliminates take-to-take metronome timing jitter from React useEffect delay.
 
 ### Files Modified
 - `public/worklets/recorder.worklet.js` — single buffer approach: `_flush()` extracts head from last `headLength` seconds before `_recordingStartFrame`, rolling buffer stops trimming at capture start; no `_audioData`

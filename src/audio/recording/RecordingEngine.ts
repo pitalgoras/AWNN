@@ -327,9 +327,8 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    // HARDWARE COMPENSATION: Firefox + Linux audio pipeline adds ~171ms of
-    // unaccounted playback delay beyond browser-reported outputLatency + baseLatency.
-    // This covers PipeWire/PulseAudio/ALSA buffering not reflected in outputLatency.
+    // HARDWARE COMPENSATION: unaccounted playback delay (~171ms) beyond
+    // browser-reported outputLatency + baseLatency.
     // Remove or adjust if a proper fix is found.
     const HW_COMP_MS = 171;
     const storeState = useStore.getState();
