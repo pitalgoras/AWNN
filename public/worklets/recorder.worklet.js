@@ -25,10 +25,9 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     super();
     this._isRecording = false;
 
-    // headLength is sent per-recording via START_RECORDING message.
-    // Rolling buffer must be large enough to cover any headLength the user might set.
-    // Max practical headLength is ~5s (settable in SyncTool), so keep 6s buffer.
-    this._rollingBufferDuration = 6.0;
+    // headLength sent per-recording via START_RECORDING, never >1s.
+    // Rolling buffer: 2s covers max headLength with margin.
+    this._rollingBufferDuration = 2.0;
     this._recordingStartFrame = 0; // Frame where definitive capture begins
     this._sampleRate = sampleRate;
     this._processCount = 0;
