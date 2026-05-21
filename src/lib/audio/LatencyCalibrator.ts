@@ -67,7 +67,14 @@ export function matchEnvelope(
   silenceFrames: number,
   cycleGapFrames: number,
   windowFrames: number,
-): { delayWindows: number; perLevelRms: number[]; matchQuality: number } {
+  onsetWindow: number = 0,
+  onsetThreshold: number = 0,
+): {
+  delayWindows: number
+  perLevelRms: number[]
+  perLevelReverbFloor: number[]
+  matchQuality: number
+} {
   const stepLenFrames = noiseFrames + silenceFrames
   const cycleLenFrames = levels.length * stepLenFrames + cycleGapFrames
   const totWindows = Math.ceil(cycleLenFrames / windowFrames)
@@ -83,22 +90,36 @@ export function matchEnvelope(
     }
   }
 
-  // Slide expected against received envelope
-  const searchLen = Math.min(envelope.length - totWindows, totWindows * 3)
-  let bestScore = -Infinity
-  let bestShift = 0
-  for (let shift = 0; shift < searchLen; shift++) {
-    let dot = 0
-    let eLen = 0
-    let rLen = 0
-    for (let w = 0; w < totWindows; w++) {
-      const eVal = expected[w]
-      const rVal = envelope[shift + w] || 0
-      dot += eVal * rVal
-      eLen += eVal * eVal
-      rLen += rVal * rVal
+  // Auto-detect onset if not provided
+  if (onsetWindow === 0 && onsetThreshold > 0) {
+    for (let w = 0; w < Math.min(envelope.length, 200); w++) {
+      if (envelope[w] > onsetThreshold) { onsetWindow = w; break }
     }
-    const score = dot / Math.sqrt(Math.max(eLen * rLen, 1e-10))
+  }
+
+  // Mean of expected pattern (fixed for known levels [0.95,0.7,0.5,0.3,0.1])
+  const eMean = expected.reduce((s, v) => s + v, 0) / totWindows
+
+  // Slide expected against received envelope using Pearson correlation
+  const searchMargin = Math.floor(totWindows * 0.5)
+  const searchStart = Math.max(0, onsetWindow - searchMargin)
+  const searchEnd = Math.min(envelope.length - totWindows, searchStart + searchMargin * 4)
+  let bestScore = -Infinity
+  let bestShift = searchStart
+  for (let shift = searchStart; shift < searchEnd; shift++) {
+    let rMean = 0
+    for (let w = 0; w < totWindows; w++) rMean += envelope[shift + w] || 0
+    rMean /= totWindows
+
+    let dot = 0, eVar = 0, rVar = 0
+    for (let w = 0; w < totWindows; w++) {
+      const eVal = expected[w] - eMean
+      const rVal = (envelope[shift + w] || 0) - rMean
+      dot += eVal * rVal
+      eVar += eVal * eVal
+      rVar += rVal * rVal
+    }
+    const score = dot / Math.sqrt(Math.max(eVar * rVar, 1e-10))
     if (score > bestScore) {
       bestScore = score
       bestShift = shift
@@ -107,6 +128,7 @@ export function matchEnvelope(
 
   // Extract per-level RMS at best position
   const perLevelRms: number[] = []
+  const perLevelReverbFloor: number[] = []
   for (let l = 0; l < levels.length; l++) {
     const noiseStartFrames = l * stepLenFrames
     const noiseStartWin = bestShift + Math.round(noiseStartFrames / windowFrames)
@@ -118,16 +140,33 @@ export function matchEnvelope(
       count++
     }
     perLevelRms.push(count > 0 ? sum / count : 0)
+
+    // Reverb floor: sample the envelope valley right before this plateau
+    // (only meaningful when there's a gap — no gap means no valley)
+    if (silenceFrames > 0) {
+      const silenceStartWin = noiseStartWin - Math.round(silenceFrames / windowFrames * 0.5)
+      const silenceWinLen = Math.round(Math.min(noiseFrames * 0.3, silenceFrames * 0.5) / windowFrames)
+      if (silenceStartWin > bestShift && silenceWinLen > 0 && silenceStartWin + silenceWinLen < envelope.length) {
+        let sSum = 0
+        for (let w = 0; w < silenceWinLen; w++) {
+          sSum += envelope[silenceStartWin + w]
+        }
+        perLevelReverbFloor.push(sSum / silenceWinLen)
+      } else {
+        perLevelReverbFloor.push(0)
+      }
+    } else {
+      perLevelReverbFloor.push(0)
+    }
   }
 
-  return { delayWindows: bestShift, perLevelRms, matchQuality: bestScore }
+  return { delayWindows: bestShift, perLevelRms, perLevelReverbFloor, matchQuality: bestScore }
 }
 
 export type SignalQuality = 'good' | 'weak' | 'clipping' | 'none'
 
 export interface DebugResult {
   success: boolean
-  latencyMs: number
   floorPeak: number
   maxSample: number
   sr: number
@@ -162,6 +201,7 @@ interface LoopAnalysisResult {
   overallDetected: boolean
   optimalAmplitude: number
   latencyMs: number
+  latencyValuesMs: number[]
   quality: SignalQuality
 }
 
@@ -191,6 +231,7 @@ function crossCorrelate(
 }
 
 export class LatencyCalibrator {
+  floorPeak: number = 0
   private callbacks: Required<LatencyCalibrationCallbacks>
   private options: Required<LatencyCalibrationOptions>
 
@@ -240,7 +281,6 @@ export class LatencyCalibrator {
       const msg = err instanceof Error ? err.message : String(err)
       return {
         success: false,
-        latencyMs: 0,
         floorPeak: 0,
         maxSample: 0,
         sr: 0,
@@ -266,9 +306,9 @@ export class LatencyCalibrator {
     return {
       levels: [0.95, 0.7, 0.5, 0.3, 0.1],
       seeds: [9990, 9991, 9992, 9993, 9994],
-      noiseFrames: Math.floor(0.03 * sr),
-      silenceFrames: Math.floor(0.02 * sr),
-      cycleGapFrames: Math.floor(0.1 * sr),
+      noiseFrames: Math.floor(0.05 * sr),
+      silenceFrames: Math.floor(0.005 * sr),
+      cycleGapFrames: Math.floor(0.03 * sr),
       maxCycles: 100,
     }
   }
@@ -300,13 +340,57 @@ export class LatencyCalibrator {
       envelope[w] = count > 0 ? Math.sqrt(sumSq / count) : 0
     }
 
-    // Use envelope matching to find coarse delay
-    const envMatch = matchEnvelope(envelope, levels, noiseFrames, silenceFrames, cycleGapFrames, windowFrames)
+    // Find signal onset: first envelope window above floor threshold
+    const onsetThreshold = Math.max(floorPeak * 3, 0.003)
+    let onsetWindow = 0
+    for (let w = 0; w < Math.min(envelope.length, 200); w++) {
+      if (envelope[w] > onsetThreshold) { onsetWindow = w; break }
+    }
+
+    // Use envelope matching to find coarse delay — search constrained around onset
+    const envMatch = matchEnvelope(
+      envelope, levels, noiseFrames, silenceFrames, cycleGapFrames, windowFrames,
+      onsetWindow, onsetThreshold,
+    )
     const arrivalFrame = envMatch.delayWindows * windowFrames
     const foundLoud = envMatch.matchQuality > corrThreshold
     if (!foundLoud) {
-      return { segments: [], overallDetected: false, optimalAmplitude: 1.0, latencyMs: 0, quality: 'none' }
+      return { segments: [], overallDetected: false, optimalAmplitude: 1.0, latencyMs: 0, latencyValuesMs: [], quality: 'none' }
     }
+
+    // ── Confidence check: sample-level attack time vs envelope latency ──
+    const attackFrame = (() => {
+      const limit = Math.min(totalFrames, Math.floor(0.3 * sr))
+      const threshold = Math.max(floorPeak * 5, 0.005)
+      for (let i = 0; i < limit; i++) {
+        if (Math.abs(recording[i]) > threshold) return i
+      }
+      return -1
+    })()
+    const lastLevelEnd = arrivalFrame + levels.length * stepLen + noiseFrames
+    const decayFrame = (() => {
+      const searchStart = Math.min(lastLevelEnd, totalFrames)
+      const searchEnd = Math.min(totalFrames, lastLevelEnd + Math.floor(0.5 * sr))
+      const threshold = Math.max(floorPeak * 5, 0.005)
+      for (let i = searchStart; i < searchEnd; i++) {
+        if (Math.abs(recording[i]) < threshold) return i
+      }
+      return -1
+    })()
+    const attackMs = attackFrame >= 0 ? (attackFrame / sr * 1000) : -1
+    const envLatMs = arrivalFrame / sr * 1000
+    const decayMs = decayFrame >= 0 ? ((decayFrame - lastLevelEnd) / sr * 1000) : -1
+    const diffMs = attackMs >= 0 ? Math.abs(attackMs - envLatMs) : -1
+    const ok = diffMs >= 0 && diffMs < 15
+    console.log(
+      `[CONFIDENCE] onsetWindow=${onsetWindow} attackFrame=${attackFrame} ` +
+      `attack=${attackMs.toFixed(1)}ms envelope=${envLatMs.toFixed(1)}ms ` +
+      `diff=${diffMs.toFixed(1)}ms ${ok ? '✓' : '⚠ mismatch'}`
+    )
+    if (decayMs >= 0) {
+      console.log(`[CONFIDENCE] decay=${decayMs.toFixed(1)}ms (reverb tail)`)
+    }
+    console.log(`[CONFIDENCE] per-level RMS: [${envMatch.perLevelRms.map(v => v.toFixed(4)).join(', ')}] Q=${envMatch.matchQuality.toFixed(3)}`)
 
     // Generate each noise pattern for correlation
     const noisePatterns = levels.map((_, i) => generateNoise(seeds[i], noiseFrames, 1.0))
@@ -317,11 +401,15 @@ export class LatencyCalibrator {
     if (maxCycles > 10) maxCycles = 10
 
     for (let c = 0; c < maxCycles; c++) {
-      const cycleStart = arrivalFrame + c * cycleLen
+      // Compute per-cycle envelope to get reverb floor for this cycle
+      const cycleStartFr = arrivalFrame + c * cycleLen
+      // Use per-level reverb floor from the main envelope match as a proxy
+      // (it was computed from the envelope at the best shift position,
+      //  which encompasses all cycles averaged; good enough)
+
       for (let l = 0; l < levels.length; l++) {
-        // Tight search window: ±3ms around the expected position
-        const expectedStart = cycleStart + l * stepLen
-        const margin = Math.floor(0.003 * sr)
+        const expectedStart = cycleStartFr + l * stepLen
+        const margin = Math.floor(0.001 * sr)
         const xStart = Math.max(0, expectedStart - margin)
         const xEnd = Math.min(totalFrames - noiseFrames, expectedStart + noiseFrames + margin)
 
@@ -333,7 +421,7 @@ export class LatencyCalibrator {
           delay = xc.delay
         }
 
-        // RMS in noise-length window at the detected position
+        // RMS + peak in noise-length window at the detected position
         const detPos = expectedStart + delay
         let sumSq = 0
         let peak = 0
@@ -345,7 +433,11 @@ export class LatencyCalibrator {
         }
         const rms = winLen > 0 ? Math.sqrt(sumSq / winLen) : 0
 
-        const detectable = corr > corrThreshold && rms > floorPeak * 2
+        // Detectability: use per-level reverb floor (not silence floorPeak)
+        // Reverb floor accounts for room ringing from previous louder tones
+        const reverbFloor = envMatch.perLevelReverbFloor[l] || floorPeak
+        const localThreshold = Math.max(reverbFloor * 2, floorPeak * 3)
+        const detectable = corr > corrThreshold && peak > localThreshold
         segments.push({ level: levels[l], cycle: c, delay, correlation: corr, rms, peak, detectable })
       }
     }
@@ -361,12 +453,15 @@ export class LatencyCalibrator {
         `${s.detectable ? 'YES' : 'NO'}`
       )
     }
+    if (maxCycles > 0) {
+      console.log(`  Per-level reverb floors: [${envMatch.perLevelReverbFloor.map(v => v.toFixed(4)).join(', ')}]`)
+    }
     console.groupEnd()
 
     // Compute optimal amplitude from detectable segments
     const detectable = segments.filter(s => s.detectable)
     if (detectable.length === 0) {
-      return { segments, overallDetected: false, optimalAmplitude: 1.0, latencyMs: 0, quality: 'none' }
+      return { segments, overallDetected: false, optimalAmplitude: 1.0, latencyMs: 0, latencyValuesMs: [], quality: 'none' }
     }
 
     const targetRms = 0.173
@@ -378,8 +473,15 @@ export class LatencyCalibrator {
       bestSegment.level * (targetRms / Math.max(bestSegment.rms, 1e-10))
     ))
 
-    // Average latency from all detectable segments
-    const latencies = detectable.filter(s => s.delay > 0).map(s => Math.round((s.delay / sr) * 1000))
+    // Round-trip latency: arrivalFrame (envelope delay) + fine-tuning offset
+    // The cross-correlation search window is [expectedStart - margin, ...]
+    // so s.delay includes a +margin offset that we subtract
+    const margin = Math.floor(0.001 * sr)
+    const latencies: number[] = []
+    for (const s of detectable) {
+      const totalFrames = arrivalFrame + Math.max(-margin, s.delay - margin)
+      latencies.push(Math.round((totalFrames / sr) * 1000))
+    }
     const avgLatMs = latencies.length > 0
       ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)
       : Math.round((arrivalFrame / sr) * 1000)
@@ -389,8 +491,8 @@ export class LatencyCalibrator {
     if (anyClipping) quality = 'clipping'
     else if (optimalAmplitude > 0.8) quality = 'weak'
 
-    console.log(`Loop analysis: optimal=${optimalAmplitude.toFixed(3)} latency=${avgLatMs}ms quality=${quality}`)
-    return { segments, overallDetected: true, optimalAmplitude, latencyMs: avgLatMs, quality }
+    console.log(`Loop analysis: optimal=${optimalAmplitude.toFixed(3)} latency=${avgLatMs}ms quality=${quality} latencies=[${latencies.join(',')}]`)
+    return { segments, overallDetected: true, optimalAmplitude, latencyMs: avgLatMs, latencyValuesMs: latencies, quality }
   }
 
   private checkLevelStable(cycles: ProbeCycleData[]): boolean {
@@ -467,25 +569,26 @@ export class LatencyCalibrator {
     this.callbacks.onStatus?.('Measuring noise floor...')
     this.callbacks.onProgress?.(5)
 
-    const floorPromise = new Promise<number>((resolve) => {
+    const measureFloor = (): Promise<number> => new Promise<number>((resolve) => {
       this.workletNode!.port.onmessage = (e) => {
         if (e.data.type === 'FLOOR_RESULT') { resolve(e.data.peak) }
       }
+      this.workletNode!.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
     })
-    this.workletNode.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
-    let floorPeak = await floorPromise
+    let floorPeak = await measureFloor()
+    // If floor is suspiciously high (speaker ringing from previous run), wait and re-measure
+    if (floorPeak > 0.5) {
+      console.log(`Calibration: floor suspiciously high (${floorPeak.toFixed(4)}), retrying after 500ms silence...`)
+      await new Promise((r) => setTimeout(r, 500))
+      floorPeak = await measureFloor()
+    }
     if (floorPeak < 0.001) {
       console.log('Calibration: floor measurement returned near-zero, retrying...')
       await new Promise((r) => setTimeout(r, 200))
-      const floorPromise2 = new Promise<number>((resolve) => {
-        this.workletNode!.port.onmessage = (e) => {
-          if (e.data.type === 'FLOOR_RESULT') { this.workletNode!.port.onmessage = null; resolve(e.data.peak) }
-        }
-      })
-      this.workletNode.port.postMessage({ type: 'MEASURE_FLOOR', durationFrames: Math.floor(0.2 * sr) })
-      floorPeak = await floorPromise2
+      floorPeak = await measureFloor()
     }
     if (floorPeak < 0.001) floorPeak = 0.005
+    this.floorPeak = floorPeak
     console.log(`Calibration: noise floor peak=${floorPeak.toFixed(4)}`)
 
     this.callbacks.onProgress?.(10)
@@ -495,59 +598,6 @@ export class LatencyCalibrator {
     const loopParams = this.buildLoopParams(sr)
     this.probeCycles = []
 
-    // Start loop probe — no wake gap needed, the pattern itself keeps speaker triggered
-    this.workletNode.port.postMessage({ type: 'PROBE_LOOP_START', ...loopParams })
-
-    // Listen for cycle updates and auto-stop
-    const probeResultPromise = new Promise<{ recording: Float32Array; totalFrames: number }>((resolve, reject) => {
-      this.rejectProbePromise = reject
-      const timeout = setTimeout(() => reject(new Error('Probe timed out after 35s')), 35000)
-      let autoStopSent = false
-      let lastStableCycles = 0
-
-      this.workletNode!.port.onmessage = (e) => {
-        if (e.data.type === 'PROBE_CYCLE') {
-          const data = e.data as ProbeCycleData
-          this.probeCycles.push(data)
-          this.callbacks.onProbeReading(data, this.probeCycles)
-
-          // Auto-stop check: stable levels across 2 consecutive checks
-          if (!this.options.continuousProbe && !autoStopSent && this.probeCycles.length >= 3) {
-            const stable = this.checkLevelStable(this.probeCycles)
-            if (stable) {
-              lastStableCycles++
-              if (lastStableCycles >= 2) {
-                autoStopSent = true
-                clearTimeout(timeout)
-                this.callbacks.onStatus?.('Levels stable — stopping probe.')
-                this.workletNode!.port.postMessage({ type: 'STOP' })
-              }
-            } else {
-              lastStableCycles = 0
-            }
-          }
-        } else if (e.data.type === 'PROBE_RESULT') {
-          clearTimeout(timeout)
-          this.rejectProbePromise = null
-          resolve({ recording: e.data.recording, totalFrames: e.data.totalFrames })
-        }
-      }
-    })
-
-    // Wait for result (either auto-stop or manual STOP)
-    let probeResult: { recording: Float32Array; totalFrames: number }
-    try {
-      probeResult = await probeResultPromise
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Probe error'
-      console.warn(`Calibration: ${msg}`)
-      this.callbacks.onStatus?.('Probe error — using max amplitude.')
-      probeResult = { recording: new Float32Array(0), totalFrames: 0 }
-    }
-
-    this.callbacks.onProgress?.(30)
-
-    // Analyze probe recording (one shot)
     let optimalAmplitude = 1.0
     let signalQuality: SignalQuality = 'none'
     let avgLatencyMs = 0
@@ -555,34 +605,125 @@ export class LatencyCalibrator {
     let maxCorrelation = 0
     let latencies: number[] = []
 
-    if (probeResult.totalFrames > 0) {
-      const analysis = this.analyzeLoopRecording(
-        probeResult.recording, probeResult.totalFrames, sr, floorPeak, loopParams,
-      )
-      optimalAmplitude = analysis.optimalAmplitude
-      signalQuality = analysis.quality
-      avgLatencyMs = analysis.latencyMs
-
-      if (analysis.overallDetected) {
-        latencies = analysis.segments
-          .filter(s => s.detectable && s.delay > 0)
-          .map(s => Math.round((s.delay / sr) * 1000))
-        maxCorrelation = Math.max(...analysis.segments.map(s => s.correlation))
-        maxSample = Math.max(...analysis.segments.map(s => s.peak))
+    // Retry loop: up to 3 attempts with reduced levels on clipping
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (this.isCancelled) break
+      const params = { ...loopParams }
+      if (attempt > 0) {
+        // Reduce max level by half
+        const maxLvl = Math.max(...params.levels)
+        params.levels = params.levels.map(l => l * 0.5)
+        console.log(`[CAL] retry ${attempt}: levels reduced to [${params.levels.map(l => l.toFixed(3)).join(',')}]`)
+        this.callbacks.onStatus?.(`Attempt ${attempt + 1}: reducing amplitude (was clipping)...`)
       }
 
-      if (!analysis.overallDetected) {
-        console.warn('Calibration: no detectable segments — using max amplitude (1.0)')
-        this.callbacks.onStatus?.('Signal not detected at any level — using maximum volume.')
-      } else if (analysis.quality === 'clipping') {
-        this.callbacks.onStatus?.('Signal clipping — reducing amplitude.')
-      } else if (analysis.quality === 'weak') {
-        this.callbacks.onStatus?.('Signal weak — using maximum amplitude.')
+      // Start loop probe
+      this.workletNode.port.postMessage({ type: 'PROBE_LOOP_START', ...params })
+
+      const probeResultPromise = new Promise<{ recording: Float32Array; totalFrames: number }>((resolve, reject) => {
+        this.rejectProbePromise = reject
+        const timeout = setTimeout(() => reject(new Error('Probe timed out after 35s')), 35000)
+        let autoStopSent = false
+        let lastStableCycles = 0
+
+        this.workletNode!.port.onmessage = (e) => {
+          if (e.data.type === 'PROBE_CYCLE') {
+            const data = e.data as ProbeCycleData
+            this.probeCycles.push(data)
+            this.callbacks.onProbeReading(data, this.probeCycles)
+
+          // Diagnostic logging
+          const matchResult = matchEnvelope(
+            data.envelope, data.levels, data.noiseFrames,
+            data.silenceFrames, data.cycleGapFrames, data.windowFrames,
+          )
+          const delayMs = Math.round((matchResult.delayWindows * data.windowFrames / data.sampleRate) * 1000)
+          const dbg = matchResult.perLevelRms.map((r, i) => {
+            const reverbFloor = matchResult.perLevelReverbFloor[i] || 0.001
+            const snrDb = 20 * Math.log10(r / reverbFloor)
+            return `L${data.levels[i].toFixed(2)}→rms=${r.toFixed(4)}(${snrDb.toFixed(0)}dBvsReverb)`
+          }).join(' ')
+          const detectable = matchResult.perLevelRms.filter((r, i) => {
+            const rf = matchResult.perLevelReverbFloor[i] || this.floorPeak
+            return r > Math.max(rf * 2, this.floorPeak * 3)
+          }).length
+          console.log(
+            `[CAL] cycle=${data.cycleIndex} silenceFloor=${this.floorPeak.toFixed(4)} ` +
+            `reverbFloors=[${matchResult.perLevelReverbFloor.map(v => v.toFixed(4)).join(',')}] ` +
+            `Q=${matchResult.matchQuality.toFixed(3)} delay=${delayMs}ms ` +
+            `${dbg} | ${detectable}/${data.levels.length} detectable`
+          )
+
+            // Auto-stop check
+            if (!this.options.continuousProbe && !autoStopSent && this.probeCycles.length >= 3) {
+              const stable = this.checkLevelStable(this.probeCycles)
+              if (stable) {
+                lastStableCycles++
+                if (lastStableCycles >= 2) {
+                  autoStopSent = true
+                  clearTimeout(timeout)
+                  this.callbacks.onStatus?.('Levels stable — stopping probe.')
+                  this.workletNode!.port.postMessage({ type: 'STOP' })
+                }
+              } else {
+                lastStableCycles = 0
+              }
+            }
+          } else if (e.data.type === 'PROBE_RESULT') {
+            clearTimeout(timeout)
+            this.rejectProbePromise = null
+            resolve({ recording: e.data.recording, totalFrames: e.data.totalFrames })
+          }
+        }
+      })
+
+      let probeResult: { recording: Float32Array; totalFrames: number }
+      try {
+        probeResult = await probeResultPromise
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Probe error'
+        console.warn(`Calibration: ${msg}`)
+        this.callbacks.onStatus?.('Probe error — using max amplitude.')
+        probeResult = { recording: new Float32Array(0), totalFrames: 0 }
+      }
+
+      if (probeResult.totalFrames > 0) {
+        const analysis = this.analyzeLoopRecording(
+          probeResult.recording, probeResult.totalFrames, sr, floorPeak, params,
+        )
+        optimalAmplitude = analysis.optimalAmplitude
+        signalQuality = analysis.quality
+        avgLatencyMs = analysis.latencyMs
+
+        if (analysis.overallDetected) {
+          latencies = analysis.latencyValuesMs
+          maxCorrelation = Math.max(...analysis.segments.map(s => s.correlation))
+          maxSample = Math.max(...analysis.segments.map(s => s.peak))
+        }
+
+        if (!analysis.overallDetected) {
+          console.warn('Calibration: no detectable segments — using max amplitude')
+          this.callbacks.onStatus?.('Signal not detected at any level.')
+          break
+        } else if (analysis.quality === 'clipping' && attempt < 2) {
+          console.log(`[CAL] clipping detected, retrying with reduced levels (attempt ${attempt + 1})`)
+          this.callbacks.onStatus?.(`Signal clipping — reducing amplitude (attempt ${attempt + 1}/3)...`)
+          continue
+        } else {
+          // Good or weak result, or out of retries
+          if (analysis.quality === 'clipping') {
+            this.callbacks.onStatus?.('Still clipping after reduction — using current levels.')
+          } else if (analysis.quality === 'weak') {
+            this.callbacks.onStatus?.('Signal weak — using maximum amplitude.')
+          } else {
+            this.callbacks.onStatus?.(`Levels good. Latency: ${avgLatencyMs}ms, amplitude: ${optimalAmplitude.toFixed(2)}.`)
+          }
+          break
+        }
       } else {
-        this.callbacks.onStatus?.(`Levels good. Latency: ${avgLatencyMs}ms, amplitude: ${optimalAmplitude.toFixed(2)}.`)
+        this.callbacks.onStatus?.('Probe recording empty.')
+        break
       }
-    } else {
-      this.callbacks.onStatus?.('Probe recording empty — using max amplitude.')
     }
 
     this.callbacks.onProgress?.(50)
@@ -590,7 +731,7 @@ export class LatencyCalibrator {
     if (latencies.length === 0) {
       const error = `No valid latency measurements (max correlation ${maxCorrelation.toFixed(2)}). Ensure speakers are audible to the microphone.`
       return {
-        success: false, latencyMs: 0, averageLatencyMs: 0,
+        success: false, averageLatencyMs: 0,
         floorPeak, maxSample, sr, latencies: [], error,
         optimalAmplitude, signalQuality,
       }
@@ -649,7 +790,7 @@ export class LatencyCalibrator {
     }
 
     const debugResult: DebugResult = {
-      success, latencyMs: averageLatencyMs, sr, error,
+      success, sr, error,
       floorPeak, maxSample,
       latencies, averageLatencyMs,
       optimalAmplitude, signalQuality,
@@ -675,12 +816,82 @@ export class LatencyCalibrator {
   }
 }
 
+export async function testEnvelopeCycle(): Promise<{
+  envelope: Float32Array
+  matchResult: ReturnType<typeof matchEnvelope>
+  params: { levels: number[]; noiseFrames: number; silenceFrames: number; cycleGapFrames: number; windowFrames: number; sr: number }
+} | { error: string }> {
+  // Quick one-cycle probe for diagnostic purposes
+  const ctx = new (window.AudioContext || (window as unknown as any).webkitAudioContext)()
+  if (ctx.state === 'suspended') await ctx.resume()
+  const sr = ctx.sampleRate
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+  })
+  try {
+    await ctx.audioWorklet.addModule(`/worklets/calibration.worklet.js?ck=${Date.now()}`)
+  } catch { /* already added */ }
+
+  const node = new AudioWorkletNode(ctx, 'calibration-processor', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1 })
+  const source = ctx.createMediaStreamSource(stream)
+  source.connect(node)
+  node.connect(ctx.destination)
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      cleanup()
+      resolve({ error: 'testEnvelopeCycle timed out after 10s' })
+    }, 10000)
+
+    const cleanup = () => {
+      clearTimeout(timeout)
+      try { node.port.close(); node.disconnect() } catch {}
+      try { source.disconnect() } catch {}
+      if (ctx.state !== 'closed') ctx.close()
+      stream.getTracks().forEach(t => t.stop())
+    }
+
+    node.port.onmessage = (e) => {
+      if (e.data.type === 'PROBE_CYCLE') {
+        const data = e.data
+        const matchResult = matchEnvelope(
+          data.envelope, data.levels, data.noiseFrames,
+          data.silenceFrames, data.cycleGapFrames, data.windowFrames,
+        )
+        cleanup()
+        resolve({
+          envelope: data.envelope,
+          matchResult,
+          params: {
+            levels: data.levels, noiseFrames: data.noiseFrames,
+            silenceFrames: data.silenceFrames, cycleGapFrames: data.cycleGapFrames,
+            windowFrames: data.windowFrames, sr: data.sampleRate,
+          },
+        })
+      }
+    }
+
+    const levels = [0.95, 0.7, 0.5, 0.3, 0.1]
+    const seeds = [9990, 9991, 9992, 9993, 9994]
+    const noiseFrames = Math.floor(0.05 * sr)
+    node.port.postMessage({
+      type: 'PROBE_LOOP_START',
+      levels, seeds,
+      noiseFrames,
+      silenceFrames: Math.floor(0.005 * sr),
+      cycleGapFrames: Math.floor(0.03 * sr),
+    })
+  })
+}
+
 if (typeof window !== 'undefined') {
   ;(window as any).__calibrationDebug = {
     run: async () => {
       const c = new LatencyCalibrator()
       return c.debugRun()
     },
+    testEnvelope: testEnvelopeCycle,
   }
-  console.log('LatencyCalibrator: Debug API at window.__calibrationDebug.run()')
+  console.log('LatencyCalibrator: Debug API at window.__calibrationDebug.run() and .testEnvelope()')
 }
