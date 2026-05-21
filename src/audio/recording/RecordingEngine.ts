@@ -326,12 +326,11 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    // HARDWARE COMPENSATION: Firefox + Linux + Bluetooth speaker adds ~930ms of
+    // HARDWARE COMPENSATION: Firefox + Linux audio pipeline adds ~230ms of
     // unaccounted playback delay beyond browser-reported outputLatency + baseLatency.
-    // Root cause unknown — suspect PipeWire buffer chain or A2DP encoder extra buffering.
-    // This compensates the gap so clips land on-grid. Revisit when the audio pipeline
-    // is better understood. Remove or adjust if a proper fix is found.
-    const HW_COMP_MS = 730;
+    // This covers PipeWire/PulseAudio/ALSA buffering not reflected in outputLatency.
+    // Remove or adjust if a proper fix is found.
+    const HW_COMP_MS = 230;
     const browserLatencyMs = (this.config.outputLatencyMs || 0) + (this.config.baseLatencyMs || 0);
     const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
@@ -479,8 +478,10 @@ this.recordingCancelled = false;
       }
 
       // Send START_RECORDING — worklet uses its own currentFrame as anchor
+      // headLength sent per-recording so the worklet's head window matches the per-clip setting
       this.audioWorkletNode.port.postMessage({
         type: 'START_RECORDING',
+        headLength: this.headLength,
       });
 
       // Sync metronome start to the same AudioContext timebase as the recording

@@ -207,6 +207,16 @@ const {
     }
   }, [isPlaying]);
 
+  // Separate effect to sync browser-reported latency to RecordingEngine without cleanup
+  useEffect(() => {
+    if (recordingEngineRef.current) {
+      recordingEngineRef.current.updateConfig({
+        outputLatencyMs: outputLatencyMs || 0,
+        baseLatencyMs: baseLatencyMs || 0,
+      });
+    }
+  }, [outputLatencyMs, baseLatencyMs]);
+
   // Stop playback when metronome master is disabled
   useEffect(() => {
     if (!metronomeEnabled && isPlaying) {

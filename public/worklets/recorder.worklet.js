@@ -25,21 +25,16 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     super();
     this._isRecording = false;
 
-    // Get headLength from processor options (passed from RecordingEngine)
-    let headLength = 1.0;
-    // Access processorOptions directly - no TypeScript syntax
-    if (this.processorOptions && this.processorOptions.headLength !== undefined) {
-      headLength = this.processorOptions.headLength;
-    }
-    // Rolling buffer should always be larger than headLength to work properly
-    // Use at least 2 seconds or headLength + 1 second buffer
-    this._rollingBufferDuration = Math.max(2.0, headLength + 1.0);
+    // headLength is sent per-recording via START_RECORDING message.
+    // Rolling buffer must be large enough to cover any headLength the user might set.
+    // Max practical headLength is ~5s (settable in SyncTool), so keep 6s buffer.
+    this._rollingBufferDuration = 6.0;
     this._recordingStartFrame = 0; // Frame where definitive capture begins
     this._sampleRate = sampleRate;
     this._processCount = 0;
     this._shouldStop = false;
-    this._anchoredFrame = 0; // Shared-clock frame of punch-in point (from main thread)
-    this._headLength = headLength;
+    this._anchoredFrame = 0; // Shared-clock frame of punch-in point (from worklet)
+    this._headLength = 1.0; // Overwritten by START_RECORDING message
 
     this._rollingBuffer = []; // Single buffer: head + recording
 
@@ -55,6 +50,10 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         this._anchoredFrame = currentFrame;
         this._isRecording = true;
         this._recordingStartFrame = this._anchoredFrame;
+        // headLength sent per-recording from main thread (per-clip, adjustable in SyncTool)
+        if (event.data.headLength !== undefined) {
+          this._headLength = event.data.headLength;
+        }
 
         this.port.postMessage({
           type: 'RECORDING_STARTED',
