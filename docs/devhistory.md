@@ -583,4 +583,138 @@ useEffect(() => {
    - `per-track = btnSize + 6` (button + tight padding, independent of elastic layout)
    - `barH = btnSize + 26`
    - Compare `tracks × (btnSize + 6) + (btnSize + 26) ≤ aside.clientHeight`
-   - This works because buttons have a fixed minimum size regardless of elastic track expansion.<｜end▁of▁thinking｜>
+   - This works because buttons have a fixed minimum size regardless of elastic track expansion.
+
+## 2026-05-20: Recording Race Condition, Latency Compensation, & Calibration Revisions
+
+### A. `scheduleStopPlayback` Race Condition (Urgent Bug)
+**Problem:** A 15s idle timer (armed at prior Play→Stop) would fire during an active recording, destroying the AudioWorklet mid-recording. `stopRecording()` then failed with "AudioWorklet not initialized".
+**Root Cause:** `startRecording()` only called `cancelStopTimer()` inside `initStream()`. When the mic stream already existed (within the 15s window), `initStream()` was skipped entirely — the timer kept ticking.
+**Fix:** Added `this.cancelStopTimer()` in the `else` branch of `startRecording()` when the stream already exists.
+**Files:** `src/audio/recording/RecordingEngine.ts`
+
+### B. Stale Comment Removed
+**Problem:** Comment block stated "While PLAYING: headLength = 0, startPos = punchInUserTime" — contradicted actual behavior where headLength is always applied.
+**Fix:** Removed the stale comment block.
+**Files:** `src/audio/recording/RecordingEngine.ts`
+
+### C. RECORDING_DELTA Diagnostic Redesigned
+**Problem:** `RECORDING_DELTA` naively compared `punchInUserTime` (multitrack cursor) against `anchoredFrameTime - secondsPerBar` (AudioContext-derived) — two independent clock domains with different zero points. The ~21s delta was meaningless noise.
+**Fix:** Now logs:
+- `clockDomainDeltaSec` = `punchInUserTime_Real - punchInUserTime` (AudioContext vs cursor offset)
+- `ctxTimeAtStop` = `audioContext.currentTime` at stop moment
+- `workletFrameAgeSec` = time since anchoredFrame
+- Added `punchInUserTime_Real` class field, stored at recording start.
+**Files:** `src/audio/recording/RecordingEngine.ts`
+
+### D. Latency Compensation Applied to Clip Placement
+**Problem:** `globalLatencyMs` and `extraLatencyMs` were defined in `RecordingConfig`, stored in settings, and had a UI slider — but were never actually used in the clip placement formula.
+**Fix:** `startPos = punchInUserTime - headLength - (globalLatencyMs + extraLatencyMs) / 1000` now shifts recorded clips earlier by the measured round-trip latency. Default 0ms = no change.
+**Files:** `src/audio/recording/RecordingEngine.ts`
+
+### E. `LatencyCalibrator` Rewritten for Multiple Tests
+**Problem:** `numTests: 5` was passed in options but `runCalibration()` only ran 1 burst. The `latencies` array always had 1 entry.
+**Fix:** Extracted `runSingleTest()` method. The calibrator now loops `numTests` times, collects individual latency measurements, reports how many succeeded, and averages valid results.
+**Files:** `src/lib/audio/LatencyCalibrator.ts`
+
+### F. Calibration Test Halved in Duration
+**Problem:** Each test used a 500ms burst + 500ms listening window + 500ms margin = 1500ms per test. 5 tests = 7.5s.
+**Fix:** Made `burstDuration` configurable via `START` message field. Halved all timing:
+- Burst: 500ms → 250ms
+- Post-burst listening: 500ms → 250ms
+- Envelope peak offset: 250ms → 125ms
+- Wait per test: 1500ms → 800ms
+- Total for 5 tests: ~4s
+**Files:** `public/worklets/calibration.worklet.js`, `src/lib/audio/LatencyCalibrator.ts`
+
+### G. Auto Calibration UI Added to Settings
+**Problem:** `LatencyCalibrationModal` was rendered in `App.tsx` but had no button to trigger it — orphaned code.
+**Fix:**
+- Replaced the Global Latency Offset slider in Settings with two buttons in a row: **"Auto Calibration"** (opens modal + auto-starts the test) and **"XXms"** (opens modal for manual tweaking).
+- Added `autoStart?: boolean` prop to `LatencyCalibrationModal` — when true, a `useEffect` triggers `runAutoCalibration()` immediately on mount.
+- Renamed section title to "Audio Latency Compensation".
+**Files:** `src/components/modals/SettingsModal.tsx`, `src/components/modals/LatencyCalibrationModal.tsx`
+
+### H. `docs/TODO.md` Created
+- Initial entry: latency compensation now applied.
+- Enhancement entry: further calibration test reduction.
+
+### I. Calibration Rewrite: White Noise + Cross-Correlation
+**Problem:** The tone-based energy-chunking approach failed on Firefox (AGC can't be fully disabled; narrow-band 1kHz tone gets squashed). Each test was 800ms × 5 = 4s. Detection was quantized to 1ms chunks.
+
+**Fix:** Replaced the entire calibration pipeline with white noise + cross-correlation:
+- **Worklet** (`calibration.worklet.js`): Seeded PRNG (Mulberry32) generates deterministic white noise. Single `START` message triggers the full sequence: [250ms wake burst] [500ms gap] [5 × (50ms burst + 400ms gap)] [200ms margin]. Mic input recorded into a ring buffer. Single `RESULT` returns the full buffer + burst schedule (transferable, zero-copy).
+- **Main thread** (`LatencyCalibrator.ts`): Regenerates the same noise pattern from the seed, cross-correlates it against the recording at each burst position. Sample-accurate peak detection via sliding dot product with energy normalization. Filters out low-correlation results (< 0.3 threshold).
+- **Timing**: ~3200ms total for 5 bursts. Cross-correlation adds ~50ms compute per burst.
+- **Why white noise**: Spread-spectrum signal is resistant to frequency-selective AGC processing. Cross-correlation extracts known signal from noise even at very low SNR.
+**Files:** `public/worklets/calibration.worklet.js`, `src/lib/audio/LatencyCalibrator.ts`
+
+### J. Metronome Clock Drift Fix — `this.currentFrame` → Global `currentFrame`
+
+**Problem:** The metronome worklet (`metronome.worklet.js`) maintained a private `this.currentFrame` counter, incremented manually by `step` (output buffer length) per `process()` call. Under main-thread CPU load (timeline scrolling), Chromium can skip render quanta, causing `process()` to not be called for those quanta. The private counter stopped advancing during the gap, creating a permanent offset from the real audio clock (`currentFrame`). This caused the live metronome to drift late relative to recorded playback (which uses `AudioBufferSourceNode.start(when)` scheduled at absolute `audioContext.currentTime` — immune to main-thread jitter).
+
+**Symptoms reported:**
+- Live metronome and recorded metronome keep sync at rest, but offset widens during scrolling (permanent jump, not continuous drift)
+- BPM/time signature changes during playback behave erratically
+- Time signature sometimes refuses to change (downbeat detection uses wrong frame base)
+- BPM wrong on recorded takes (metronome reset to frame 0 while multitrack starts from `currentTime`)
+
+**Root cause:** `this.currentFrame` and the global `currentFrame` diverge whenever a render quantum is skipped. Once behind, the metronome's beat schedule (`nextBeatFrame`) never catches up, and all subsequent beats are late by the accumulated offset.
+
+**Fix (4 hunks in `metronome.worklet.js`):**
+1. **Constructor:** Removed `this.currentFrame = 0;` — the global `currentFrame` is now the single source of truth.
+2. **CONFIGURE handler:** `this.nextBeatFrame = currentFrame` instead of `this.nextBeatFrame = this.currentFrame` — aligns initial beat schedule to actual audio clock.
+3. **RESET handler:** `this.nextBeatFrame = currentFrame; this.beatIndex = Math.round(currentFrame / framesPerBeat) % beatsPerBar` instead of resetting to `data.frame || 0` — maintains bar-relative position.
+4. **process():** `samplesUntilBeat = this.nextBeatFrame - currentFrame` (global) instead of `this.nextBeatFrame - this.currentFrame`. Removed `this.currentFrame += step` — the global `currentFrame` advances automatically.
+5. **STATUS handler:** Reports global `currentFrame` for accurate debugging.
+
+**Additional fix in `useAudioEngine.ts`:**
+- Removed `metronomeEngineRef.current.resetToFrame(0)` — this call set the metronome to frame 0 while the multitrack playback started from `currentTime` (e.g., 10s into the song), guaranteeing desync. The metronome now aligns automatically via `currentFrame` when enabled.
+
+**Verification:** Both `npx tsc --noEmit` and `npm run build` pass clean.
+
+**Files modified (phase 1 — drift fix):**
+- `public/worklets/metronome.worklet.js` — frame counter fix
+- `src/hooks/useAudioEngine.ts` — removed `resetToFrame(0)` call
+
+### K. Metronome First-Beat Alignment — `START_AT` + `barTempo`
+
+**Problem after phase 1:** The metronome fired its first click at `currentFrame` (when enabled) instead of at the next musically correct bar.beat. This made the first two beats irregular (near-zero interval from start moment to beat 1), defeating the metronome's purpose as a solid time reference.
+
+**Root cause:** Using `currentFrame` directly as the start position gives a sample-clock position, not a musical beat position. The first click must land on the next grid-aligned bar.beat after `currentTime + startupDelayMs`.
+
+**Fix:**
+1. **`metronome.worklet.js`** — Added `START_AT` message handler with `barTempo[]` + `barStartFrame` support:
+   - `barTempo`: Array of `{ bpm, framesPerBeat }` indexed by bar number. Single entry today, extensible for per-bar tempo maps.
+   - `barStartFrame`: AudioContext frame where project bar 0 begins.
+   - At each beat boundary, `process()` checks `beatIndex / beatsPerBar` against `barTempo[]` and applies the correct per-bar frame rate. Prepares for future tempo map without logic changes.
+   - Echoes `barStartFrame` and `barTempoCount` in STATUS for debugging.
+
+2. **`MetronomeEngine.ts`** — Added `startAt(nextBeatFrame, beatIndex, beatsPerBar, barTempo, barStartFrame)` method.
+
+3. **`useAudioEngine.ts`** — Replaced `ENABLE`-based start with grid-aligned `START_AT`:
+   - Computes `nextBeatProjectTime = ceil((currentTime + startupSec) / beatDuration) × beatDuration` — first grid beat after playback + startup delay.
+   - Derives `beatIndex` and `barIndex` from the project grid.
+   - Converts to AudioContext frame via `ctx.currentTime + startupSec + offset`.
+   - Computes `barStartFrame` (AudioContext origin of bar 0) for future bar-indexed tempo lookups.
+   - Uses `startupDelayMs` (from store) as the shared guardrail — same value the recording engine uses.
+
+**Data flow:**
+```
+Main thread                          Worklet
+────────────────                     ──────
+currentTime + startupDelayMs
+→ ceil to next beat boundary         START_AT { nextBeatFrame, beatIndex,
+→ barIndex = beatIndex / beatsPerBar   beatsPerBar, barTempo[], barStartFrame }
+→ barTempo[barIndex].framesPerBeat     ↓
+                                      process() at each beat:
+                                        barCheck = floor(beatIndex / beatsPerBar)
+                                        framesPerBeat = barTempo[barCheck]
+```
+
+**Verification:** `npx tsc --noEmit` and `npm run build` pass clean.
+
+**Files modified:**
+- `public/worklets/metronome.worklet.js` — added `START_AT` handler, `barTempo`/`barStartFrame` fields, per-beat bar-indexed tempo lookup
+- `src/audio/metronome/MetronomeEngine.ts` — added `startAt()` method
+- `src/hooks/useAudioEngine.ts` — grid-aligned `START_AT` calculation replacing `ENABLE`-based start<｜end▁of▁thinking｜>

@@ -288,3 +288,26 @@ application is unresponsive. debug. make tests, not assumptions
 * **Manual Nudge:** Enabled the `offset` property for all tracks in `useAudioEngine.ts`, allowing users to manually adjust track timing by milliseconds.
 * **Jitter Mitigation:** Confirmed that `WebAudioPlayer`'s use of `AudioBufferSourceNode` provides sample-accurate playback, eliminating "micro-silences" caused by main-thread JS jitter.
 * **Code Quality:** Fixed a linting error in `multitrack.ts` and verified the build.
+
+---
+
+## Phase 12: Metronome Clock Drift Fix (2026-05-20)
+
+**User:** Reported that the live metronome and its recording drift apart when scrolling the timeline. Also reported strange BPM/time signature change behavior during playback, time signature sometimes refusing to change, and BPM wrong on recorded takes.
+
+**Gemini:**
+* **Root cause identified:** The metronome worklet (`metronome.worklet.js`) used a private `this.currentFrame` counter, incremented manually per `process()` call. When Chromium skips audio render quanta under main-thread CPU load (scrolling), `process()` is not called and `this.currentFrame` stops advancing, creating a permanent offset from the real audio clock (`currentFrame`).
+* **Fix applied to `metronome.worklet.js`:**
+  - Removed `this.currentFrame` instance variable
+  - All beat timing now references the global `currentFrame` (AudioWorkletGlobalScope) — survives dropped quanta
+  - CONFIGURE: `nextBeatFrame = currentFrame` (aligns to real audio clock)
+  - RESET: `nextBeatFrame = currentFrame; beatIndex = round(currentFrame / framesPerBeat) % beatsPerBar`
+  - process(): `samplesUntilBeat = nextBeatFrame - currentFrame`; removed manual frame increment
+* **Fix applied to `useAudioEngine.ts`:**
+  - Removed `resetToFrame(0)` call — this forced the metronome to frame 0 while multitrack played from `currentTime`
+* **Follow-up — `START_AT` + `barTempo` grid alignment:** The first beat now lands on the next musical beat boundary after `currentTime + startupDelayMs`, not on a raw `currentFrame`. This prevents the irregular first-two-beats issue that made the metronome unusable as a time reference.
+  - `metronome.worklet.js`: Added `START_AT` handler with `barTempo[]` (per-bar tempo, extensible for tempo maps) and `barStartFrame` (bar 0 origin in AudioContext clock).
+  - `MetronomeEngine.ts`: Added `startAt()` method.
+  - `useAudioEngine.ts`: Computes `nextBeatProjectTime = ceil((currentTime + startupSec) / beatDuration) × beatDuration`, converts to AudioContext frame, and calls `startAt()`.
+* **Documentation:** Updated `docs/devhistory.md` (sections J, K), `docs/AUDIO_LOGIC_SPECS.md` (metronome spec + recent changes), and `docs/full_history.md`.
+* **Verification:** `npx tsc --noEmit` and `npm run build` pass clean.
