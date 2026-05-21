@@ -16,6 +16,9 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
   const extraLatencyMs = useStore(s => s.extraLatencyMs);
   const setExtraLatencyMs = useStore(s => s.setExtraLatencyMs);
+  const outputLatencyMs = useStore(s => s.outputLatencyMs);
+  const baseLatencyMs = useStore(s => s.baseLatencyMs);
+  const refreshAudioLatency = useStore(s => s.refreshAudioLatency);
 
   const [isCalibrating, setIsCalibrating] = useState(false);
   const [calibrationProgress, setCalibrationProgress] = useState(0);
@@ -160,6 +163,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
                     <ProbeMonitor
                       cycle={probeCycles[probeCycles.length - 1]}
                       cycleCount={probeCycles.length}
+                      floorPeak={calibratorRef.current?.floorPeak}
                     />
                   </div>
                 )}
@@ -193,6 +197,28 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
                 <span>{error}</span>
               </div>
             )}
+          </div>
+
+          {/* Browser Latency Section */}
+          <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Browser Latency</h3>
+              <button onClick={refreshAudioLatency}
+                className="p-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded text-[10px] transition-all flex items-center gap-1"
+              >
+                <RotateCcw className="w-3 h-3" />
+                Refresh
+              </button>
+            </div>
+            <div className="flex gap-4 text-[11px] font-mono">
+              <span>Output: <span className="text-zinc-200 font-bold">{outputLatencyMs}ms</span></span>
+              <span>Base: <span className="text-zinc-200 font-bold">{baseLatencyMs}ms</span></span>
+              <span>Total: <span className="text-cyan-400 font-bold">{outputLatencyMs + baseLatencyMs}ms</span></span>
+            </div>
+            <p className="text-[9px] text-zinc-600 mt-1.5 leading-snug">
+              Browser-reported playback delay. Includes audio output buffer + device latency.
+              Refresh after changing audio output device.
+            </p>
           </div>
 
           {/* Manual Adjustment Section */}

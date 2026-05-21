@@ -99,6 +99,8 @@ interface AppState {
   rawRecordingMode: boolean;
   headLength: number; // Rolling buffer head length in seconds (0-1)
   sampleRate: number; // AudioContext sample rate for anchor calculations
+  outputLatencyMs: number; // AudioContext.outputLatency * 1000 (browser-reported output delay)
+  baseLatencyMs: number; // AudioContext.baseLatency * 1000 (render quantum buffer delay)
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
   minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
@@ -163,6 +165,8 @@ interface AppState {
   setIsReady: (isReady: boolean) => void;
   setResponsiveLayout: (layout: { trackHeight: number, metronomeHeight: number, sidebarWidth: number }) => void;
   setSampleRate: (rate: number) => void;
+  setAudioContextLatency: (outputLatencyMs: number, baseLatencyMs: number) => void;
+  refreshAudioLatency: () => void;
   setToolbarProposal: (proposal: 1 | 2 | 3) => void;
   setToolbarVisibleLabels: (visible: boolean) => void;
   reorderTracks: (startIndex: number, endIndex: number) => void;
@@ -224,6 +228,8 @@ const defaultSettings = {
   comboTagSeparator: '+' as const,
   sectionTags: ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'],
   sampleRate: 44100, // Default; updated when AudioContext is created
+  outputLatencyMs: 0,
+  baseLatencyMs: 0,
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
   mediumBtnSize: 44,
@@ -307,6 +313,16 @@ export const useStore = create<AppState>()(
         }),
         setMetronomeTrackVisible: (v) => set({ metronomeTrackVisible: v }),
         setSampleRate: (rate) => set({ sampleRate: rate }),
+        setAudioContextLatency: (outputLatencyMs, baseLatencyMs) => set({ outputLatencyMs, baseLatencyMs }),
+        refreshAudioLatency: () => {
+          const ctx = (window as any).__audioContext || (window as any).__metronomeDebug?.node?.context;
+          if (ctx) {
+            set({
+              outputLatencyMs: Math.round((ctx.outputLatency || 0) * 1000),
+              baseLatencyMs: Math.round((ctx.baseLatency || 0) * 1000),
+            });
+          }
+        },
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
         setIsReady: (isReady) => set({ isReady }),
