@@ -8,6 +8,7 @@
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
 import { perfLogger } from '../../utils/PerformanceLogger';
+import { useStore } from '../../store/useStore';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
@@ -331,7 +332,8 @@ export class RecordingEngine {
     // This covers PipeWire/PulseAudio/ALSA buffering not reflected in outputLatency.
     // Remove or adjust if a proper fix is found.
     const HW_COMP_MS = 171;
-    const browserLatencyMs = (this.config.outputLatencyMs || 0) + (this.config.baseLatencyMs || 0);
+    const storeState = useStore.getState();
+    const browserLatencyMs = (storeState.outputLatencyMs || 0) + (storeState.baseLatencyMs || 0);
     const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 

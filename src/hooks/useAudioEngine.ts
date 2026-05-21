@@ -165,8 +165,6 @@ const {
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
-        outputLatencyMs: outputLatencyMs || 0,
-        baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
@@ -206,16 +204,6 @@ const {
       recordingEngineRef.current.updateConfig({ isPlaying });
     }
   }, [isPlaying]);
-
-  // Separate effect to sync browser-reported latency to RecordingEngine without cleanup
-  useEffect(() => {
-    if (recordingEngineRef.current) {
-      recordingEngineRef.current.updateConfig({
-        outputLatencyMs: outputLatencyMs || 0,
-        baseLatencyMs: baseLatencyMs || 0,
-      });
-    }
-  }, [outputLatencyMs, baseLatencyMs]);
 
   // Stop playback when metronome master is disabled
   useEffect(() => {
@@ -1084,16 +1072,6 @@ const {
       metronomeEngineRef.current.reloadSamples(gain);
     }
   }, [tracks]);
-
-  // Refresh browser latency when OS audio device changes (headphones ↔ speakers, etc.)
-  useEffect(() => {
-    const handler = () => {
-      console.log('Audio device change detected, refreshing latency...');
-      useStore.getState().refreshAudioLatency();
-    };
-    navigator.mediaDevices?.addEventListener('devicechange', handler);
-    return () => navigator.mediaDevices?.removeEventListener('devicechange', handler);
-  }, []);
 
   const playPause = useCallback(async () => {
     if (!multitrackRef.current) return;
