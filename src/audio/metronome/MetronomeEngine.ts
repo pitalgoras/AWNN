@@ -60,6 +60,16 @@ export class MetronomeEngine {
     }
   }
 
+  startAt(
+    nextBeatFrame: number,
+    beatIndex: number,
+    beatsPerBar: number,
+    barTempo: Array<{ bpm: number; framesPerBeat: number }>,
+    barStartFrame: number,
+  ): void {
+    this.node?.port.postMessage({ type: 'START_AT', nextBeatFrame, beatIndex, beatsPerBar, barTempo, barStartFrame });
+  }
+
   resetToFrame(frame: number): void {
     this.node?.port.postMessage({ type: 'RESET', frame });
   }

@@ -11,18 +11,19 @@ class MetronomeWorklet extends AudioWorkletProcessor {
     this.offbeatSamples = null;
     this.nextBeatFrame = 0;
     this.beatIndex = 0;
-    this.currentFrame = 0;
     this.beatCount = 0;
     this.currentClick = null;
     this.currentClickOffset = 0;
     this.currentClickRemaining = 0;
+    this.barTempo = [];
+    this.barStartFrame = 0;
 
     this.port.onmessage = (e) => {
       const { type, ...data } = e.data;
       switch (type) {
         case 'CONFIGURE':
           this.framesPerBeat = Math.round(this.sampleRate * 60 / data.bpm);
-          this.nextBeatFrame = this.currentFrame;
+          this.nextBeatFrame = currentFrame;
           this.beatsPerBar = data.beatsPerBar || 4;
           this.beatIndex = 0;
           this.beatCount = 0;
@@ -42,10 +43,17 @@ class MetronomeWorklet extends AudioWorkletProcessor {
           console.log('MW ENABLE: ' + data.enabled);
           this.enabled = data.enabled;
           break;
+        case 'START_AT':
+          this.barTempo = data.barTempo || [];
+          this.barStartFrame = data.barStartFrame || 0;
+          this.nextBeatFrame = data.nextBeatFrame;
+          this.beatIndex = data.beatIndex || 0;
+          if (data.beatsPerBar !== undefined) this.beatsPerBar = data.beatsPerBar;
+          this.enabled = true;
+          break;
         case 'RESET':
-          this.currentFrame = data.frame || 0;
-          this.nextBeatFrame = this.currentFrame;
-          this.beatIndex = 0;
+          this.nextBeatFrame = currentFrame;
+          this.beatIndex = this.framesPerBeat > 0 ? Math.round(currentFrame / this.framesPerBeat) % this.beatsPerBar : 0;
           this.currentClick = null;
           this.currentClickOffset = 0;
           this.currentClickRemaining = 0;
@@ -57,7 +65,7 @@ class MetronomeWorklet extends AudioWorkletProcessor {
         case 'STATUS':
           this.port.postMessage({
             type: 'STATUS_REPLY',
-            currentFrame: this.currentFrame,
+            currentFrame: currentFrame,
             nextBeatFrame: this.nextBeatFrame,
             framesPerBeat: this.framesPerBeat,
             sampleRate: this.sampleRate,
@@ -65,6 +73,8 @@ class MetronomeWorklet extends AudioWorkletProcessor {
             beatIndex: this.beatIndex,
             beatCount: this.beatCount,
             beatsPerBar: this.beatsPerBar,
+            barStartFrame: this.barStartFrame,
+            barTempoCount: this.barTempo.length,
             hasClicks: this.downbeatSamples != null && this.offbeatSamples != null,
           });
           break;
@@ -82,10 +92,18 @@ class MetronomeWorklet extends AudioWorkletProcessor {
 
     while (written < channel.length) {
       const remaining = channel.length - written;
-      const samplesUntilBeat = this.nextBeatFrame - this.currentFrame;
+      const samplesUntilBeat = this.nextBeatFrame - currentFrame;
 
       if (samplesUntilBeat <= 0) {
         const isDownbeat = this.beatIndex % this.beatsPerBar === 0;
+
+        // Bar crossing: apply per-bar tempo from barTempo array
+        if (this.barStartFrame > 0 && this.barTempo.length > 0) {
+          const barIndex = Math.floor(this.beatIndex / this.beatsPerBar);
+          if (barIndex < this.barTempo.length) {
+            this.framesPerBeat = this.barTempo[barIndex].framesPerBeat;
+          }
+        }
 
         if (isDownbeat && this.pendingBeatsPerBar != null) {
           this.beatsPerBar = this.pendingBeatsPerBar;
@@ -122,7 +140,6 @@ class MetronomeWorklet extends AudioWorkletProcessor {
         this.currentClickRemaining -= placeLen;
       }
 
-      this.currentFrame += step;
       written += step;
     }
 
