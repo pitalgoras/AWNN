@@ -50,6 +50,7 @@ export function useAudioEngine() {
   const metronomeEngineRef = useRef<MetronomeEngine | null>(null);
   const recordingEngineRef = useRef<RecordingEngine | null>(null);
   const wasPlayingRef = useRef(false);
+  const recordingMetronomeSyncedRef = useRef(false);
   // Track last recorded phrase for undo
   const lastRecordingRef = useRef<{ trackId: string; phraseId: string; startPosition: number } | null>(null);
   const recordingStartPositionRef = useRef(0);
@@ -68,7 +69,8 @@ const {
   timeSignature,
   preRollMode,
   currentTime,
-  globalLatencyMs,
+  outputLatencyMs,
+  baseLatencyMs,
   extraLatencyMs,
   duration,
   setIsPlaying,
@@ -110,7 +112,8 @@ const {
     if (!recordingEngineRef.current) {
       const config: RecordingConfig = {
         rawRecordingMode,
-        globalLatencyMs: globalLatencyMs || 0,
+        outputLatencyMs: outputLatencyMs || 0,
+        baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
@@ -147,6 +150,12 @@ const {
           seekTo(time, allowNegative);
         },
         getStoreState: () => useStore.getState(),
+        onStartMetronome: (nextBeatFrame, beatIndex, beatsPerBar, barTempo, barStartFrame) => {
+          if (metronomeEngineRef.current) {
+            metronomeEngineRef.current.startAt(nextBeatFrame, beatIndex, beatsPerBar, barTempo, barStartFrame);
+            recordingMetronomeSyncedRef.current = true;
+          }
+        },
       };
 
       recordingEngineRef.current = new RecordingEngine(config, callbacks);
@@ -156,7 +165,8 @@ const {
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
-        globalLatencyMs: globalLatencyMs || 0,
+        outputLatencyMs: outputLatencyMs || 0,
+        baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
@@ -188,7 +198,7 @@ const {
         metronomeEngineRef.current = null;
       }
     };
-  }, [rawRecordingMode, globalLatencyMs, extraLatencyMs, preRollMode, headLength, startupDelayMs, bufferSafetyMs]);
+  }, [rawRecordingMode, extraLatencyMs, preRollMode, headLength, startupDelayMs, bufferSafetyMs]);
 
   // Separate effect to update isPlaying without destroying audioWorkletNode
   useEffect(() => {
@@ -365,6 +375,12 @@ const {
 
         // Update sample rate in store
         useStore.getState().setSampleRate(audioContextRef.current.sampleRate);
+        // Expose AudioContext for latency info display
+        (window as any).__audioContext = audioContextRef.current;
+        useStore.getState().setAudioContextLatency(
+          Math.round((audioContextRef.current.outputLatency || 0) * 1000),
+          Math.round((audioContextRef.current.baseLatency || 0) * 1000),
+        );
 
         const multitrackItems: (TrackOptions & { trackId: string })[] = [];
 
@@ -1002,10 +1018,52 @@ const {
   // Start/stop metronome worklet in sync with playback
   useEffect(() => {
     if (!metronomeEngineRef.current) return;
-    if (isPlaying) {
-      metronomeEngineRef.current.resetToFrame(0);
+
+    if (isPlaying && metronomeEnabled) {
+      if (recordingMetronomeSyncedRef.current) {
+        recordingMetronomeSyncedRef.current = false;
+        return;
+      }
+      const ctx = audioContextRef.current;
+      if (!ctx) return;
+      const sr = ctx.sampleRate;
+      const startupSec = (startupDelayMs || 150) / 1000;
+      const bpmVal = debouncedBpm || 120;
+      const sigVal = debouncedTimeSignature || [4, 4];
+      const beatDuration = 60 / bpmVal;
+      const beatsPerBarVal = sigVal[0];
+
+      // Project time where playback will audibly start
+      const startTime = currentTime;
+      const realTime = startTime + secondsPerBar;
+
+      // Next real time aligned to beat grid (always >= 0)
+      const nextBeatRealTime = Math.ceil(realTime / beatDuration) * beatDuration;
+      const nextBeatProjectTime = nextBeatRealTime - secondsPerBar;
+
+      // Convert to AudioContext clock frame
+      const ctxTime = ctx.currentTime;
+      const nextBeatCtxTime = ctxTime + startupSec + (nextBeatProjectTime - startTime);
+      const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
+
+      // Beat index on the grid (0 = downbeat of bar 1)
+      const totalBeats = Math.round(nextBeatRealTime / beatDuration);
+      const beatIndex = totalBeats % beatsPerBarVal;
+      const barIndex = Math.floor(totalBeats / beatsPerBarVal);
+
+      // Bar 0 origin frame in AudioContext clock
+      const bar0ProjectTime = barIndex * beatsPerBarVal * beatDuration;
+      const bar0CtxTime = nextBeatCtxTime - (nextBeatProjectTime - bar0ProjectTime);
+      const barStartFrame = Math.round(bar0CtxTime * sr);
+
+      // Per-bar tempo array (single entry for now, extensible for tempo map)
+      const framesPerBeat = Math.round(sr * 60 / bpmVal);
+      const barTempo = [{ bpm: bpmVal, framesPerBeat }];
+
+      metronomeEngineRef.current.startAt(nextBeatFrame, beatIndex, beatsPerBarVal, barTempo, barStartFrame);
+    } else {
+      metronomeEngineRef.current.updateConfig({ isPlaying: false });
     }
-    metronomeEngineRef.current.updateConfig({ isPlaying: isPlaying && metronomeEnabled });
   }, [isPlaying, metronomeEnabled]);
 
   // Sync metronome volume from track state — re-render click samples with baked gain
@@ -1016,6 +1074,16 @@ const {
       metronomeEngineRef.current.reloadSamples(gain);
     }
   }, [tracks]);
+
+  // Refresh browser latency when OS audio device changes (headphones ↔ speakers, etc.)
+  useEffect(() => {
+    const handler = () => {
+      console.log('Audio device change detected, refreshing latency...');
+      useStore.getState().refreshAudioLatency();
+    };
+    navigator.mediaDevices?.addEventListener('devicechange', handler);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', handler);
+  }, []);
 
   const playPause = useCallback(async () => {
     if (!multitrackRef.current) return;
@@ -1083,6 +1151,41 @@ const {
       }
     } catch (err) {
       console.error('Seek error:', err);
+    }
+
+    // Re-align metronome on seek during playback
+    if (metronomeEnabled && metronomeEngineRef.current) {
+      const isPlayingNow = useStore.getState().isPlaying;
+      if (isPlayingNow) {
+        const ctx = audioContextRef.current;
+        if (ctx) {
+          const sr = ctx.sampleRate;
+          const bpmVal = bpm || 120;
+          const sigVal = timeSignature || [4, 4];
+          const beatDuration = 60 / bpmVal;
+          const beatsPerBarVal = sigVal[0];
+
+          const seekRealTime = finalUserTime + secondsPerBar;
+          const nextBeatRealTime = Math.ceil(seekRealTime / beatDuration) * beatDuration;
+          const nextBeatProjectTime = nextBeatRealTime - secondsPerBar;
+
+          const nextBeatCtxTime = ctx.currentTime + (nextBeatProjectTime - finalUserTime);
+          const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
+
+          const totalBeats = Math.round(nextBeatRealTime / beatDuration);
+          const beatIndex = totalBeats % beatsPerBarVal;
+          const barIndex = Math.floor(totalBeats / beatsPerBarVal);
+
+          const bar0ProjectTime = barIndex * beatsPerBarVal * beatDuration;
+          const bar0CtxTime = nextBeatCtxTime - (nextBeatProjectTime - bar0ProjectTime);
+          const barStartFrame = Math.round(bar0CtxTime * sr);
+
+          const framesPerBeat = Math.round(sr * 60 / bpmVal);
+          const barTempo = [{ bpm: bpmVal, framesPerBeat }];
+
+          metronomeEngineRef.current.startAt(nextBeatFrame, beatIndex, beatsPerBarVal, barTempo, barStartFrame);
+        }
+      }
     }
   }, [bpm, timeSignature, setCurrentTime]);
 

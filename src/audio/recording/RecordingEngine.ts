@@ -11,7 +11,8 @@ import { perfLogger } from '../../utils/PerformanceLogger';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
-  globalLatencyMs: number;
+  outputLatencyMs: number;
+  baseLatencyMs: number;
   extraLatencyMs: number;
   bpm: number;
   timeSignature: [number, number];
@@ -31,6 +32,7 @@ export interface RecordingCallbacks {
   onAddPhrase: (trackId: string, phrase: any) => void;
   onSeekTo: (time: number, allowNegative?: boolean) => void;
   getStoreState: () => any;
+  onStartMetronome?: (nextBeatFrame: number, beatIndex: number, beatsPerBar: number, barTempo: Array<{bpm: number, framesPerBeat: number}>, barStartFrame: number) => void;
 }
 
 export class RecordingEngine {
@@ -43,7 +45,6 @@ export class RecordingEngine {
   private activeTrackId: string | null = null;
   private punchInTime = 0;
   private punchInUserTime = 0; // User Time where user pressed Record (for clip startPos)
-  private punchInUserTime_Real = 0; // AudioContext clock time when recording starts (for worklet sync)
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
@@ -325,7 +326,14 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    const latencyCompMs = (this.config.globalLatencyMs || 0) + (this.config.extraLatencyMs || 0);
+    // HARDWARE COMPENSATION: Firefox + Linux + Bluetooth speaker adds ~930ms of
+    // unaccounted playback delay beyond browser-reported outputLatency + baseLatency.
+    // Root cause unknown — suspect PipeWire buffer chain or A2DP encoder extra buffering.
+    // This compensates the gap so clips land on-grid. Revisit when the audio pipeline
+    // is better understood. Remove or adjust if a proper fix is found.
+    const HW_COMP_MS = 730;
+    const browserLatencyMs = (this.config.outputLatencyMs || 0) + (this.config.baseLatencyMs || 0);
+    const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 
     // Pre-calculate peaks
@@ -342,12 +350,12 @@ export class RecordingEngine {
 
     const anchoredFrameTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : 0;
     const ctxTimeNow = audioContext.currentTime;
-    const clockDomainDelta = this.punchInUserTime_Real - this.punchInUserTime;
+    const clockDomainDelta = anchoredFrameTime - this.punchInUserTime;
     const workletFrameAge = ctxTimeNow - anchoredFrameTime;
     const beatDelta = clockDomainDelta / secondsPerBeat;
     console.log('RECORDING_DELTA', {
       punchInUserTime: this.punchInUserTime,
-      punchInUserTime_Real: this.punchInUserTime_Real,
+      punchInUserTime_Real: anchoredFrameTime,
       startPos,
       latencyCompMs,
       headLength: this.headLength,
@@ -466,32 +474,39 @@ this.recordingCancelled = false;
       const audioContext = this.config.audioContextRef?.current;
       if (!audioContext) throw new Error('AudioContext not initialized');
 
-      // Calculate punchInUserTime_Real (AudioContext time when punch-in occurs)
-      // This stays aligned with the worklet's currentFrame (same AudioContext clock)
-      // startupDelay compensates for the time between onSetIsPlaying and actual playback
-      let punchInUserTime_Real: number;
-
-      if (isCurrentlyPlaying) {
-        // Playing: recording starts immediately at the current AudioContext time
-        punchInUserTime_Real = audioContext.currentTime;
-      } else {
-        // Stopped: recording starts after playback startup delay + pre-roll if applicable
-        const timeFromPlaybackStartToPunchIn = punchInUserTime - recordStartUserTime;
-        punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn;
-      }
-
-      this.punchInUserTime_Real = punchInUserTime_Real;
-
       if (!this.audioWorkletNode) {
         throw new Error('AudioWorklet not initialized. This should not happen.');
       }
 
-      // Send START_RECORDING with punchInUserTime_Real (AudioContext clock)
-      // The worklet uses this to align _anchoredFrame with its currentFrame
+      // Send START_RECORDING — worklet uses its own currentFrame as anchor
       this.audioWorkletNode.port.postMessage({
         type: 'START_RECORDING',
-        punchInUserTime_Real: punchInUserTime_Real
       });
+
+      // Sync metronome start to the same AudioContext timebase as the recording
+      if (!isCurrentlyPlaying && this.callbacks.onStartMetronome) {
+        const sr = audioContext.sampleRate;
+        const beatDuration = 60 / (this.config.bpm || 120);
+        const beatsPerBarVal = this.config.timeSignature?.[0] || 4;
+        const secondsPerBarVal = beatDuration * beatsPerBarVal;
+
+        const metStartTime = recordStartUserTime;
+        const metRealTime = metStartTime + secondsPerBarVal;
+        const nextBeatRealTime = Math.ceil(metRealTime / beatDuration) * beatDuration;
+        const nextBeatProjectTime = nextBeatRealTime - secondsPerBarVal;
+        const nextBeatCtxTime = audioContext.currentTime + startupDelay + (nextBeatProjectTime - metStartTime);
+        const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
+        const totalBeats = Math.round(nextBeatRealTime / beatDuration);
+        const beatIndex = totalBeats % beatsPerBarVal;
+        const barIndex = Math.floor(totalBeats / beatsPerBarVal);
+        const bar0ProjectTime = barIndex * beatsPerBarVal * beatDuration;
+        const bar0CtxTime = nextBeatCtxTime - (nextBeatProjectTime - bar0ProjectTime);
+        const barStartFrame = Math.round(bar0CtxTime * sr);
+        const framesPerBeat = Math.round(sr * beatDuration);
+        const barTempo = [{ bpm: this.config.bpm || 120, framesPerBeat }];
+
+        this.callbacks.onStartMetronome(nextBeatFrame, beatIndex, beatsPerBarVal, barTempo, barStartFrame);
+      }
 
       const recorderStartCtxTime = audioContext.currentTime;
       const playbackStartCtxTime = recorderStartCtxTime + startupDelay;

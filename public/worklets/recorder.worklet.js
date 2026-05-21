@@ -52,20 +52,17 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStop = false;
+        this._anchoredFrame = currentFrame;
+        this._isRecording = true;
+        this._recordingStartFrame = this._anchoredFrame;
 
-        if (event.data.punchInUserTime_Real !== undefined) {
-          this._anchoredFrame = Math.floor(event.data.punchInUserTime_Real * sampleRate);
-          this._isRecording = true;
-          this._recordingStartFrame = this._anchoredFrame;
-
-          this.port.postMessage({
-            type: 'RECORDING_STARTED',
-            startTime: this._recordingStartFrame / sampleRate,
-            anchoredFrame: this._anchoredFrame,
-            currentTime: currentTime,
-            msg: 'Recording: anchorFrame=' + this._anchoredFrame + ', recordingStartFrame=' + this._recordingStartFrame,
-          });
-        }
+        this.port.postMessage({
+          type: 'RECORDING_STARTED',
+          startTime: this._recordingStartFrame / sampleRate,
+          anchoredFrame: this._anchoredFrame,
+          currentTime: currentTime,
+          msg: 'Recording: anchorFrame=' + this._anchoredFrame + ', recordingStartFrame=' + this._recordingStartFrame,
+        });
       }
     };
   }
