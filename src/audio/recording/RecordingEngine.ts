@@ -326,11 +326,11 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    // HARDWARE COMPENSATION: Firefox + Linux audio pipeline adds ~230ms of
+    // HARDWARE COMPENSATION: Firefox + Linux audio pipeline adds ~171ms of
     // unaccounted playback delay beyond browser-reported outputLatency + baseLatency.
     // This covers PipeWire/PulseAudio/ALSA buffering not reflected in outputLatency.
     // Remove or adjust if a proper fix is found.
-    const HW_COMP_MS = 230;
+    const HW_COMP_MS = 171;
     const browserLatencyMs = (this.config.outputLatencyMs || 0) + (this.config.baseLatencyMs || 0);
     const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
@@ -477,11 +477,14 @@ this.recordingCancelled = false;
         throw new Error('AudioWorklet not initialized. This should not happen.');
       }
 
-      // Send START_RECORDING — worklet uses its own currentFrame as anchor
+      // Send START_RECORDING — worklet uses its own currentFrame as anchor, offset by frameOffset
       // headLength sent per-recording so the worklet's head window matches the per-clip setting
+      // frameOffset accounts for startupDelay + pre-roll so _anchoredFrame lands at bar 1's AudioContext time
+      const frameOffset = Math.round((startupDelay + Math.max(0, punchInUserTime - recordStartUserTime)) * audioContext.sampleRate);
       this.audioWorkletNode.port.postMessage({
         type: 'START_RECORDING',
         headLength: this.headLength,
+        frameOffset,
       });
 
       // Sync metronome start to the same AudioContext timebase as the recording
