@@ -8,7 +8,6 @@
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
 import { perfLogger } from '../../utils/PerformanceLogger';
-import { useStore } from '../../store/useStore';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
@@ -22,9 +21,17 @@ export interface RecordingConfig {
   currentTime: number;
   headLength: number; // Rolling buffer head length
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start
-  bufferSafetyMs: number; // Extra ms wait to ensure rolling buffer is populated
+  bufferSafetyMs: number; // Extra ms wait to ensure buffer is populated
   audioContextRef: React.RefObject<AudioContext | null>;
   // AudioWorklet is mandatory - no useAudioWorklet option
+  calibratedLatencyMap: Record<string, number>; // deviceKey → calibrated HW compensation
+}
+
+export function defaultHWCompMs(outputLatencyMs: number): number {
+  // Firefox doesn't report outputLatency; fall back to a fixed estimate.
+  // Chrome reports the real PipelineWire/ALSA buffer delay after audio flows.
+  // The heuristic ~1.25x covers additional host audio pipeline buffering.
+  return outputLatencyMs === 0 ? 60 : Math.round(outputLatencyMs * 1.25);
 }
 
 export interface RecordingCallbacks {
@@ -257,6 +264,11 @@ export class RecordingEngine {
         if (data.type === 'RECORDING_STARTED') {
           this.audioWorkletStartTime = data.startTime;
         } else if (data.type === 'RECORDING_STOPPED') {
+          // Session ID check — discard stale messages from previous recordings
+          if (data.sessionId !== undefined && data.sessionId !== this.recordingSessionId) {
+            console.log('RECORDING_STOPPED: stale session', data.sessionId, '!== current', this.recordingSessionId, '— discarded');
+            return;
+          }
           // If recording was cancelled, discard the data
           if (this.recordingCancelled) {
             this.recordingCancelled = false;
@@ -293,7 +305,7 @@ export class RecordingEngine {
   }
 
   // Handle AudioWorklet recording stop (shared clock with playback)
-  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number, rollingOffset?: number): Promise<void> {
+  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number, _rollingOffset?: number): Promise<void> {
     if (!audioData || audioData.length === 0) {
       console.warn('handleAudioWorkletStop: no data received');
       return;
@@ -327,12 +339,15 @@ export class RecordingEngine {
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
-    // HARDWARE COMPENSATION: unaccounted playback delay (~171ms) beyond
-    // browser-reported outputLatency + baseLatency.
-    // Remove or adjust if a proper fix is found.
-    const HW_COMP_MS = 171;
-    const storeState = useStore.getState();
-    const browserLatencyMs = (storeState.outputLatencyMs || 0) + (storeState.baseLatencyMs || 0);
+    // Read directly from AudioContext at stop time to avoid stale values
+    // (Chrome returns 0-8ms for outputLatency before audio flows, then updates to ~46ms)
+    const outputLatencyMs = Math.round((audioContext.outputLatency || 0) * 1000);
+    const baseLatencyMs = Math.round((audioContext.baseLatency || 0) * 1000);
+    // HW compensation: use per-device calibrated value if available, else heuristic
+    const deviceKey = `${Math.round(outputLatencyMs / 5) * 5}`;
+    const calibratedHW = this.config.calibratedLatencyMap?.[deviceKey];
+    const HW_COMP_MS = calibratedHW ?? defaultHWCompMs(outputLatencyMs);
+    const browserLatencyMs = outputLatencyMs + baseLatencyMs;
     const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 
@@ -358,6 +373,10 @@ export class RecordingEngine {
       punchInUserTime_Real: anchoredFrameTime,
       startPos,
       latencyCompMs,
+      outputLatencyMs,
+      baseLatencyMs,
+      extraLatencyMs: this.config.extraLatencyMs,
+      HW_COMP_MS,
       headLength: this.headLength,
       clockDomainDeltaSec: clockDomainDelta,
       clockDomainDeltaBeats: beatDelta,
@@ -380,7 +399,8 @@ export class RecordingEngine {
       anchoredFrame: anchoredFrame,
       originalAnchoredFrame: anchoredFrame,
       duration: audioBuffer.duration,
-      createdAt: Date.now()
+      createdAt: Date.now(),
+      punchInUserTime: this.punchInUserTime,
     });
 
     perfLogger.log(25, this.recordingSessionId, 0);
@@ -486,6 +506,7 @@ this.recordingCancelled = false;
         type: 'START_RECORDING',
         headLength: this.headLength,
         frameOffset,
+        sessionId: currentSessionId,
       });
 
       // Sync metronome start to the same AudioContext timebase as the recording

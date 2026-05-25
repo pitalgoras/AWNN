@@ -104,8 +104,8 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
   private frameRequest: number | null = null
   private subscriptions: Array<() => void> = []
   private audioContext: AudioContext
-  private startAudioTime = 0
-  private startMultitrackTime = 0
+  public startAudioTime = 0
+  public startMultitrackTime = 0
   public onDebug?: (log: string) => void
 
   static create(tracks: MultitrackTracks, options: MultitrackOptions): MultiTrack {
@@ -424,7 +424,7 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
   }
 
   private updatePosition(time: number, autoCenter = false, isInternal = false) {
-    const precisionSeconds = 0.05
+    const precisionSeconds = 0.3
     const isPaused = !this.isPlaying()
 
     this.currentTime = time
@@ -459,23 +459,9 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
         } else if (newTime > duration && audio.currentTime !== duration) {
           audio.currentTime = duration
         }
-      } else {
-        // If the position is in the track bounds, play it
-        if (!isPaused && audio.paused) {
-          const webaudio = audio as WebAudioPlayer
-          if (typeof webaudio.playAt === 'function' && this.audioContext) {
-            audio.currentTime = Math.max(0, newTime)
-            // If we are already playing, we should start immediately or at the scheduled time
-            const startTime = newTime < 0 ? this.audioContext.currentTime - newTime : this.audioContext.currentTime
-            webaudio.playAt(startTime)
-          } else if (newTime >= 0) {
-            audio.currentTime = Math.max(0, newTime)
-            audio.play()
-          }
-        } else if (newTime >= 0 && Math.abs(audio.currentTime - newTime) > precisionSeconds) {
-          // Only sync if the drift is significant to avoid glitches
-          audio.currentTime = Math.max(0, newTime)
-        }
+      } else if (newTime >= 0 && Math.abs(audio.currentTime - newTime) > precisionSeconds) {
+        // Only sync if the drift is significant to avoid glitches
+        audio.currentTime = Math.max(0, newTime)
       }
 
       // Unmute if cue is reached
@@ -502,26 +488,6 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
       this.updatePosition(this.currentTime)
       this.emit('start-position-change', { id: track.id, startPosition: newStartPosition })
     }
-  }
-
-  private findCurrentTracks(): number[] {
-    // Find the audios at the current time
-    const indexes: number[] = []
-
-    this.tracks.forEach((track, index) => {
-      const duration = this.durations[index]
-      if (duration === undefined) return
-
-      if (
-        (track.url || track.options?.media) &&
-        this.currentTime >= track.startPosition &&
-        this.currentTime < track.startPosition + duration
-      ) {
-        indexes.push(index)
-      }
-    })
-
-    return indexes
   }
 
   private _isPlaying = false;
@@ -558,17 +524,25 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
 
     // Schedule all tracks to start slightly in the future to ensure perfect sync
     const startAt = startTime || (this.audioContext ? this.audioContext.currentTime + 0.1 : 0);
+    const playheadTime = this.currentTime;
 
     this.startSync(startAt)
 
-    const indexes = this.findCurrentTracks()
-
-    indexes.forEach((index) => {
+    // Pre-schedule EVERY track at play start so no track depends on rAF timing for its first schedule.
+    // Tracks already in-bounds start immediately; tracks entering later are scheduled at the future time.
+    // This eliminates play-to-play flam caused by rAF jitter in updatePosition().
+    this.tracks.forEach((track, index) => {
       const audio = this.audios[index] as WebAudioPlayer;
-      if (audio && typeof audio.playAt === 'function') {
-        audio.playAt(startAt)
-      } else if (audio) {
-        audio.play()
+      if (!audio || typeof audio.playAt !== 'function') return;
+      const relStart = track.startPosition - playheadTime;
+      if (relStart <= 0) {
+        // Track is already in-bounds — play from current offset
+        audio.currentTime = Math.max(0, playheadTime - track.startPosition);
+        audio.playAt(startAt);
+      } else {
+        // Track starts later — schedule it at the correct future time
+        audio.currentTime = 0;
+        audio.playAt(startAt + relStart);
       }
     })
   }
@@ -651,12 +625,15 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
   public addTrack(track: TrackOptions) {
     perfLogger.log(16, track.trackId || track.id);
     let index = this.tracks.findIndex((t) => t.id === track.id)
+
+    // First phrase on a previously empty track: replace the silent placeholder
+    // (the placeholder has id === trackId, set in the init effect)
     if (index === -1 && track.trackId) {
-      index = this.tracks.findIndex((t) => t.trackId === track.trackId)
+      index = this.tracks.findIndex(t => t.id === track.trackId)
     }
 
     if (index !== -1) {
-      // Replace existing track
+      // Replace existing track (same phrase id or replacing empty-track placeholder)
       this.tracks[index] = track
 
       this.initAudio(track).then((audio) => {
@@ -681,35 +658,43 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
         })
       })
     } else {
-      // ADD new entry (called from onAddPhrase for a fresh recording)
-      const newIndex = this.tracks.length;
-      this.tracks.push(track);
+      // ADD new entry — insert before the global placeholder to maintain index alignment
+      const placeholderIdx = this.tracks.findIndex(t => t.id === PLACEHOLDER_TRACK.id)
+      const insertIdx = placeholderIdx !== -1 ? placeholderIdx : this.tracks.length
+
+      this.tracks.splice(insertIdx, 0, track)
 
       this.initAudio(track).then((audio) => {
-        this.audios.push(audio);
-        this.durations.push(audio.duration);
-        this.initDurations(this.durations);
+        this.audios.splice(insertIdx, 0, audio)
+        this.durations.splice(insertIdx, 0, audio.duration)
+        this.initDurations(this.durations)
 
-        // Create and append DOM container for the new track
-        const wrapper = this.rendering.containers[0].parentElement!;
-        const container = document.createElement('div');
-        container.style.position = 'relative';
-        wrapper.appendChild(container);
-        this.rendering.containers.push(container);
+        const wrapper = this.rendering.containers[0].parentElement!
+        const container = document.createElement('div')
+        container.style.position = 'relative'
 
-        this.wavesurfers.push(this.initWavesurfer(track, newIndex));
+        // Insert DOM container at the correct position (before the placeholder container)
+        const refContainer = placeholderIdx !== -1 ? this.rendering.containers[placeholderIdx] : null
+        if (refContainer) {
+          wrapper.insertBefore(container, refContainer)
+        } else {
+          wrapper.appendChild(container)
+        }
+        this.rendering.containers.splice(insertIdx, 0, container)
+
+        this.wavesurfers.splice(insertIdx, 0, this.initWavesurfer(track, insertIdx))
 
         const unsubscribe = initDragging(
           container,
-          (delta: number) => this.onDrag(newIndex, delta),
+          (delta: number) => this.onDrag(insertIdx, delta),
           this.options.rightButtonDrag,
-        );
-        this.wavesurfers[newIndex].once('destroy', unsubscribe);
+        )
+        this.wavesurfers[insertIdx].once('destroy', unsubscribe)
 
-        this.wavesurfers[newIndex].once('ready', () => {
-          this.emit('canplay');
-        });
-      });
+        this.wavesurfers[insertIdx].once('ready', () => {
+          this.emit('canplay')
+        })
+      })
     }
   }
 
@@ -751,7 +736,10 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     if (!track || duration === undefined) return
 
     const newStartPosition = value
-    if (track.startPosition === newStartPosition) return
+    // Tolerance: positions from different render closures or load-dependent timing
+    // can differ by up to ~10ms (pipewire/ALSA jitter). Use a 15ms window to
+    // suppress spurious start-position-change storms during recording.
+    if (Math.abs(track.startPosition - newStartPosition) < 0.015) return
 
     const minStart = this.options.dragBounds ? 0 : -duration - 1
     const maxStart = this.maxDuration - duration

@@ -101,6 +101,7 @@ interface AppState {
   sampleRate: number; // AudioContext sample rate for anchor calculations
   outputLatencyMs: number; // AudioContext.outputLatency * 1000 (browser-reported output delay)
   baseLatencyMs: number; // AudioContext.baseLatency * 1000 (render quantum buffer delay)
+  calibratedLatency: Record<string, number>; // deviceKey → calibrated HW compensation (replaces heuristic)
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
   minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
@@ -167,6 +168,8 @@ interface AppState {
   setSampleRate: (rate: number) => void;
   setAudioContextLatency: (outputLatencyMs: number, baseLatencyMs: number) => void;
   refreshAudioLatency: () => void;
+  setCalibratedLatency: (key: string, value: number) => void;
+  removeCalibratedLatency: (key: string) => void;
   setToolbarProposal: (proposal: 1 | 2 | 3) => void;
   setToolbarVisibleLabels: (visible: boolean) => void;
   reorderTracks: (startIndex: number, endIndex: number) => void;
@@ -230,6 +233,7 @@ const defaultSettings = {
   sampleRate: 44100, // Default; updated when AudioContext is created
   outputLatencyMs: 0,
   baseLatencyMs: 0,
+  calibratedLatency: {},
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
   mediumBtnSize: 44,
@@ -323,6 +327,12 @@ export const useStore = create<AppState>()(
             });
           }
         },
+        setCalibratedLatency: (key, value) => set((state) => {
+          state.calibratedLatency[key] = value;
+        }),
+        removeCalibratedLatency: (key) => set((state) => {
+          delete state.calibratedLatency[key];
+        }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
         setIsReady: (isReady) => set({ isReady }),
@@ -381,7 +391,12 @@ export const useStore = create<AppState>()(
           if (!phrase) return;
           
           const oldPosition = phrase.startPosition;
-          const newPosition = Math.max(0, position);
+          // Don't clamp recorded pre-roll clips (originalAnchoredFrame != 0) to 0.
+          // They legitimately start in pre-roll. Clamping would destroy the offset
+          // and cause cumulative ~0.73s shifts on every subsequent recording.
+          const newPosition = (position < 0 && phrase.originalAnchoredFrame !== undefined && phrase.originalAnchoredFrame !== 0)
+            ? position
+            : Math.max(0, position);
           const delta = newPosition - oldPosition;
           
           if (Math.abs(delta) < 0.0001) return;

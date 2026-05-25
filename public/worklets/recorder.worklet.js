@@ -36,6 +36,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._headLength = 1.0; // Overwritten by START_RECORDING message
 
     this._rollingBuffer = []; // Single buffer: head + recording
+    this._sessionId = 0;
 
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
@@ -47,6 +48,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStop = false;
         const frameOffset = event.data.frameOffset || 0;
+        this._sessionId = event.data.sessionId || 0;
         this._anchoredFrame = currentFrame + frameOffset;
         this._isRecording = true;
         this._recordingStartFrame = this._anchoredFrame;
@@ -60,6 +62,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           startTime: this._recordingStartFrame / sampleRate,
           anchoredFrame: this._anchoredFrame,
           currentTime: currentTime,
+          sessionId: this._sessionId,
           msg: 'Recording: anchorFrame=' + this._anchoredFrame + ', recordingStartFrame=' + this._recordingStartFrame,
         });
       }
@@ -80,6 +83,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           audioData: flushed[0],
           anchoredFrame: flushed[1],
           rollingOffset: flushed[2],
+          sessionId: this._sessionId,
         });
       }
     }

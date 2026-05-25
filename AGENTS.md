@@ -30,39 +30,35 @@
 - Always check `git status` first - if a file shows as modified (not staged), warn the user and ask before overwriting
 - Exception: Only proceed without asking if user explicitly says "overwrite" or "discard changes"
 
-## Session Context: Latency Calibration
-
-### Goal
-Adaptive level probing + round-trip latency calibration working reliably on Firefox+Linux+Bluetooth audio setups.
-
-### Done
-- **Continuous looping probe replaces staircase + burst test**: Worklet plays `[NOISE@0.95] [SILENCE] [NOISE@0.7] ...` in an infinite loop with per-cycle RMS/peak stats sent live to main thread. Auto-stops when levels are stable across 2 cycles. Single STOP gives full recording for cross-correlation (latency + amplitude in one pass).
-- **ProbeMonitor UI**: Live per-cycle table showing SNR(dB) per level, optimal amplitude estimate, per-level RMS/peak/SNR expandable details. Non-stop debug toggle for exploration.
-- **Constraint syntax**: Uses `getSupportedConstraints()` + `advanced` array + `applyConstraints()` on live track, logs `getSettings()` and `getCapabilities()` — **no DiagnosticProbe needed**, just ask the browser
-- **Cache-busting**: Worklet URL includes `?ck=${Date.now()}`
-- **Lowered correlation thresholds**: 0.15→0.04
-
-### Key Decisions
-- **No DiagnosticProbe/DiagnosticModal** — `getSettings()` and `getCapabilities()` tell us what processing the browser is actually applying; no need to play probes to detect it
-- **advanced constraint array** gives higher priority than plain booleans in Firefox's constraint resolver
-- **applyConstraints() on live track** — sometimes Firefox respects constraints better when re-applied after capture
-- **Looping probe eliminates wake gap** — the continuous pattern keeps the Bluetooth speaker triggered without needing a separate wake burst or settling gap
-- **Probe IS the test** — level detection and latency measurement happen in the same probe, no separate START phase
-
-### Current Code
-- `public/worklets/calibration.worklet.js`: LOOPING state, PROBE_LOOP_START/PROBE_STOP, per-cycle RMS/peak stats, 30s recording buffer
-- `src/lib/audio/LatencyCalibrator.ts`: Loop probe params, auto-stop logic, cross-correlation analysis, onProbeReading callback
-- `src/components/modals/ProbeMonitor.tsx`: Live cycle data table with SNR, optimal amplitude, per-level details
-- `src/components/modals/LatencyCalibrationModal.tsx`: Non-stop toggle, probe monitor display, stop button
-
-### Known Firefox Behavior
-- `echoCancellation: false` respected reliably on macOS/Android; on Linux depends on PipeWire/PulseAudio config
-- Constraints are best-effort — OS audio routing (PipeWire ALSA, PulseAudio) may inject DSP regardless
-- `getSettings()` returns actual applied values; `getCapabilities()` shows what the source supports
-
 ## General Guidelines
 
 - Stick strictly to approved plans - do not add extra actions
 - When in doubt about a file's purpose, ask the user before deleting
 - Report untracked files found during analysis, but do not delete them
 - **Ask questions one at a time** — never bundle multiple questions in a single message
+
+## Session Summary (last session May 2026)
+
+### What was investigated
+Metronome stutter and flam variation between recorded and live metronome during playback.
+
+### What was fixed (applied)
+1. **Playback metronome timebase** — changed from `ctx.currentTime + startupSec` to `startAudioTime + outputLatency`, anchoring to the multitrack's captured start time instead of an independent React effect clock read. Eliminated play-to-play jitter.
+2. **Metronome useEffect deps** — removed `currentTime` from deps (formerly added accidentally, caused 100ms re-sync loop stutter).
+3. **Seek path metronome re-sync** — changed from independent `ctx.currentTime` read to `startAudioTime + outputLatency + delta`, same formula as initial sync. Also updates `startAudioTime`/`startMultitrackTime` after seek.
+4. **Drift threshold** — `precisionSeconds` 0.05 → 0.3 in `multitrack.ts:427` to avoid pause+play resync on rAF lag from scrolling.
+5. **Lint cleanup** — removed unused imports/destructures in `useAudioEngine.ts`, `LatencyCalibrationModal.tsx`, `RecordingEngine.ts`.
+6. **Made MultiTrack.startAudioTime/startMultitrackTime public** — so metronome effect can read them.
+7. **Added RECORDING_DELTA log breakdown** — now logs `outputLatencyMs`, `baseLatencyMs`, `extraLatencyMs`, `HW_COMP_MS` individually.
+
+### What remains (NOT applied)
+**Stale `outputLatencyMs` on first recording** — Chrome reports 0-8ms at AudioContext creation, 46ms after audio flows. Store captures stale value. Fix: read `outputLatency`/`baseLatency` directly from AudioContext in `handleAudioWorkletStop()`.
+
+See `docs/devhistory.md` sections M-P for full details on all findings and the remaining fix plan.
+
+### Files modified in this session
+- `src/hooks/useAudioEngine.ts` — metronome timebase, seek path, lint cleanup, deps fix
+- `src/lib/multitrack/multitrack.ts` — precisionSeconds, public startAudioTime/startMultitrackTime
+- `src/audio/recording/RecordingEngine.ts` — _rollingOffset, RECORDING_DELTA log
+- `src/components/modals/LatencyCalibrationModal.tsx` — removed unused Zap import
+- `docs/devhistory.md` — sections M-P added

@@ -515,19 +515,20 @@ export default function App() {
     setIsPlaying(false);
     if (isRecording) {
       stopRecording();
+    } else {
+      seekTo(0);
     }
-    seekTo(0);
   };
 
   const handleRecord = async (trackId: string) => {
     if (isRecording) {
       perfLogger.log(8);
-      stopRecording();
-      // Pause playback when stopping recording via toolbar button
+      // Pause playback first so seek in stopRecording() doesn't corrupt metronome base times
       setIsPlaying(false);
       if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
         multitrackRef.current.pause();
       }
+      stopRecording();
       return;
     }
     

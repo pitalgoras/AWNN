@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
-import { Zap, Play, RotateCcw, Info } from 'lucide-react';
+import { Play, RotateCcw, Info, Check, Trash2 } from 'lucide-react';
 import { LatencyCalibrator, LatencyCalibrationResult, ProbeCycleData } from '../../lib/audio/LatencyCalibrator';
+import { defaultHWCompMs } from '../../audio/recording/RecordingEngine';
 import { ModalShell } from './ModalShell';
 import { ProbeMonitor } from './ProbeMonitor';
 
@@ -18,6 +19,9 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   const setExtraLatencyMs = useStore(s => s.setExtraLatencyMs);
   const outputLatencyMs = useStore(s => s.outputLatencyMs);
   const baseLatencyMs = useStore(s => s.baseLatencyMs);
+  const calibratedLatency = useStore(s => s.calibratedLatency);
+  const setCalibratedLatency = useStore(s => s.setCalibratedLatency);
+  const removeCalibratedLatency = useStore(s => s.removeCalibratedLatency);
   const refreshAudioLatency = useStore(s => s.refreshAudioLatency);
 
   const [isCalibrating, setIsCalibrating] = useState(false);
@@ -31,6 +35,23 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   const [probeActive, setProbeActive] = useState(false);
 
   const calibratorRef = useRef<LatencyCalibrator | null>(null);
+
+  // Device-aware calibration state
+  const deviceKey = `${Math.round(outputLatencyMs / 5) * 5}`;
+  const heuristicHW = useMemo(() => defaultHWCompMs(outputLatencyMs), [outputLatencyMs]);
+  const storedCalibration = calibratedLatency[deviceKey];
+  const hasCalibration = storedCalibration !== undefined;
+  const effectiveHW = storedCalibration ?? heuristicHW;
+
+  const commitCalibration = () => {
+    const newHW = heuristicHW + extraLatencyMs;
+    setCalibratedLatency(deviceKey, newHW);
+    setExtraLatencyMs(0);
+  };
+
+  const resetCalibration = () => {
+    removeCalibratedLatency(deviceKey);
+  };
 
   const stopProbe = () => {
     if (calibratorRef.current) {
@@ -277,8 +298,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
             </div>
             
             <p className="text-[10px] text-zinc-500 mb-4 leading-snug">
-              Offset all new recordings.
-              {extraLatencyMs > 0 ? " EARLIER." : extraLatencyMs < 0 ? " LATER." : ""}
+              Fine-tune recording alignment. Adjust until recordings land on-grid, then commit.
             </p>
 
             <div className="space-y-3">
@@ -316,6 +336,44 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
                 >
                   <RotateCcw className="w-3 h-3" />
                 </button>
+              </div>
+
+              {/* Calibration status & commit */}
+              <div className="flex flex-col gap-2 pt-2 border-t border-zinc-800">
+                <div className="flex items-center justify-between text-[9px]">
+                  <span className="text-zinc-500">Device key: <span className="font-mono text-zinc-400">{deviceKey}ms</span></span>
+                  <span className="text-zinc-500">
+                    Heuristic: <span className="font-mono text-zinc-400">{heuristicHW}ms</span>
+                    {hasCalibration && (
+                      <span className="ml-2 text-emerald-400">
+                        · Calibrated: <span className="font-mono">{storedCalibration}ms</span>
+                      </span>
+                    )}
+                  </span>
+                </div>
+
+                <div className="flex gap-1.5">
+                  {hasCalibration ? (
+                    <>
+                      <span className="flex-1 flex items-center gap-1.5 px-2 py-1.5 bg-emerald-500/10 text-emerald-400 rounded text-[10px] font-bold border border-emerald-500/20">
+                        <Check className="w-3 h-3" />
+                        Calibrated for this device
+                      </span>
+                      <button onClick={resetCalibration}
+                        className="px-2 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 rounded text-[10px] font-bold"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={commitCalibration}
+                      className="flex-1 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded text-[10px] transition-all flex items-center justify-center gap-1"
+                    >
+                      <Check className="w-3 h-3" />
+                      Commit as baseline
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           </div>

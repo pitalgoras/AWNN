@@ -762,4 +762,66 @@ AudioContext → setAudioContextLatency → store
 - `src/audio/recording/RecordingEngine.ts` — `frameOffset` sent in START_RECORDING; `useStore.getState()` for latency at stop time; `HW_COMP_MS` 730→230→171
 - `src/hooks/useAudioEngine.ts` — removed `devicechange` listener; removed separate latency effect; metronome `onStartMetronome` callback in startRecording
 - `src/store/useStore.ts` — `outputLatencyMs`/`baseLatencyMs` (existing, no change)
-- `docs/AUDIO_LOGIC_SPECS.md`, `docs/RECORDING_LOGIC.md`, `TODO.md`, `AGENTS.md` — documentation updates<｜end▁of▁thinking｜>
+- `docs/AUDIO_LOGIC_SPECS.md`, `docs/RECORDING_LOGIC.md`, `TODO.md`, `AGENTS.md` — documentation updates
+
+## M. Stale `outputLatencyMs` on First Recording
+
+### Problem
+The first recording in a session has `latencyCompMs ≈ 190` while all subsequent recordings show 228-231. This causes the first clip to be placed ~38ms later on the timeline than later clips.
+
+### Root Cause
+**`setAudioContextLatency` is called at AudioContext creation**, before any audio flows through the output device. Chrome's `AudioContext.outputLatency` getter returns ~0-8ms for a fresh context. Only after the first playback/recording does audio actually flow, and Chrome updates `outputLatency` to the real hardware value (~46ms).
+
+The store captures the stale 8ms. `handleAudioWorkletStop()` reads from the store — so the first recording uses 8ms instead of 46ms. After the first recording plays back, something updates the store (possibly `refreshAudioLatency()` or a side effect), making subsequent recordings correct.
+
+### Log evidence (localhost-1779411898391.log)
+```
+Recording 1: outputLatencyMs: 8,  latencyCompMs: 190  ← stale
+Recording 2: outputLatencyMs: 46, latencyCompMs: 228
+Recording 3: outputLatencyMs: 48, latencyCompMs: 230
+Recording 4: outputLatencyMs: 49, latencyCompMs: 231
+Recording 5: outputLatencyMs: 48, latencyCompMs: 230
+```
+
+### Planned fix
+Read `outputLatency`/`baseLatency` directly from the AudioContext in `handleAudioWorkletStop()`, bypassing the store:
+
+```ts
+const outputLatencyMs = Math.round((audioContext.outputLatency || 0) * 1000);
+const baseLatencyMs = Math.round((audioContext.baseLatency || 0) * 1000);
+const browserLatencyMs = outputLatencyMs + baseLatencyMs;
+const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
+```
+
+Also remove `const storeState = useStore.getState();` and `const browserLatencyMs = (storeState.outputLatencyMs || 0) + (storeState.baseLatencyMs || 0);`.
+
+**Rationale**: There is no React effect timing concern here — `handleAudioWorkletStop` is called from a direct message handler in the AudioWorklet callback, not from a React effect. Reading directly from the AudioContext is deterministic and always returns the latest value Chrome reports.
+
+## N. PrecisionSeconds Increase for rAF Drift
+
+### Problem
+Scrolling and main-thread load cause `[Violation] 'requestAnimationFrame' handler took <N>ms`. When accumulated drift exceeds `precisionSeconds` (0.05s), `updatePosition` triggers `audio.currentTime = newTime` which calls `pause()+play()` on the WebAudioPlayer — an audible discontinuity.
+
+### Fix
+`precisionSeconds` increased from `0.05` to `0.3` in `multitrack.ts:427`.
+
+**Why 300ms is safe**: `bufferNode.start(when, offset)` schedules at absolute AudioContext time — the track's playback position tracks the audio clock, not the rAF loop. The only legitimate need for drift correction is manual seeks or sustained overload, both of which produce >300ms errors.
+
+## O. Seek Path Metronome Timebase Inconsistency
+
+### Problem
+The seek path metronome re-sync (inside `seekTo()`) used `ctx.currentTime + outputLatency + (nextBeatProjectTime - finalUserTime)` — an independent `ctx.currentTime` read, **same pattern as the original playback jitter bug**. It also didn't update the multitrack's `startAudioTime`/`startMultitrackTime` base times after seek.
+
+### Fix (applied)
+Two changes in `useAudioEngine.ts` `seekTo()`:
+1. After seek during playback: update `multitrackRef.current.startAudioTime = ctx.currentTime` and `multitrackRef.current.startMultitrackTime = realTime`
+2. Metronome re-sync uses `startAudioTime + outputLatency + (nextBeatRealTime - startMultitrackTime)` — same formula as the initial play sync.
+
+The metronome now uses a consistent timebase across initial play start and seek re-sync.
+
+## P. Remaining: OutputLatency Read at Recording Stop
+
+### Status
+**Not yet applied** — saved for next session.
+
+See section M for the detailed plan. The change is in `RecordingEngine.ts:handleAudioWorkletStop()` — replace store read with direct AudioContext read of `outputLatency`/`baseLatency`.<｜end▁of▁thinking｜>

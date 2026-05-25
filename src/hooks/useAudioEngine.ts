@@ -1,10 +1,8 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import MultiTrack, { type TrackOptions } from '../lib/multitrack/multitrack';
-import WebAudioPlayer from '../lib/multitrack/webaudio';
 import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
-import { calculatePeaksAsync } from '../audio/processing/audioUtils';
 import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
 import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
 import { perfLogger } from '../utils/PerformanceLogger';
@@ -60,7 +58,6 @@ const {
   tracks, 
   zoom, 
   isPlaying,
-  isRecording,
   selectedTrackId,
   selectedPhraseId,
   envelopeLocked,
@@ -72,7 +69,7 @@ const {
   outputLatencyMs,
   baseLatencyMs,
   extraLatencyMs,
-  duration,
+  calibratedLatency,
   setIsPlaying,
   setIsRecording,
   setCurrentTime,
@@ -83,7 +80,6 @@ const {
   trackHeight,
   metronomeHeight,
   metronomeEnabled,
-  metronomeTrackVisible,
   headLength,
   startupDelayMs,
   bufferSafetyMs,
@@ -115,6 +111,7 @@ const {
         outputLatencyMs: outputLatencyMs || 0,
         baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
+        calibratedLatencyMap: calibratedLatency || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -165,7 +162,10 @@ const {
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
+        outputLatencyMs: outputLatencyMs || 0,
+        baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
+        calibratedLatencyMap: calibratedLatency || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -205,9 +205,27 @@ const {
     }
   }, [isPlaying]);
 
-  // Stop playback when metronome master is disabled
+  // Listen for device changes (headphone plug/unplug) and refresh latency + calibration
   useEffect(() => {
-    if (!metronomeEnabled && isPlaying) {
+    const refresh = () => {
+      useStore.getState().refreshAudioLatency();
+      if (recordingEngineRef.current) {
+        const state = useStore.getState();
+        recordingEngineRef.current.updateConfig({
+          outputLatencyMs: state.outputLatencyMs || 0,
+          baseLatencyMs: state.baseLatencyMs || 0,
+          calibratedLatencyMap: state.calibratedLatency || {},
+        });
+      }
+    };
+
+    navigator.mediaDevices?.addEventListener('devicechange', refresh);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', refresh);
+  }, []);
+
+  // Stop playback when metronome master is disabled (but not during recording)
+  useEffect(() => {
+    if (!metronomeEnabled && isPlaying && !useStore.getState().isRecording) {
       setIsPlaying(false);
       if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
         multitrackRef.current.pause();
@@ -218,6 +236,21 @@ const {
   const lastZoomRef = useRef<number>(zoom);
   const lastVolumesRef = useRef<Map<number, number>>(new Map());
   const lastTimeUpdateRef = useRef<number>(0);
+
+  // Stable key that changes only when layout-relevant properties change.
+  // Excludes the full tracks array — whose reference changes on every store
+  // update (even just currentTime), causing adjustLayout to re-apply CSS
+  // on every rAF frame during playback and producing sub-pixel visual shifts.
+  const phraseIdsHash = useMemo(() => {
+    return (tracks || []).map(t => t.phrases.map(p => p.id).join(',')).join('|');
+  }, [tracks]);
+
+  // Stable key that changes only when layout-relevant properties change.
+  // Includes phraseIdsHash so adjustLayout re-runs on phrase add/remove.
+  const layoutKey = useMemo(() =>
+    `${tracks.filter(t => t.id !== 'metronome').length}:${selectedTrackId}:${envelopeLocked}:${trackHeight}:${metronomeHeight}:${phraseIdsHash}`,
+    [tracks, selectedTrackId, envelopeLocked, trackHeight, metronomeHeight, phraseIdsHash]
+  );
 
   const adjustLayout = useCallback(() => {
     if (!containerRef.current || !multitrackRef.current) return;
@@ -315,16 +348,23 @@ const {
     if (containerRef.current) {
       containerRef.current.style.opacity = '1';
     }
-  }, [selectedTrackId, envelopeLocked, tracks, setIsReady, trackHeight, metronomeHeight]);
+  // deps: layoutKey (stable string) instead of raw tracks array.
+  // tracks ref changes on every store update during playback; including it
+  // here would recreate adjustLayout on every render, defeating useCallback.
+  }, [layoutKey, setIsReady]);
+
+  const adjustLayoutRef = useRef(adjustLayout);
 
   const trackStructureHash = useMemo(() => {
-    // Only hash the structural elements that require a full engine rebuild
-    // BPM and timeSignature are handled by AudioWorklet + multitrack.setOptions
-    // Metronome is excluded from multitrack
     return (tracks || []).filter(t => t.id !== 'metronome').map(t =>
       `${t.id}:${(t.phrases || []).map(p => `${p.id}:${p.url}`).join('|')}`
     ).join(',');
   }, [tracks]);
+
+// Clear volume cache when track structure changes (itemIndex mapping shifts)
+  useEffect(() => {
+    lastVolumesRef.current.clear();
+  }, [trackStructureHash]);
 
 // Initialize Multitrack
   useEffect(() => {
@@ -476,7 +516,7 @@ const {
             multitrack.setTime(realTime);
           }
 
-          adjustLayout();
+          adjustLayoutRef.current();
 
           let maxDuration = 0;
           const wssList = multitrack.wavesurfers || [];
@@ -649,7 +689,7 @@ const {
             const targetVolume = trackBaseVolume * envVal;
 
             const wsList = multitrackRef.current.wavesurfers || [];
-            const count = track.phrases.length === 0 ? 1 : track.phrases.length;
+            const count = track.phrases.length === 0 ? 0 : track.phrases.length;
             
             for (let j = 0; j < count; j++) {
               const ws = wsList[itemIndex];
@@ -718,6 +758,7 @@ const {
     const currentMetronomeHeight = metronomeHeight;
     
     const wssList = multitrackRef.current.wavesurfers || [];
+    const multitrackItems = (multitrackRef.current as { tracks: TrackOptions[] }).tracks || [];
     let itemIndex = 0;
     
     (tracks || []).forEach(track => {
@@ -728,10 +769,9 @@ const {
       
       const count = track.phrases.length === 0 ? 1 : track.phrases.length;
       for (let j = 0; j < count; j++) {
-        // Skip placeholder track in wssList
-        while (itemIndex < wssList.length) {
-          const wsId = (wssList[itemIndex] as any).options?.id || (wssList[itemIndex] as any).options?.trackId;
-          if (wsId !== 'placeholder') break;
+        // Skip the global placeholder in multitrack items (id === 'placeholder')
+        while (itemIndex < wssList.length && itemIndex < multitrackItems.length) {
+          if (multitrackItems[itemIndex].id !== 'placeholder') break;
           itemIndex++;
         }
         
@@ -747,7 +787,12 @@ const {
     });
     
     adjustLayout();
-  }, [selectedTrackId, envelopeLocked, isReady, tracks, adjustLayout, trackHeight, metronomeHeight]);
+  }, [isReady, layoutKey, phraseIdsHash]);
+
+  // Keep adjustLayoutRef in sync with latest adjustLayout
+  useEffect(() => {
+    adjustLayoutRef.current = adjustLayout;
+  }, [adjustLayout]);
 
   // Sync moveLocked dynamically without recreating the engine
   useEffect(() => {
@@ -781,18 +826,14 @@ const {
     const wssList = multitrackRef.current.wavesurfers || [];
     const multitrackItems = (multitrackRef.current as { tracks: TrackOptions[] }).tracks || [];
     
-    wssList.forEach((ws: WaveSurfer) => {
-      // Get trackId from wavesurfer options
-      const wsTrackId = (ws as any).options?.trackId || (ws as any).options?.id;
+    wssList.forEach((ws: WaveSurfer, index: number) => {
+      // Match by array index (multitrackItems and wssList are parallel arrays)
+      const item = multitrackItems[index];
       
       // Skip placeholder track
-      if (wsTrackId === 'placeholder' || wsTrackId === 'metronome') return;
+      if (!item || item.id === 'placeholder' || item.trackId === 'metronome') return;
       
-      // Find matching item in multitrackItems by trackId
-      const item = multitrackItems.find(item => item.trackId === wsTrackId);
-      if (!item) return;
-      
-      if (item && !String(item.id).startsWith('empty_')) {
+      if (!String(item.id).startsWith('empty_')) {
         const track = (tracks || []).find(t => t.id === item.trackId);
         const phrase = track?.phrases.find(p => p.id === item.id);
         
@@ -865,7 +906,7 @@ const {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPhraseId, trackStructureHash, isReady]);
+  }, [selectedPhraseId, phraseIdsHash, isReady]);
 
   // Sync track start positions dynamically without destroying the engine
   const startPositionsHash = useMemo(() => {
@@ -877,6 +918,7 @@ const {
     let itemIndex = 0;
     
     (tracks || []).forEach(track => {
+      if (track.id === 'metronome') return;
       if (track.phrases.length === 0) {
         itemIndex++;
       } else {
@@ -909,7 +951,7 @@ const {
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [startPositionsHash, trackStructureHash, isReady]);
+  }, [startPositionsHash, isReady]);
 
   // Sync zoom to multitrack (throttled)
   useEffect(() => {
@@ -1025,7 +1067,6 @@ const {
       const ctx = audioContextRef.current;
       if (!ctx) return;
       const sr = ctx.sampleRate;
-      const startupSec = (startupDelayMs || 150) / 1000;
       const bpmVal = debouncedBpm || 120;
       const sigVal = debouncedTimeSignature || [4, 4];
       const beatDuration = 60 / bpmVal;
@@ -1039,9 +1080,14 @@ const {
       const nextBeatRealTime = Math.ceil(realTime / beatDuration) * beatDuration;
       const nextBeatProjectTime = nextBeatRealTime - secondsPerBar;
 
-      // Convert to AudioContext clock frame
-      const ctxTime = ctx.currentTime;
-      const nextBeatCtxTime = ctxTime + startupSec + (nextBeatProjectTime - startTime);
+      // Derive AudioContext clock frame from multitrack's startAudioTime + startMultitrackTime
+      // This guarantees metronome and audio tracks share the same timebase — no React effect race.
+      const mt = multitrackRef.current;
+      const startAudioTime = mt?.startAudioTime;
+      const startMultitrackTime = mt?.startMultitrackTime;
+      if (startAudioTime === undefined || startMultitrackTime === undefined) return;
+      const outputLatency = (ctx as AudioContext & { outputLatency?: number }).outputLatency || 0;
+      const nextBeatCtxTime = startAudioTime + outputLatency + (nextBeatRealTime - startMultitrackTime);
       const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
 
       // Beat index on the grid (0 = downbeat of bar 1)
@@ -1062,6 +1108,7 @@ const {
     } else {
       metronomeEngineRef.current.updateConfig({ isPlaying: false });
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isPlaying, metronomeEnabled]);
 
   // Sync metronome volume from track state — re-render click samples with baked gain
@@ -1082,17 +1129,20 @@ const {
     }
 
     if (useStore.getState().isRecording) {
-      if (recordingEngineRef.current) {
-        if (isPreRollingRef.current) {
-          recordingEngineRef.current.cancelRecording();
-        } else {
-          recordingEngineRef.current.stopRecording();
-        }
-      }
-      // Pause playback when Play/Pause button pressed during recording
+      // Pause playback first so seek in stopRecording() doesn't corrupt metronome base times
       setIsPlaying(false);
       if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
         multitrackRef.current.pause();
+      }
+      if (recordingEngineRef.current) {
+        if (isPreRollingRef.current) {
+          recordingEngineRef.current.cancelRecording();
+          if (multitrackRef.current) {
+            multitrackRef.current.setRecordingMode(false);
+          }
+        } else {
+          stopRecording();
+        }
       }
     } else {
       const newPlayingState = !isPlaying;
@@ -1133,7 +1183,6 @@ const {
       if (typeof multitrackRef.current.setTime === 'function') {
         multitrackRef.current.setTime(realTime, true); 
       } else {
-        // Fallback for older versions
         const maxDuration = multitrackRef.current.maxDuration || 1;
         multitrackRef.current.seekTo(realTime / maxDuration);
       }
@@ -1141,41 +1190,44 @@ const {
       console.error('Seek error:', err);
     }
 
-    // Re-align metronome on seek during playback
-    if (metronomeEnabled && metronomeEngineRef.current) {
-      const isPlayingNow = useStore.getState().isPlaying;
-      if (isPlayingNow) {
-        const ctx = audioContextRef.current;
-        if (ctx) {
-          const sr = ctx.sampleRate;
-          const bpmVal = bpm || 120;
-          const sigVal = timeSignature || [4, 4];
-          const beatDuration = 60 / bpmVal;
-          const beatsPerBarVal = sigVal[0];
-
-          const seekRealTime = finalUserTime + secondsPerBar;
-          const nextBeatRealTime = Math.ceil(seekRealTime / beatDuration) * beatDuration;
-          const nextBeatProjectTime = nextBeatRealTime - secondsPerBar;
-
-          const nextBeatCtxTime = ctx.currentTime + (nextBeatProjectTime - finalUserTime);
-          const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
-
-          const totalBeats = Math.round(nextBeatRealTime / beatDuration);
-          const beatIndex = totalBeats % beatsPerBarVal;
-          const barIndex = Math.floor(totalBeats / beatsPerBarVal);
-
-          const bar0ProjectTime = barIndex * beatsPerBarVal * beatDuration;
-          const bar0CtxTime = nextBeatCtxTime - (nextBeatProjectTime - bar0ProjectTime);
-          const barStartFrame = Math.round(bar0CtxTime * sr);
-
-          const framesPerBeat = Math.round(sr * 60 / bpmVal);
-          const barTempo = [{ bpm: bpmVal, framesPerBeat }];
-
-          metronomeEngineRef.current.startAt(nextBeatFrame, beatIndex, beatsPerBarVal, barTempo, barStartFrame);
-        }
-      }
+    // Update multitrack sync base times after seek so metronome stays aligned
+    const ctx = audioContextRef.current;
+    const isPlayingNow = useStore.getState().isPlaying;
+    if (isPlayingNow && ctx) {
+      multitrackRef.current.startAudioTime = ctx.currentTime;
+      multitrackRef.current.startMultitrackTime = realTime;
     }
-  }, [bpm, timeSignature, setCurrentTime]);
+
+    // Re-align metronome on seek during playback using the same timebase as initial sync
+    if (metronomeEnabled && metronomeEngineRef.current && isPlayingNow && ctx) {
+      const sr = ctx.sampleRate;
+      const bpmVal = bpm || 120;
+      const sigVal = timeSignature || [4, 4];
+      const beatDuration = 60 / bpmVal;
+      const beatsPerBarVal = sigVal[0];
+
+      const seekRealTime = finalUserTime + secondsPerBar;
+      const nextBeatRealTime = Math.ceil(seekRealTime / beatDuration) * beatDuration;
+      const nextBeatProjectTime = nextBeatRealTime - secondsPerBar;
+
+      const outputLatency = (ctx as AudioContext & { outputLatency?: number }).outputLatency || 0;
+      const nextBeatCtxTime = multitrackRef.current.startAudioTime + outputLatency + (nextBeatRealTime - multitrackRef.current.startMultitrackTime);
+      const nextBeatFrame = Math.round(nextBeatCtxTime * sr);
+
+      const totalBeats = Math.round(nextBeatRealTime / beatDuration);
+      const beatIndex = totalBeats % beatsPerBarVal;
+      const barIndex = Math.floor(totalBeats / beatsPerBarVal);
+
+      const bar0ProjectTime = barIndex * beatsPerBarVal * beatDuration;
+      const bar0CtxTime = nextBeatCtxTime - (nextBeatProjectTime - bar0ProjectTime);
+      const barStartFrame = Math.round(bar0CtxTime * sr);
+
+      const framesPerBeat = Math.round(sr * 60 / bpmVal);
+      const barTempo = [{ bpm: bpmVal, framesPerBeat }];
+
+      metronomeEngineRef.current.startAt(nextBeatFrame, beatIndex, beatsPerBarVal, barTempo, barStartFrame);
+    }
+  }, [bpm, timeSignature, setCurrentTime, metronomeEnabled]);
 
   const startRecording = useCallback(async (trackId: string) => {
     if (!recordingEngineRef.current) {
@@ -1189,7 +1241,12 @@ const {
   const stopRecording = useCallback(() => {
     if (!recordingEngineRef.current) return;
     recordingEngineRef.current.stopRecording();
-  }, []);
+    if (multitrackRef.current) {
+      multitrackRef.current.setRecordingMode(false);
+    }
+    seekTo(recordingStartPositionRef.current);
+    recordingStartPositionRef.current = 0;
+  }, [seekTo]);
 
   const undoAndReRecord = useCallback(async () => {
     if (!lastRecordingRef.current) return;
