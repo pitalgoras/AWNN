@@ -18,5 +18,5 @@ export const formatBarBeat = (time: number, bpm: number, timeSignature: [number,
   const totalBeats = Math.floor(time / secondsPerBeat);
   const bar = Math.floor(totalBeats / beatsPerBar) + 1;
   const beat = (totalBeats % beatsPerBar) + 1;
-  return `${bar}.${beat}`;
+  return `Bar ${bar}    Beat ${beat}`;
 };

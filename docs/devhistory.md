@@ -856,4 +856,42 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 
 ### Files Modified
 - `src/App.tsx` — All toolbar layout logic, `toolbarBtn()` definition, portrait landscape/2-row branches
-- `src/components/TransportTimeDisplay.tsx` — Removed duration line<｜end▁of▁thinking｜>
+- `src/components/TransportTimeDisplay.tsx` — Removed duration line
+
+## R. Landscape Compact + Shared Render Functions + Elastic Columns (2026-05-29)
+
+### Changes Applied
+
+1. **Landscape layout restructured** — Made compact to fit iPhone SE landscape (667px):
+   - Menu: icon-only via `toolbarBtn`, no AWNN text, no `w-7 h-7` icon box
+   - AppMode: text-only, no icon, matching portrait style
+   - BPM/Sig: static readout (portrait style) replacing clickable metronome-settings button
+   - TransportTimeDisplay: removed entirely from landscape
+   - Settings icon: removed (accessible via Menu modal)
+   - Zoom slider: removed
+   - Pre-Roll: moved from left section to right section (alongside Move Lock, Env Lock, Cues, FS)
+   - Gaps tightened: `gap-2 sm:gap-4` → `gap-0.5 sm:gap-1.5` / `gap-1 sm:gap-3` → `gap-0.5 sm:gap-1`
+   - Header padding: `px-2 sm:px-4` → `px-1.5`
+
+2. **Shared render functions** — Extracted 11 render functions (`renderMenuBtn`, `renderAppModeBtn`, `renderBpmSig`, `renderMetronomeBtn`, `renderPreRollBtn`, `renderTransport`, `renderMoveLockBtn`, `renderEnvLockBtn`, `renderCuesBtn`, `renderFullscreenBtn`, `renderTimeDisplay`) defined once above `return` and used identically in all three layout branches (narrow portrait, wide portrait, landscape). Replaced ~370 lines of duplicated JSX with ~40 lines.
+
+3. **Wide portrait 2-row height freed** — Removed `min-h-32` constraint. Height is now determined naturally by content (~64–72px), saving 56px of screen space.
+
+4. **TimeDisplay in narrow portrait** — Pushed to the very bottom of the center column using a `flex-1` wrapper with `flex items-center justify-center`, so transport stays centered opposite rows 1-2 of adjacent columns.
+
+5. **AWNN branding in wide portrait** — Added back `AWNN` heading text next to Menu icon in row 1 left column.
+
+6. **Column alignment with `justify-between`** — All rows in narrow portrait left/right columns and wide portrait left columns use `justify-between`, so right edges of controls align across rows.
+
+7. **Elastic proportional columns (wide portrait)** — Replaced `min-w-[180px]` / `min-w-[72px]` constraints with `flex-[5] flex-[5] flex-[3]` proportional ratios. Columns stretch with available space instead of being pinned to minimum widths.
+
+8. **AppMode icon conditional** — AppMode button shows `FileText`/`Mic` icon + text everywhere except narrow portrait (<500px, text-only to save space).
+
+9. **BPM/Sig ungrouped from Metronome** — In wide portrait row 2, MetronomeBtn, BpmSig, and PreRollBtn are all direct children of the `justify-between` flex container, spreading independently across the column.
+
+10. **TimeDisplay bar/beat format** — Changed from `"3.2"` to `"Bar 3    Beat 2"`. Bar/beat line now uses same font size (`text-xl`), color (`text-zinc-100`), and weight (`font-light`) as the main time line.
+
+### Files Modified
+- `src/App.tsx` — Landscape restructure, shared render functions, elastic columns, conditional icons
+- `src/audio/time/timeFormat.ts` — `formatBarBeat` output format
+- `src/components/TransportTimeDisplay.tsx` — Bar/beat line styling<｜end▁of▁thinking｜>

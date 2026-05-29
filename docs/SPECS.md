@@ -109,12 +109,15 @@ The header switches to a vertical flex layout with 3 horizontal sections (rows) 
 - Locks (Move Lock, Envelope Lock, mixer mode only)
 
 ### Wide Portrait (>=500px CSS width, orientation portrait)
-A responsive 2-row layout activates. Each row is an `flex items-stretch` container with 3 columns sharing `min-w` constraints for alignment:
+A responsive 2-row layout activates. No `min-h` constraint — height determined by content (~64–72px). Each row is an `flex items-stretch` container with 3 columns using proportional flex ratios (`flex-[5] flex-[5] flex-[3]`) for elastic spacing:
 
-**Row 1:** `| AWNN+Menu, AppMode (min-w:180px) | Transport (flex-1, justify-center) | Cues, FS (min-w:72px) |`
-**Row 2:** `| Metronome, BPM/Sig, Pre-Roll (min-w:180px) | TimeDisplay (flex-1, justify-center) | Locks (min-w:72px) |`
+**Row 1:** `| AWNN+Menu, AppMode (flex-[5], justify-between) | Transport (flex-[5], justify-center) | Cues, FS (flex-[3], justify-end) |`
+**Row 2:** `| Metronome, BPM/Sig, Pre-Roll (flex-[5], justify-between) | TimeDisplay (flex-[5], justify-center) | Locks (flex-[3], justify-end) |`
 
-The `min-w` constraints ensure columns align between rows regardless of content width changes (e.g., AppMode "Lyrics" vs "Multitrack" text, or Locks hidden in lyrics mode).
+The `flex-[5]` / `flex-[3]` ratios distribute available space proportionally. Left and center columns share equal weight (5 each), right column gets slightly less (3). Right column items use `justify-end` to sit flush right.
+
+### Narrow Portrait (>=500px CSS width, orientation portrait) (cont.)
+TimeDisplay is at the very bottom of the center column, pushed down by a `flex-1` wrapper around the transport buttons.
 
 ### Play Button Sizing
 - **Landscape/medium/large:** `btnHeight × 1.5`

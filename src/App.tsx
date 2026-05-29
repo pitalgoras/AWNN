@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3, ListMusic, Volume2 } from 'lucide-react';
+import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, Maximize, Minimize, Edit3, ListMusic, FileText, Volume2 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -656,6 +656,113 @@ export default function App() {
     (e.target as HTMLInputElement).value = '';
   };
 
+  // Shared toolbar controls — defined once, used in all layouts
+  const renderMenuBtn = () => (
+    <button onClick={() => setShowLogoMenu(!showLogoMenu)} className={cn(toolbarBtn(true, "rounded-lg hover:bg-zinc-800"))} title="Menu" onMouseDown={(e) => e.stopPropagation()}>
+      <Music size={headerIconSize} className="text-zinc-400" />
+    </button>
+  );
+
+  const renderAppModeBtn = () => {
+    const showIcon = isWidePortrait || !isSmallPortrait;
+    return (
+      <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(toolbarBtn(false, "text-xs font-semibold bg-zinc-800 text-white"))}>
+        {showIcon && (appMode === 'mixer' ? <FileText size={14} /> : <Mic size={14} />)}
+        {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
+      </button>
+    );
+  };
+
+  const renderBpmSig = () => (
+    <div className="flex flex-col items-center gap-0 px-1">
+      <div className="flex items-center gap-1 leading-tight">
+        <span className="text-[9px] font-bold text-zinc-500 uppercase">BPM</span>
+        <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
+      </div>
+      <span className="text-[9px] font-mono font-bold text-zinc-300 leading-tight">{timeSignature[0]}/{timeSignature[1]}</span>
+    </div>
+  );
+
+  const renderMetronomeBtn = () => (
+    <button
+      onClick={(e) => {
+        e.stopPropagation();
+        const metronome = tracks.find(t => t.id === 'metronome');
+        if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
+      }}
+      className={cn(
+        toolbarBtn(true),
+        tracks.find(t => t.id === 'metronome')?.isMuted
+          ? "text-zinc-400 hover:text-zinc-400 hover:bg-zinc-800"
+          : "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
+      )}
+      title="Toggle Metronome"
+    >
+      <Metronome size={headerIconSize} />
+    </button>
+  );
+
+  const renderPreRollBtn = () => (
+    <button
+      onClick={() => {
+        const modes = ['always', 'recording', 'none'] as const;
+        const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
+        setPreRollMode(nextMode);
+      }}
+      className={cn(btnClassBase, "flex items-stretch gap-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap")}
+      title={`Count-in: ${preRollMode}`}
+    >
+      <div className="flex flex-col items-end justify-center shrink-0 leading-none">
+        <span className="text-[8px] font-bold">Pre</span>
+        <span className="text-[8px] font-bold">Roll</span>
+      </div>
+      <div className="flex-1 flex items-center justify-center">
+        <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
+      </div>
+    </button>
+  );
+
+  const renderTransport = () => (
+    <>
+      <button onClick={() => seekTo(0)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Rewind size={headerIconSize} /></button>
+      <button onClick={handleStop} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Square size={headerIconSize} fill="currentColor" /></button>
+      <button onClick={handlePlayPause} className={cn(toolbarBtn(), `w-[${playBtnPx}px] h-[${playBtnPx}px]`, "rounded-full shadow-lg", isPlaying ? "bg-zinc-100 text-zinc-900 hover:bg-white" : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700 border border-zinc-700")}>
+        {isPlaying ? <Pause size={playIconPx} fill="currentColor" /> : <Play size={playIconPx} className="ml-0.5" fill="currentColor" />}
+      </button>
+      <button onClick={() => seekTo(useStore.getState().currentTime + 10)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><FastForward size={headerIconSize} /></button>
+    </>
+  );
+
+  const renderMoveLockBtn = () => (
+    <button onClick={() => setMoveLocked(!moveLocked)} className={cn(toolbarBtn(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={moveLocked ? "Movement Locked" : "Movement Unlocked"}>
+      {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
+    </button>
+  );
+
+  const renderEnvLockBtn = () => (
+    <button onClick={() => setEnvelopeLocked(!envelopeLocked)} className={cn(toolbarBtn(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={envelopeLocked ? "Envelopes Locked" : "Envelopes Unlocked"}>
+      <Activity size={headerIconSize} />
+    </button>
+  );
+
+  const renderCuesBtn = () => (
+    <button onClick={() => setShowCues(!showCues)} className={cn(toolbarBtn(true), showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Toggle Cues">
+      <ListMusic size={headerIconSize} />
+    </button>
+  );
+
+  const renderFullscreenBtn = () => (
+    <button onClick={toggleFullscreen} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"))} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
+      {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
+    </button>
+  );
+
+  const renderTimeDisplay = () => (
+    <div className="scale-[0.65]">
+      <TransportTimeDisplay />
+    </div>
+  );
+
   return (
     <div className="h-screen bg-zinc-950 text-zinc-100 flex flex-col font-sans selection:bg-zinc-800 overflow-hidden">
       {/* Hidden input for importing project JSON file */}
@@ -691,120 +798,44 @@ export default function App() {
       {/* Combined Header & Transport */}
       <header className={cn(
         "border-b border-zinc-800 bg-zinc-900/90 flex shrink-0 z-50 w-full",
-        isSmallPortrait ? "flex-col min-h-32" : "min-h-10 sm:min-h-12 items-center px-2 sm:px-4"
+        isSmallPortrait ? (isWidePortrait ? "flex-col" : "flex-col min-h-32") : "min-h-10 sm:min-h-12 items-center px-1.5"
       )}>
         {isSmallPortrait ? (
           isWidePortrait ? (
             /* Wide Portrait: 2-row Layout */
-            <div className="flex-1 flex flex-col px-2 py-1 gap-1">
+            <div className="flex-1 flex flex-col px-1.5 py-1 gap-1">
               {/* Row 1: left items | transport | right items */}
               <div className="flex items-stretch gap-1 flex-1">
-                <div className="flex items-center gap-2 min-w-[180px]">
-                  {showTier(1) && (
-                    <button onClick={() => setShowLogoMenu(!showLogoMenu)} className={cn(btnClassBase, "flex items-center gap-2 rounded-lg hover:bg-zinc-800 transition-colors")} title="Menu" onMouseDown={(e) => e.stopPropagation()}>
-                      <div className="w-7 h-7 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                        <Music size={12} className="text-zinc-400" />
-                      </div>
-                      <h1 className="font-semibold text-xs tracking-wide">AWNN</h1>
-                    </button>
-                  )}
-                  {showTier(1) && (
-                    <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(toolbarBtn(false, "text-xs font-semibold bg-zinc-800 text-white"))}>
-                      {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
-                    </button>
-                  )}
+                <div className="flex items-center justify-between flex-[5]">
+                  <div className="flex items-center gap-1">
+                    {showTier(1) && renderMenuBtn()}
+                    {showTier(1) && <h1 className="font-semibold text-xs tracking-wide shrink-0">AWNN</h1>}
+                  </div>
+                  {showTier(1) && renderAppModeBtn()}
                 </div>
-                <div className="flex-1 flex items-center justify-center gap-2">
-                  <button onClick={() => seekTo(0)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Rewind size={headerIconSize} /></button>
-                  <button onClick={handleStop} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 rounded-full"))}><Square size={headerIconSize} fill="currentColor" /></button>
-                  <button onClick={handlePlayPause} className={cn(
-                    toolbarBtn(),
-                    `w-[${playBtnPx}px] h-[${playBtnPx}px]`,
-                    "rounded-full shadow-lg",
-                    isPlaying ? "bg-zinc-100 text-zinc-900 hover:bg-white" : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700 border border-zinc-700"
-                  )}>
-                    {isPlaying ? <Pause size={playIconPx} fill="currentColor" /> : <Play size={playIconPx} className="ml-0.5" fill="currentColor" />}
-                  </button>
-                  <button onClick={() => seekTo(useStore.getState().currentTime + 10)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 rounded-full"))}><FastForward size={headerIconSize} /></button>
+                <div className="flex-[5] flex items-center justify-center">
+                  {renderTransport()}
                 </div>
-                <div className="flex items-center gap-2 min-w-[72px]">
-                  {showTier(2) && (
-                    <button onClick={() => setShowCues(!showCues)} className={cn(toolbarBtn(true), showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Cues">
-                      <ListMusic size={headerIconSize} />
-                    </button>
-                  )}
-                  {showTier(2) && (
-                    <button onClick={toggleFullscreen} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"))} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
-                      {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
-                    </button>
-                  )}
+                <div className="flex-[3] flex items-center justify-end gap-2">
+                  {showTier(2) && renderCuesBtn()}
+                  {showTier(2) && renderFullscreenBtn()}
                 </div>
               </div>
               {/* Row 2: metro+bpm+preroll | time display | locks */}
               <div className="flex items-stretch gap-1 flex-1">
-                <div className="flex items-center gap-2 min-w-[180px]">
-                  {showTier(1) && (
-                    <button
-                      onClick={() => {
-                        const metronome = tracks.find(t => t.id === 'metronome');
-                        if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
-                      }}
-                      className={cn(
-                        toolbarBtn(true),
-                        tracks.find(t => t.id === 'metronome')?.isMuted
-                          ? "text-zinc-400 hover:text-zinc-400 hover:bg-zinc-800"
-                          : "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
-                      )}
-                      title="Toggle Metronome"
-                    >
-                      <Metronome size={headerIconSize} />
-                    </button>
-                  )}
-                  {showTier(1) && (
-                    <div className="flex flex-col items-center gap-0 px-1">
-                      <div className="flex items-center gap-1 leading-tight">
-                        <span className="text-[9px] font-bold text-zinc-500 uppercase">BPM</span>
-                        <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
-                      </div>
-                      <span className="text-[9px] font-mono font-bold text-zinc-300 leading-tight">{timeSignature[0]}/{timeSignature[1]}</span>
-                    </div>
-                  )}
-                  {showTier(1) && (
-                    <button
-                      onClick={() => {
-                        const modes = ['always', 'recording', 'none'] as const;
-                        const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
-                        setPreRollMode(nextMode);
-                      }}
-                      className={cn(btnClassBase, "flex items-stretch gap-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap")}
-                      title={`Count-in: ${preRollMode}`}
-                    >
-                      <div className="flex flex-col items-end justify-center shrink-0 leading-none">
-                        <span className="text-[8px] font-bold">Pre</span>
-                        <span className="text-[8px] font-bold">Roll</span>
-                      </div>
-                      <div className="flex-1 flex items-center justify-center">
-                        <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
-                      </div>
-                    </button>
-                  )}
+                <div className="flex items-center justify-between flex-[5]">
+                    {showTier(1) && renderMetronomeBtn()}
+                    {showTier(1) && renderBpmSig()}
+                  {showTier(1) && renderPreRollBtn()}
                 </div>
-                <div className="flex-1 flex items-center justify-center">
-                  {showTier(2) && (
-                    <div className="scale-[0.65]">
-                      <TransportTimeDisplay />
-                    </div>
-                  )}
+                <div className="flex-[5] flex items-center justify-center">
+                  {showTier(2) && renderTimeDisplay()}
                 </div>
-                <div className="flex items-center gap-2 min-w-[72px]">
+                <div className="flex-[3] flex items-center justify-end gap-2">
                   {showTier(2) && appMode === 'mixer' && (
                     <>
-                      <button onClick={() => setMoveLocked(!moveLocked)} className={cn(toolbarBtn(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={moveLocked ? "Locked" : "Unlocked"}>
-                        {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
-                      </button>
-                      <button onClick={() => setEnvelopeLocked(!envelopeLocked)} className={cn(toolbarBtn(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={envelopeLocked ? "Locked" : "Unlocked"}>
-                        <Activity size={headerIconSize} />
-                      </button>
+                      {renderMoveLockBtn()}
+                      {renderEnvLockBtn()}
                     </>
                   )}
                 </div>
@@ -814,115 +845,41 @@ export default function App() {
             /* Small Portrait: 3-Column Layout */
             <div className="flex-1 flex items-stretch">
               {/* Left Column: Menu+AppMode | Pre-Roll | Metronome+BPM/Sig */}
-            <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
-              <div className="flex items-center gap-1">
-                {showTier(1) && (
-                    <button onClick={() => setShowLogoMenu(!showLogoMenu)} className={cn(toolbarBtn(true, "rounded-lg hover:bg-zinc-800"))} title="Menu" onMouseDown={(e) => e.stopPropagation()}>
-                    <Music size={headerIconSize} className="text-zinc-400" />
-                  </button>
-                )}
-                {showTier(1) && (
-                  <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(toolbarBtn(false, "text-xs font-semibold bg-zinc-800 text-white"))}>
-                    {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
-                  </button>
-                )}
+            <div className="flex flex-col justify-between py-1 px-1.5 gap-0.5">
+              <div className="flex items-center justify-between">
+                {showTier(1) && renderMenuBtn()}
+                {showTier(1) && renderAppModeBtn()}
               </div>
-              <div className="flex items-center gap-1">
-                {showTier(1) && (
-                  <button
-                    onClick={() => {
-                      const modes = ['always', 'recording', 'none'] as const;
-                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
-                      setPreRollMode(nextMode);
-                    }}
-                    className={cn(btnClassBase, "flex items-stretch gap-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap")}
-                    title={`Count-in: ${preRollMode}`}
-                  >
-                    <div className="flex flex-col items-end justify-center shrink-0 leading-none">
-                      <span className="text-[8px] font-bold">Pre</span>
-                      <span className="text-[8px] font-bold">Roll</span>
-                    </div>
-                    <div className="flex-1 flex items-center justify-center">
-                      <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
-                    </div>
-                  </button>
-                )}
+              <div className="flex items-center">
+                {showTier(1) && renderPreRollBtn()}
               </div>
-              <div className="flex items-center gap-1">
-                {showTier(1) && (
-                  <button
-                    onClick={() => {
-                      const metronome = tracks.find(t => t.id === 'metronome');
-                      if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
-                    }}
-                    className={cn(
-                      toolbarBtn(true),
-                      tracks.find(t => t.id === 'metronome')?.isMuted
-                        ? "text-zinc-400 hover:text-zinc-400 hover:bg-zinc-800"
-                        : "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
-                    )}
-                    title="Toggle Metronome"
-                  >
-                    <Metronome size={headerIconSize} />
-                  </button>
-                )}
-                {showTier(1) && (
-                  <div className="flex flex-col items-center gap-0 px-1">
-                    <div className="flex items-center gap-1 leading-tight">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase">BPM</span>
-                      <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
-                    </div>
-                    <span className="text-[9px] font-mono font-bold text-zinc-300 leading-tight">{timeSignature[0]}/{timeSignature[1]}</span>
-                  </div>
-                )}
+              <div className="flex items-center justify-between">
+                {showTier(1) && renderMetronomeBtn()}
+                {showTier(1) && renderBpmSig()}
               </div>
             </div>
 
-            {/* Center Column: Transport + TimeDisplay */}
-            <div className="flex-1 flex flex-col items-center justify-center px-1 gap-1">
-              <div className="flex items-center gap-1">
-                <button onClick={() => seekTo(0)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Rewind size={headerIconSize} /></button>
-                <button onClick={handleStop} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 rounded-full"))}><Square size={headerIconSize} fill="currentColor" /></button>
-                <button onClick={handlePlayPause} className={cn(
-                  toolbarBtn(),
-                  `w-[${playBtnPx}px] h-[${playBtnPx}px]`,
-                  "rounded-full shadow-lg",
-                  isPlaying ? "bg-zinc-100 text-zinc-900 hover:bg-white" : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700 border border-zinc-700"
-                )}>
-                  {isPlaying ? <Pause size={playIconPx} fill="currentColor" /> : <Play size={playIconPx} className="ml-0.5" fill="currentColor" />}
-                </button>
-                <button onClick={() => seekTo(useStore.getState().currentTime + 10)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 rounded-full"))}><FastForward size={headerIconSize} /></button>
-              </div>
-              {showTier(2) && (
-                <div className="scale-[0.65]">
-                  <TransportTimeDisplay />
+            {/* Center Column: Transport */}
+            <div className="flex-1 flex flex-col items-center px-1">
+              <div className="flex-1 flex items-center justify-center">
+                <div className="flex items-center gap-1">
+                  {renderTransport()}
                 </div>
-              )}
+              </div>
+              {showTier(2) && renderTimeDisplay()}
             </div>
 
             {/* Right Column: Cues+FS top, Locks bottom */}
-            <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
-              <div className="flex items-center gap-1">
-                {showTier(2) && (
-                  <button onClick={() => setShowCues(!showCues)} className={cn(toolbarBtn(true), showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Cues">
-                    <ListMusic size={headerIconSize} />
-                  </button>
-                )}
-                {showTier(2) && (
-                  <button onClick={toggleFullscreen} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"))} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
-                    {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
-                  </button>
-                )}
+            <div className="flex flex-col justify-between py-1 px-1.5 gap-0.5">
+              <div className="flex items-center justify-between">
+                {showTier(2) && renderCuesBtn()}
+                {showTier(2) && renderFullscreenBtn()}
               </div>
-              <div className="flex items-center gap-1">
+              <div className="flex items-center justify-between">
                 {showTier(2) && appMode === 'mixer' && (
                   <>
-                    <button onClick={() => setMoveLocked(!moveLocked)} className={cn(toolbarBtn(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={moveLocked ? "Locked" : "Unlocked"}>
-                      {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
-                    </button>
-                    <button onClick={() => setEnvelopeLocked(!envelopeLocked)} className={cn(toolbarBtn(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={envelopeLocked ? "Locked" : "Unlocked"}>
-                      <Activity size={headerIconSize} />
-                    </button>
+                    {renderMoveLockBtn()}
+                    {renderEnvLockBtn()}
                   </>
                 )}
               </div>
@@ -932,190 +889,32 @@ export default function App() {
         ) : (
           /* Normal Layout (landscape/medium/large) */
           <>
-            {/* Left: Logo & Project Actions */}
-            <div className="flex-1 flex items-center gap-2 sm:gap-4 justify-start overflow-hidden">
-              {showTier(1) && (
-                <div>
-                  <button
-                    onClick={() => setShowLogoMenu(!showLogoMenu)}
-                    className={cn(btnClassBase, "flex items-center gap-2 rounded-lg hover:bg-zinc-800 transition-colors")}
-                    title="Menu"
-                    onMouseDown={(e) => e.stopPropagation()}
-                  >
-                    <div className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg bg-zinc-800 flex items-center justify-center border border-zinc-700">
-                      <Music className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-zinc-400" />
-                    </div>
-                    <h1 className="font-semibold text-xs sm:text-sm tracking-wide hidden lg:block">AWNN</h1>
-                  </button>
-                </div>
-              )}
-              
-              {/* View Toggles */}
-              <div className="ml-2 pl-4 border-l border-zinc-800 flex items-center bg-zinc-950/50 p-1 rounded-lg gap-1">
-                <button
-                  onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')}
-                  className={cn(btnClassBase, "flex items-center gap-2 rounded text-xs font-semibold uppercase tracking-wider transition-all bg-zinc-800 text-white hover:bg-zinc-700 shadow-sm")}
-                  title={appMode === 'mixer' ? "Switch to Lyrics Mode" : "Switch to Multitrack Mode"}
-                >
-                  {appMode === 'mixer' ? (
-                    <><FileText size={14} /> {mainToolbarLabel('Lyrics', 'Lyrics')}</>
-                  ) : (
-                    <><Mic size={14} /> {mainToolbarLabel('Multitrack', 'Mix')}</>
-                  )}
-                </button>
-              </div>
-
-              {/* BPM & Signature in Header */}
-              <div className="flex items-center gap-2 ml-2 border-l border-zinc-800 pl-4">
-                <button 
-                  onClick={() => setShowMetronomeSettings(true)}
-                  className={cn(btnClassBase, "flex items-center gap-2 rounded hover:bg-zinc-800 transition-colors group")}
-                  title="Metronome & Grid Settings"
-                >
-                  <div className="flex flex-col items-start">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter leading-none">{mainToolbarLabel('Tempo', 'Tempo')}</span>
-                    <span className="text-xs font-mono font-bold text-zinc-300 group-hover:text-white transition-colors">{bpm} BPM</span>
-                  </div>
-                  <div className="w-px h-4 bg-zinc-800 mx-1" />
-                  <div className="flex flex-col items-start">
-                    <span className="text-[10px] font-bold text-zinc-500 uppercase tracking-tighter leading-none">Sig</span>
-                    <span className="text-xs font-mono font-bold text-zinc-300 group-hover:text-white transition-colors">{timeSignature[0]}/{timeSignature[1]}</span>
-                  </div>
-                </button>
-                
-                {/* Metronome + Count-in */}
-                {showTier(1) && (
-                  <button 
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const metronome = tracks.find(t => t.id === 'metronome');
-                      if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
-                    }}
-                    className={cn(
-                      toolbarBtn(true, "border border-transparent"),
-                      tracks.find(t => t.id === 'metronome')?.isMuted 
-                        ? "text-zinc-400 hover:text-zinc-400 hover:bg-zinc-800" 
-                        : "text-emerald-500 bg-emerald-500/10 border-emerald-500/20 hover:bg-emerald-500/20"
-                    )}
-                    title="Toggle Metronome"
-                  >
-                    <Metronome size={headerIconSize} />
-                  </button>
-                )}
-                {showTier(1) && (
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const modes = ['always', 'recording', 'none'] as const;
-                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
-                      setPreRollMode(nextMode);
-                    }}
-                    className={cn(btnClassBase, "flex items-stretch gap-1.5 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap")}
-                    title={`Count-in: ${preRollMode}`}
-                  >
-                    <div className="flex flex-col items-end justify-center shrink-0 leading-none">
-                      <span className="text-[8px] font-bold">Pre</span>
-                      <span className="text-[8px] font-bold">Roll</span>
-                    </div>
-                    <div className="flex-1 flex items-center justify-center">
-                      <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
-                    </div>
-                  </button>
-                )}
-              </div>
+            {/* Left: App Controls */}
+            <div className="flex-1 flex items-center gap-0.5 sm:gap-1.5 justify-start overflow-hidden">
+              {showTier(1) && renderMenuBtn()}
+              {showTier(1) && renderAppModeBtn()}
+              {showTier(1) && renderBpmSig()}
+              {showTier(1) && renderMetronomeBtn()}
             </div>
             
             {/* Center: Transport Controls */}
-            <div className="flex-1 flex justify-center items-center gap-2 sm:gap-6">
-              {showTier(2) && (
-                <div className="hidden md:block">
-                  <TransportTimeDisplay />
-                </div>
-              )}
-              
-              <div className="flex items-center gap-1 sm:gap-3">
-                <button onClick={() => seekTo(0)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Rewind size={headerIconSize} /></button>
-                <button onClick={handleStop} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><Square size={headerIconSize} fill="currentColor" /></button>
-                <button 
-                  onClick={handlePlayPause}
-                  className={cn(
-                    toolbarBtn(),
-                    `w-[${playBtnPx}px] h-[${playBtnPx}px]`,
-                    "rounded-full shadow-lg",
-                    isPlaying 
-                      ? "bg-zinc-100 text-zinc-900 hover:bg-white" 
-                      : "bg-zinc-800 text-zinc-100 hover:bg-zinc-700 border border-zinc-700"
-                  )}
-                >
-                  {isPlaying ? <Pause size={playIconPx} fill="currentColor" /> : <Play size={playIconPx} className="ml-0.5" fill="currentColor" />}
-                </button>
-                <button onClick={() => seekTo(useStore.getState().currentTime + 10)} className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 rounded-full"))}><FastForward size={headerIconSize} /></button>
+            <div className="flex-1 flex justify-center items-center gap-1 sm:gap-3">
+              <div className="flex items-center gap-0.5 sm:gap-2">
+                {renderTransport()}
               </div>
             </div>
 
-            {/* Right: Settings & View Toggles */}
-            <div className="flex-1 flex items-center gap-1 sm:gap-3 justify-end overflow-hidden">
+            {/* Right: View Toggles */}
+            <div className="flex-1 flex items-center gap-0.5 sm:gap-1 justify-end overflow-hidden">
+              {showTier(1) && renderPreRollBtn()}
               {showTier(2) && appMode === 'mixer' && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setMoveLocked(!moveLocked)}
-                    className={cn(toolbarBtn(true, moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10"))}
-                    title={moveLocked ? "Movement Locked" : "Movement Unlocked"}
-                  >
-                    {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
-                  </button>
-                  <button
-                    onClick={() => setEnvelopeLocked(!envelopeLocked)}
-                    className={cn(toolbarBtn(true, envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10"))}
-                    title={envelopeLocked ? "Envelopes Locked" : "Envelopes Unlocked"}
-                  >
-                    <Activity size={headerIconSize} />
-                  </button>
-                </div>
+                <>
+                  {renderMoveLockBtn()}
+                  {renderEnvLockBtn()}
+                </>
               )}
-
-              {showTier(3) && (
-                <div className="hidden lg:flex items-center gap-2 border-l border-zinc-800 pl-3 ml-1">
-                  <span className="text-[9px] uppercase tracking-widest text-zinc-500 font-bold">{mainToolbarLabel('Zoom', 'Z')}</span>
-                  <input 
-                    type="range" 
-                    min="10" max="200" 
-                    value={zoom}
-                    onChange={(e) => setZoom(Number(e.target.value))}
-                    className="w-16 h-1 bg-zinc-800 rounded-full appearance-none cursor-pointer"
-                  />
-                </div>
-              )}
-
-              <div className="flex items-center gap-1 border-l border-zinc-800 pl-1 sm:pl-3 ml-0.5 sm:ml-1">
-                {showTier(2) && (
-                  <button 
-                    onClick={() => setShowCues(!showCues)}
-                    className={cn(toolbarBtn(true), showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")}
-                    title="Toggle Cues"
-                  >
-                    <ListMusic size={headerIconSize} />
-                  </button>
-                )}
-                {showTier(3) && (
-                  <button 
-                    onClick={() => setShowSettings(!showSettings)}
-                    className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"))}
-                    title="Settings"
-                  >
-                    <Settings size={headerIconSize} />
-                  </button>
-                )}
-                {showTier(2) && (
-                  <button 
-                    onClick={toggleFullscreen}
-                    className={cn(toolbarBtn(true, "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800"))}
-                    title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
-                  >
-                    {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
-                  </button>
-                )}
-              </div>
+              {showTier(2) && renderCuesBtn()}
+              {showTier(2) && renderFullscreenBtn()}
             </div>
           </>
         )}

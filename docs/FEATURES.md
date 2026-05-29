@@ -150,6 +150,13 @@ This document tracks the features discussed, planned, implemented, and discarded
   - Pre-Roll sentence-case labels (`None`, `Always`, `Only Rec`), no `min-w`, no `uppercase`.
   - Play button size derived from `btnHeight × multiplier` (1.5 landscape, 1.2 small portrait).
   - Metronome muted: `text-zinc-400` (not `zinc-600`), no `opacity-50`.
+  - **Landscape compact** — Icon-only menu, text-only AppMode, static BPM/Sig readout, Pre-Roll in right section, no TimeDisplay/Settings/Zoom in toolbar. Header padding `px-1.5`.
+  - **Shared render functions** — 11 functions extracted, used identically by all 3 layouts (3-column, 2-row, landscape).
+  - **Elastic columns** — Wide portrait uses `flex-[5] flex-[5] flex-[3]` instead of `min-w` constraints.
+  - **2-row height freed** — No `min-h-32`, height auto by content.
+  - **AppMode icon** — Shows icon+text everywhere except narrow portrait.
+  - **BPM/Sig ungrouped** from metronome in wide portrait, spreads independently.
+  - **TimeDisplay** — Pushed to bottom of center column in narrow portrait. Format: `"Bar 3    Beat 2"`, same styling as time line.
   - TransportTimeDisplay: removed `formatTime(duration)` line.
   - AWNN branding on menu button in 2-row layout.
 
