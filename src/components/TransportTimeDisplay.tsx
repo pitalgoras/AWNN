@@ -14,9 +14,6 @@ export function TransportTimeDisplay() {
         <div className="font-mono text-xl font-light tracking-wider text-zinc-100 leading-none">
           {formatTime(currentTime)}
         </div>
-        <div className="font-mono text-[10px] text-zinc-500 tracking-widest leading-none border-l border-zinc-800 pl-3">
-          {formatTime(duration)}
-        </div>
       </div>
       <div className="font-mono text-[9px] text-zinc-400 tracking-widest mt-0.5 uppercase opacity-70">
         {formatBarBeat(currentTime, bpm, timeSignature)}

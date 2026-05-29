@@ -824,4 +824,36 @@ The metronome now uses a consistent timebase across initial play start and seek 
 ### Status
 **Not yet applied** — saved for next session.
 
-See section M for the detailed plan. The change is in `RecordingEngine.ts:handleAudioWorkletStop()` — replace store read with direct AudioContext read of `outputLatency`/`baseLatency`.<｜end▁of▁thinking｜>
+See section M for the detailed plan. The change is in `RecordingEngine.ts:handleAudioWorkletStop()` — replace store read with direct AudioContext read of `outputLatency`/`baseLatency`.
+
+## Q. UI Tidy — Portrait/Responsive Toolbar (2026-05-29)
+
+### Problem
+The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were too large, padding was excessive, and the 2-row portrait layout with 3 columns had too much whitespace around the centered transport when the screen was wide enough (~500px+).
+
+### Changes Applied
+
+1. **Centralized `toolbarBtn()`** — Replaced scattered `getBtnClass()` patterns with a single `toolbarBtn(isSquare, extra)` helper that includes `flex items-center justify-center rounded transition-colors shrink-0` in the base class. All 20+ toolbar button instances migrated.
+
+2. **Portrait 3-column layout** — Left column: Menu+AppMode, Pre-Roll, Metronome+BPM/Sig (BPM label stacked, centered under BPM value). Center column: transport buttons (Rewind, Stop, Play, FF) + TimeDisplay below. Right column: Cues+FS top, Locks bottom. Padding reduced: `px-4`→`px-1`, `gap-2`→`gap-1`. `min-h-20`→`min-h-32`.
+
+3. **Play button resizing** — Size derived from `btnHeight × PLAY_MULT` (1.5 landscape, 1.2 small portrait). Icon proportionally scaled.
+
+4. **Responsive 2-row layout (>=500px)** — Added `isWidePortrait` state tracking `windowWidth >= 500` via resize listener. When true, the portrait header switches to a 2×3 column grid:
+   - **Row 1**: `| AWNN+Menu, AppMode | Rewind, Stop, Play, FF (flex-1) | Cues, FS |`
+   - **Row 2**: `| Metronome, BPM/Sig, Pre-Roll | TimeDisplay (flex-1) | Locks (Move, Envelope) |`
+   - Each row uses `flex items-stretch gap-1` with `min-w-[180px]` left columns and `min-w-[72px]` right columns for consistent column alignment between rows.
+
+5. **BPM label restyled** — `BPM` label and value on the same line (e.g. `BPM 120`), time signature below. Centered in the vertical stack.
+
+6. **Pre-Roll redesigned** — Two-line left column ("Pre" / "Roll") with state centered in remaining button width. Labels: `Pre`, `None`, `Always`, `Only Rec` (sentence case, no `uppercase`). No `min-w`.
+
+7. **Metronome muted state** — `text-zinc-400` (not `zinc-600`), no `opacity-50` on icon.
+
+8. **TransportTimeDisplay** — Removed `formatTime(duration)` span (always showed `00:00:00`).
+
+9. **AWNN branding** — Menu button in 2-row layout shows `Music` icon in styled box + `AWNN` text, matching landscape layout.
+
+### Files Modified
+- `src/App.tsx` — All toolbar layout logic, `toolbarBtn()` definition, portrait landscape/2-row branches
+- `src/components/TransportTimeDisplay.tsx` — Removed duration line<｜end▁of▁thinking｜>

@@ -311,3 +311,28 @@ application is unresponsive. debug. make tests, not assumptions
   - `useAudioEngine.ts`: Computes `nextBeatProjectTime = ceil((currentTime + startupSec) / beatDuration) × beatDuration`, converts to AudioContext frame, and calls `startAt()`.
 * **Documentation:** Updated `docs/devhistory.md` (sections J, K), `docs/AUDIO_LOGIC_SPECS.md` (metronome spec + recent changes), and `docs/full_history.md`.
 * **Verification:** `npx tsc --noEmit` and `npm run build` pass clean.
+
+---
+
+## Session 2026-05-29: UI Tidy — Portrait/Responsive Toolbar
+
+**User Request:** Fix portrait toolbar overflow on narrow screens and optimize layout across orientations.
+
+**Key Tasks Completed:**
+
+1. **Centralized button helper:** Replaced all `getBtnClass` variants with single `toolbarBtn()` in `App.tsx`. Migrated all 20+ toolbar button instances.
+
+2. **Portrait 3-column layout:** Left (Menu+AppMode, Pre-Roll, Metronome+BPM/Sig), Center (transport + TimeDisplay), Right (Cues+FS, Locks). Tightened padding/gaps.
+
+3. **Responsive 2-row layout:** Added `isWidePortrait` at 500px threshold. Switches to 2×3 column grid:
+   - Row 1: AWNN+Menu, AppMode | transport | Cues, FS
+   - Row 2: Metronome, BPM/Sig, Pre-Roll | TimeDisplay | Locks
+   - `min-w` on side columns for between-row alignment.
+
+4. **Play button sizing:** Configurable multiplier (1.5×/1.2×) derived from `btnHeight`.
+
+5. **UI polish:** BPM label+value same-line, time sig centered below. Pre-Roll sentence-case labels. Metronome muted `text-zinc-400`. TransportTimeDisplay duration line removed. AWNN branding added to menu button.
+
+**Files Modified:** `src/App.tsx`, `src/components/TransportTimeDisplay.tsx`
+**Documentation Updated:** `docs/devhistory.md` (section Q), `docs/SPECS.md`, `docs/FEATURES.md`, `docs/ADAPTIVE_UI_MODULES.md`, `docs/full_history.md`
+**Branch:** `ui-tidy`

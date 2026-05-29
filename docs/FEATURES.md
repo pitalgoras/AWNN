@@ -142,6 +142,17 @@ This document tracks the features discussed, planned, implemented, and discarded
   - **headLength changes in Advanced Settings don't take effect until page reload** — `headLength`, `startupDelayMs`, `bufferSafetyMs` missing from engine init effect dep array.
   - **Pre-roll recording doesn't show negative timeline during count-in** — `!state.isRecording` guard blocks `setRecordingMode(true)` in play/pause sync effect, preventing the scroll container from unlocking to show the PRE bar.
 
+- [x] **UI Tidy — Responsive Portrait Toolbar (2026-05-29):**
+  - Centralized `toolbarBtn()` helper replacing all scattered `getBtnClass` patterns.
+  - Portrait 3-column layout: left (Menu+AppMode, Pre-Roll, Metronome+BPM/Sig), center (transport + TimeDisplay), right (Cues+FS, Locks). Padding reduced (`px-4→px-1`, `gap-2→gap-1`).
+  - Responsive 2-row layout at >=500px: switches to 2×3 column grid — top row has side items + transport, bottom row has Metro+BPM+PreRoll + TimeDisplay + Locks.
+  - BPM label+value on same line, time signature centered below.
+  - Pre-Roll sentence-case labels (`None`, `Always`, `Only Rec`), no `min-w`, no `uppercase`.
+  - Play button size derived from `btnHeight × multiplier` (1.5 landscape, 1.2 small portrait).
+  - Metronome muted: `text-zinc-400` (not `zinc-600`), no `opacity-50`.
+  - TransportTimeDisplay: removed `formatTime(duration)` line.
+  - AWNN branding on menu button in 2-row layout.
+
 ## Version 2 (post v1)
 - [ ] **Per-bar BPM Timeline:**
   - Replace single `{ bpm, timeSignature }` with a timeline array of `{ bar: number; bpm: number; beatsPerBar: number }` entries.

@@ -90,6 +90,41 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
      * Combo bar uses exact LVP markup: `displayTags.slice(0, 8)` buttons + `+` button, `grid grid-cols-3`, `p-1.5` with `border-t`.
      * Initial state is `false` (left panel shown) to avoid layout flash; observer corrects on first frame.
 
+## Layout System: Portrait Toolbar
+
+### Small Portrait (<768px, orientation portrait)
+The header switches to a vertical flex layout with 3 horizontal sections (rows) inside a single `flex items-stretch` container:
+
+**Left Column:** Fixed natural width. Contains (top to bottom):
+- Menu + AppMode toggle
+- Pre-Roll (count-in) button
+- Metronome + BPM/Sig (BPM label and value on same line, time signature centered below)
+
+**Center Column:** `flex-1` — shrinks to fit remaining width. Contains:
+- Transport buttons: Rewind, Stop, Play (sized at `btnHeight × 1.2`), FastForward
+- Below: TransportTimeDisplay (scaled 0.65)
+
+**Right Column:** Fixed natural width. Contains (top to bottom):
+- Cues toggle + Fullscreen toggle
+- Locks (Move Lock, Envelope Lock, mixer mode only)
+
+### Wide Portrait (>=500px CSS width, orientation portrait)
+A responsive 2-row layout activates. Each row is an `flex items-stretch` container with 3 columns sharing `min-w` constraints for alignment:
+
+**Row 1:** `| AWNN+Menu, AppMode (min-w:180px) | Transport (flex-1, justify-center) | Cues, FS (min-w:72px) |`
+**Row 2:** `| Metronome, BPM/Sig, Pre-Roll (min-w:180px) | TimeDisplay (flex-1, justify-center) | Locks (min-w:72px) |`
+
+The `min-w` constraints ensure columns align between rows regardless of content width changes (e.g., AppMode "Lyrics" vs "Multitrack" text, or Locks hidden in lyrics mode).
+
+### Play Button Sizing
+- **Landscape/medium/large:** `btnHeight × 1.5`
+- **Small portrait:** `btnHeight × 1.2`
+- Icon size: `playBtnPx × 0.45`
+
+### Toolbar Button Helper
+All head toolbar buttons use the centralized `toolbarBtn(isSquare, extra)` function in `App.tsx`, which returns:
+`cn(btnClassBase, "flex items-center justify-center rounded transition-colors shrink-0", isSquare && "aspect-square", extra)`
+
 ## Known Limitations / Workarounds
 * `wavesurfer-multitrack` does not reliably emit `timeupdate` events in all environments, so a safe `requestAnimationFrame` polling mechanism is used to update the global `currentTime`.
 * Imported audio files currently default to a start position of 0:00.

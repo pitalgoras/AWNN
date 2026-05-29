@@ -558,3 +558,34 @@ const isSmallPortrait = screenSize === 'small' && isPortrait;
 - ✅ All inch-based calculations removed
 - ✅ No `toolbarProposal` references remain
 - ✅ No `min-w` constraints on buttons
+
+---
+
+## Recent Implementation Summary (2026-05-29) — UI Tidy (Portrait/Responsive Toolbar)
+
+### Completed Changes
+1. **Centralized `toolbarBtn()`**: Replaced scattered `getBtnClass()` patterns with `toolbarBtn(isSquare, extra)` in `App.tsx:109`. Includes `flex items-center justify-center rounded transition-colors shrink-0` in base. All 20+ toolbar button instances migrated — Pre-Roll, landscape Menu, AppMode, BPM/Sig buttons now use `btnClassBase` instead of hardcoded `px-* py-*`.
+
+2. **Portrait 3-column layout**: Left (Menu+AppMode, Pre-Roll, Metronome+BPM/Sig with BPM label+value same-line, time sig centered below), Center (transport buttons + TimeDisplay scaled 0.65), Right (Cues+FS top, Locks bottom). Padding reduced: `px-4`→`px-1`, `gap-2`→`gap-1`. Header: `min-h-20`→`min-h-32`.
+
+3. **Responsive 2-row layout (>=500px)**: Added `isWidePortrait` state via `windowWidth` state + resize listener. Activates 2×3 column grid:
+   - Row 1: `| left (AWNN+Menu, AppMode, min-w:180px) | center (transport, flex-1, justify-center) | right (Cues, FS, min-w:72px) |`
+   - Row 2: `| left (Metronome, BPM/Sig, Pre-Roll, min-w:180px) | center (TimeDisplay, flex-1, justify-center) | right (Locks, min-w:72px) |`
+   - `min-w` constraints ensure column alignment between rows.
+
+4. **Pre-Roll redesign**: Two-line layout ("Pre" / "Roll") with state centered. Labels: `Pre`, `None`, `Always`, `Only Rec` (sentence case, no `uppercase`). No `min-w-28`.
+
+5. **Metronome muted**: `text-zinc-600`→`text-zinc-400`, removed `opacity-50` from icon.
+
+6. **TransportTimeDisplay**: Removed `formatTime(duration)` span.
+
+7. **Cues icon**: `Music`→`ListMusic` (differentiates from Menu button).
+
+8. **Play button sizing**: `w-12 h-12` / `w-8 h-8`→`w-[playBtnPx]` derived from `btnHeight × PLAY_MULT` (1.5 landscape, 1.2 portrait). Icon proportionally scaled.
+
+9. **AWNN branding**: Menu button in 2-row layout shows `Music` icon in styled box + `AWNN` text (matches landscape).
+
+### Build Status
+- ✅ Build passes: `npx vite build` (~1784 modules, ~554 kB JS)
+- ✅ All portrait overflow eliminated on iPhone SE (375px) — ~62px saved vs ~23px overflow
+- ✅ BPM/Sig `items-start`→`items-center` for proper centering
