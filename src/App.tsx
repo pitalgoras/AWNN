@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3, ListMusic } from 'lucide-react';
+import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3, ListMusic, Volume2 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
