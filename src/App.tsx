@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Volume2, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3 } from 'lucide-react';
+import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, FileText, Maximize, Minimize, Edit3, ListMusic } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
@@ -674,49 +674,78 @@ export default function App() {
       {/* Combined Header & Transport */}
       <header className={cn(
         "border-b border-zinc-800 bg-zinc-900/90 flex shrink-0 z-50 w-full",
-        isSmallPortrait ? "flex-col min-h-20" : "min-h-10 sm:min-h-12 items-center px-2 sm:px-4"
+        isSmallPortrait ? "flex-col min-h-32" : "min-h-10 sm:min-h-12 items-center px-2 sm:px-4"
       )}>
         {isSmallPortrait ? (
-          /* Small Portrait: 3-Area Layout (2 rows) */
-          <>
-            {/* Row 1 & 2 Container with 3 areas */}
-            <div className="flex-1 flex items-stretch">
-              {/* Left Area: 2 rows of items */}
-              <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
-                <div className="flex items-center gap-1">
-                  {showTier(1) && (
-                    <button onClick={() => setShowLogoMenu(!showLogoMenu)} className={cn(getBtnClass(true), "rounded-lg hover:bg-zinc-800 transition-colors")} title="Menu" onMouseDown={(e) => e.stopPropagation()}>
-                      <Music size={headerIconSize} className="text-zinc-400" />
-                    </button>
-                  )}
-                  {showTier(2) && (
-                    <button onClick={() => setShowMetronomeSettings(true)} className={cn(getBtnClass(true), "rounded transition-colors flex items-center gap-1")} title="Metronome">
-                      <Volume2 size={headerIconSize} className={cn(tracks.find(t => t.id === 'metronome')?.isMuted && "opacity-50")} />
-                      <span className="text-[9px] font-bold uppercase">{mainToolbarLabel('Metro', 'M')}</span>
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {showTier(1) && (
-                    <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(getBtnClass(), "rounded text-xs font-semibold bg-zinc-800 text-white")}>
-                      {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
-                    </button>
-                  )}
-                  {showTier(2) && appMode === 'mixer' && (
-                    <>
-                      <button onClick={() => setMoveLocked(!moveLocked)} className={cn(getBtnClass(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={moveLocked ? "Locked" : "Unlocked"}>
-                        {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
-                      </button>
-                      <button onClick={() => setEnvelopeLocked(!envelopeLocked)} className={cn(getBtnClass(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={envelopeLocked ? "Locked" : "Unlocked"}>
-                        <Activity size={headerIconSize} />
-                      </button>
-                    </>
-                  )}
-                </div>
+          /* Small Portrait: 3-Area Layout with Pre-Roll above Metronome */
+          <div className="flex-1 flex items-stretch">
+            {/* Left Column: Menu+AppMode | Pre-Roll | Metronome+BPM/Sig */}
+            <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
+              <div className="flex items-center gap-1">
+                {showTier(1) && (
+                  <button onClick={() => setShowLogoMenu(!showLogoMenu)} className={cn(getBtnClass(true), "rounded-lg hover:bg-zinc-800 transition-colors")} title="Menu" onMouseDown={(e) => e.stopPropagation()}>
+                    <Music size={headerIconSize} className="text-zinc-400" />
+                  </button>
+                )}
+                {showTier(1) && (
+                  <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(getBtnClass(), "rounded text-xs font-semibold bg-zinc-800 text-white")}>
+                    {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
+                  </button>
+                )}
               </div>
+              <div className="flex items-center gap-1">
+                {showTier(1) && (
+                  <button
+                    onClick={() => {
+                      const modes = ['always', 'recording', 'none'] as const;
+                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
+                      setPreRollMode(nextMode);
+                    }}
+                    className="flex items-stretch gap-1.5 px-1.5 py-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap"
+                    title={`Count-in: ${preRollMode}`}
+                  >
+                    <div className="flex flex-col items-end justify-center shrink-0 leading-none">
+                      <span className="text-[8px] font-bold">Pre</span>
+                      <span className="text-[8px] font-bold">Roll</span>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center">
+                      <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
+                    </div>
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {showTier(1) && (
+                  <button
+                    onClick={() => {
+                      const metronome = tracks.find(t => t.id === 'metronome');
+                      if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
+                    }}
+                    className={cn(
+                      getBtnClass(true), "rounded transition-colors flex items-center gap-1",
+                      tracks.find(t => t.id === 'metronome')?.isMuted
+                        ? "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
+                        : "text-emerald-500 bg-emerald-500/10 hover:bg-emerald-500/20"
+                    )}
+                    title="Toggle Metronome"
+                  >
+                    <Metronome size={headerIconSize} className={cn(tracks.find(t => t.id === 'metronome')?.isMuted && "opacity-50")} />
+                  </button>
+                )}
+                {showTier(1) && (
+                  <div className="flex items-center gap-1 px-1">
+                    <span className="text-[9px] font-bold text-zinc-500 uppercase">{mainToolbarLabel('Tempo', 'BPM')}</span>
+                    <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
+                    <span className="text-[9px] font-bold text-zinc-500">|</span>
+                    <span className="text-[9px] font-mono font-bold text-zinc-300">{timeSignature[0]}/{timeSignature[1]}</span>
+                  </div>
+                )}
+              </div>
+            </div>
 
-              {/* Center Area: Transport controls (spans 2 rows, bigger) */}
-              <div className="flex-1 flex items-center justify-center gap-2 px-4">
+            {/* Center Column: Transport (2/3) + TimeDisplay (1/3) */}
+            <div className="flex-1 flex flex-col items-center justify-center px-4">
+              <div className="flex items-center gap-2 flex-1">
                 <button onClick={() => seekTo(0)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Rewind size={headerIconSize} /></button>
                 <button onClick={handleStop} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><Square size={headerIconSize} fill="currentColor" /></button>
                 <button onClick={handlePlayPause} className={cn("w-12 h-12 rounded-full flex items-center justify-center", isPlaying ? "bg-zinc-100 text-zinc-900" : "bg-zinc-800 text-zinc-100 border border-zinc-700")}>
@@ -724,48 +753,41 @@ export default function App() {
                 </button>
                 <button onClick={() => seekTo(useStore.getState().currentTime + 10)} className={cn(getBtnClass(true), "text-zinc-400 hover:text-zinc-100 rounded-full")}><FastForward size={headerIconSize} /></button>
               </div>
+              {showTier(2) && (
+                <div className="scale-[0.65]">
+                  <TransportTimeDisplay />
+                </div>
+              )}
+            </div>
 
-              {/* Right Area: 2 rows of items */}
-              <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
-                <div className="flex items-center gap-1">
-                  {showTier(2) && (
-                    <button onClick={() => {
-                      const modes = ['always', 'recording', 'none'] as const;
-                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
-                      setPreRollMode(nextMode);
-                    }} className={cn(getBtnClass(), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title={`Pre-roll: ${preRollMode}`}>
-                      <span className="text-[9px] font-bold uppercase">{mainToolbarLabel(preRollMode, preRollMode.substring(0, 3))}</span>
+            {/* Right Column: Cues+FS top, Locks bottom */}
+            <div className="flex flex-col justify-between py-1 px-2 gap-0.5">
+              <div className="flex items-center gap-1">
+                {showTier(2) && (
+                  <button onClick={() => setShowCues(!showCues)} className={cn(getBtnClass(true), "rounded", showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Cues">
+                    <ListMusic size={headerIconSize} />
+                  </button>
+                )}
+                {showTier(2) && (
+                  <button onClick={toggleFullscreen} className={cn(getBtnClass(true), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
+                    {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
+                  </button>
+                )}
+              </div>
+              <div className="flex items-center gap-1">
+                {showTier(2) && appMode === 'mixer' && (
+                  <>
+                    <button onClick={() => setMoveLocked(!moveLocked)} className={cn(getBtnClass(true), moveLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={moveLocked ? "Locked" : "Unlocked"}>
+                      {moveLocked ? <Lock size={headerIconSize} /> : <Unlock size={headerIconSize} />}
                     </button>
-                  )}
-                  {showTier(2) && (
-                    <button onClick={() => setShowCues(!showCues)} className={cn(getBtnClass(true), "rounded", showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Cues">
-                      <Music size={headerIconSize} />
+                    <button onClick={() => setEnvelopeLocked(!envelopeLocked)} className={cn(getBtnClass(true), envelopeLocked ? "text-red-400 bg-red-500/10" : "text-green-400 bg-green-500/10")} title={envelopeLocked ? "Locked" : "Unlocked"}>
+                      <Activity size={headerIconSize} />
                     </button>
-                  )}
-                  {showTier(2) && (
-                    <button onClick={toggleFullscreen} className={cn(getBtnClass(true), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}>
-                      {isFullscreen ? <Minimize size={headerIconSize} /> : <Maximize size={headerIconSize} />}
-                    </button>
-                  )}
-                  {showTier(1) && appMode === 'lyrics' && (
-                    <button onClick={() => setLyricsEditMode(!lyricsEditMode)} className={cn(getBtnClass(true), "rounded", lyricsEditMode ? "bg-zinc-100 text-zinc-900" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title={lyricsEditMode ? "Finish Editing" : "Edit Lyrics Text"}>
-                      <Edit3 size={headerIconSize} />
-                    </button>
-                  )}
-                </div>
-                <div className="flex items-center gap-1">
-                  {showTier(1) && (
-                    <div className="flex items-center gap-1 px-1">
-                      <span className="text-[9px] font-bold text-zinc-500 uppercase">{mainToolbarLabel('Tempo', 'BPM')}</span>
-                      <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
-                      <span className="text-[9px] font-bold text-zinc-500">|</span>
-                      <span className="text-[9px] font-mono font-bold text-zinc-300">{timeSignature[0]}/{timeSignature[1]}</span>
-                    </div>
-                  )}
-                </div>
+                  </>
+                )}
               </div>
             </div>
-          </>
+          </div>
         ) : (
           /* Normal Layout (landscape/medium/large) */
           <>
@@ -820,8 +842,8 @@ export default function App() {
                   </div>
                 </button>
                 
-                {/* Metronome Mute Toggle */}
-                {showTier(2) && (
+                {/* Metronome + Count-in */}
+                {showTier(1) && (
                   <button 
                     onClick={(e) => {
                       e.stopPropagation();
@@ -837,8 +859,27 @@ export default function App() {
                     )}
                     title="Toggle Metronome"
                   >
-                    <Volume2 size={headerIconSize} className={cn(tracks.find(t => t.id === 'metronome')?.isMuted && "opacity-50")} />
-                    <span className="text-[9px] font-bold uppercase tracking-widest hidden sm:block">{mainToolbarLabel('Metro', 'M')}</span>
+                    <Metronome size={headerIconSize} className={cn(tracks.find(t => t.id === 'metronome')?.isMuted && "opacity-50")} />
+                  </button>
+                )}
+                {showTier(1) && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const modes = ['always', 'recording', 'none'] as const;
+                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
+                      setPreRollMode(nextMode);
+                    }}
+                    className="flex items-stretch gap-1.5 px-1.5 py-1 rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800 whitespace-nowrap"
+                    title={`Count-in: ${preRollMode}`}
+                  >
+                    <div className="flex flex-col items-end justify-center shrink-0 leading-none">
+                      <span className="text-[8px] font-bold">Pre</span>
+                      <span className="text-[8px] font-bold">Roll</span>
+                    </div>
+                    <div className="flex-1 flex items-center justify-center">
+                      <span className="text-[9px] font-bold">{preRollMode === 'none' ? 'None' : preRollMode === 'recording' ? 'Only Rec' : 'Always'}</span>
+                    </div>
                   </button>
                 )}
               </div>
@@ -907,24 +948,11 @@ export default function App() {
               <div className="flex items-center gap-1 border-l border-zinc-800 pl-1 sm:pl-3 ml-0.5 sm:ml-1">
                 {showTier(2) && (
                   <button 
-                    onClick={() => {
-                      const modes = ['always', 'recording', 'none'] as const;
-                      const nextMode = modes[(modes.indexOf(preRollMode) + 1) % modes.length];
-                      setPreRollMode(nextMode);
-                    }}
-                    className={cn(getBtnClass(), "rounded text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")}
-                    title={`Pre-roll: ${preRollMode}`}
-                  >
-                    <span className="text-[9px] font-bold uppercase">{mainToolbarLabel(preRollMode, preRollMode.substring(0, 3))}</span>
-                  </button>
-                )}
-                {showTier(2) && (
-                  <button 
                     onClick={() => setShowCues(!showCues)}
                     className={cn(getBtnClass(true), "rounded", showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")}
                     title="Toggle Cues"
                   >
-                    <Music size={headerIconSize} />
+                    <ListMusic size={headerIconSize} />
                   </button>
                 )}
                 {showTier(3) && (
