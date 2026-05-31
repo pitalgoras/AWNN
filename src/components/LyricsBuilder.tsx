@@ -355,7 +355,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
   };
 
   return (
-    <div className="flex-1 flex flex-row overflow-hidden bg-zinc-950 text-zinc-200">
+    <div className="h-full flex flex-row overflow-hidden bg-zinc-950 text-zinc-200">
        
 
       
@@ -400,8 +400,8 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
         )}
 
         {/* Lyrics Editor / Canvas */}
-        <div className={cn("flex-1 max-w-4xl", isEditMode ? "p-6 h-full" : "relative")}>
-          {!isPortrait && !isEditMode && (
+        <div className={cn("flex-1", isEditMode ? "h-full" : "relative max-w-4xl")}>
+          {!isEditMode && (
             <button onClick={() => setIsEditMode(true)}
               className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-800 text-white hover:bg-zinc-700 shadow-sm"
               title="Edit Lyrics Text"
@@ -409,7 +409,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
               <Edit3 size={14} /> Edit
             </button>
           )}
-          {!isPortrait && isEditMode && (
+          {isEditMode && (
             <button onClick={() => setIsEditMode(false)}
               className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-900 shadow-sm"
               title="Finish Editing"

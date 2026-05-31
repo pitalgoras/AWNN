@@ -933,4 +933,11 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 ### Files Modified
 - `src/lib/utils.ts` — `blendColors` HSL rewrite, combo color updates
 - `src/components/modals/VoicingChooserModal.tsx` — removed `.sort()`
-- `src/components/LyricsBuilder.tsx` — dynamic `tagColorMap`, `isVoicingTag`, custom combo parsing, contrast text color<｜end▁of▁thinking｜>
+- `src/components/LyricsBuilder.tsx` — dynamic `tagColorMap`, `isVoicingTag`, custom combo parsing, contrast text color
+
+## T. Edit Mode Layout Fixes
+**Problem:** Two issues in lyrics edit mode: the textarea didn't fill available height, and the Edit/Done buttons were hidden in portrait mode.
+**Root Cause:** The LyricsBuilder outer div used `flex-1` but its parent was `position: absolute` (not a flex container), so flex sizing didn't apply and height collapsed to content. Edit/Done buttons were gated behind `!isPortrait`, hiding them on phones.
+**Decision:** Changed outer div from `flex-1` to `h-full` to inherit the definite height from the positioned parent. Removed the `!isPortrait` guard from both Edit and Done buttons so they're visible at any orientation.
+### Files Modified
+- `src/components/LyricsBuilder.tsx` — outer div `flex-1` → `h-full`, Edit/Done button visibility<｜end▁of▁thinking｜>
