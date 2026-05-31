@@ -891,7 +891,27 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 
 10. **TimeDisplay bar/beat format** — Changed from `"3.2"` to `"Bar 3    Beat 2"`. Bar/beat line now uses same font size (`text-xl`), color (`text-zinc-100`), and weight (`font-light`) as the main time line.
 
+## Q. Voicing Palette Tag ID Refactor
+**Problem:** Combo tags (All, Har, S&A, T&B) in the voicing palette had no effect — tapping them always painted `[Acc]` instead of the intended combo tag.
+**Root Cause:** Commit `378fea9` (TrackBar unification) moved voicing palette inline from LyricsBuilder to TrackBar. TrackBar's combo tags used blended colors (e.g. `#f5a261` for S&A) that didn't match the hardcoded color IDs in `standardVoicings` in LyricsBuilder (`#ED8936`). `handleWordInteraction` did color-based lookup which silently failed for combos and fell back to Accompaniment.
+**Decision:**
+- Tag text IS the ID (canonical form uses `+` separator, e.g. `[S+A]`). Color is derived from a central map, never used as identifier.
+- Added central `TAG_COLOR_MAP`, `TAG_LABEL_MAP`, and helpers (`getTagColor`, `getTagLabel`, `buildComboTagId`, `buildComboLabel`, `getTrackTagLabel`) in `src/lib/utils.ts`.
+- Renamed `activeColorId` → `activeTagId` in Zustand store.
+- `handleWordInteraction` now uses `activeTagId` directly (no color lookup).
+- Bonus: replaced mouse-only events with pointer events in `LyricsBuilder.tsx`, `MoreIconDropdown.tsx`, and `SyncTool.tsx` for touch device support.
 ### Files Modified
-- `src/App.tsx` — Landscape restructure, shared render functions, elastic columns, conditional icons
-- `src/audio/time/timeFormat.ts` — `formatBarBeat` output format
-- `src/components/TransportTimeDisplay.tsx` — Bar/beat line styling<｜end▁of▁thinking｜>
+- `src/lib/utils.ts` — `TAG_COLOR_MAP`, `TAG_LABEL_MAP`, helpers
+- `src/store/useStore.ts` — `activeColorId` → `activeTagId`, `setActiveColorId` → `setActiveTagId`
+- `src/components/TrackBar.tsx` — tag ID based selection, canonical combo IDs
+- `src/components/LyricsBuilder.tsx` — removed local maps, direct tag lookup, pointer events
+- `src/components/modals/VoicingChooserModal.tsx` — shared `blendColors`, canonical IDs
+- `src/components/MoreIconDropdown.tsx` — `mousedown` → `pointerdown`
+- `src/components/SyncTool.tsx` — `mousedown` → `pointerdown`
+
+## R. Dead 'D' Key Handler Removal
+**Problem:** Pressing `D` in lyrics text editing mode switched the app to mixer view.
+**Root Cause:** Global `keydown` listener in `src/App.tsx` (registered with `{ capture: true }`) had an `else if (e.key === 'd')` branch that called `setAppMode('mixer')`. The capture-phase listener fired before React's synthetic events, so typing 'd' into a textarea triggered both the character input and the app mode switch.
+**Decision:** Removed the dead `else if (e.key === 'd')` block. The spacebar handler already guards against input elements.
+### Files Modified
+- `src/App.tsx` — removed dead 'd' key handler<｜end▁of▁thinking｜>

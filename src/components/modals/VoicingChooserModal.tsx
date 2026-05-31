@@ -1,21 +1,9 @@
 import React, { useState, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
 import { ModalShell } from './ModalShell';
-import { cn, getShortLabel, getContrastColor } from '../../lib/utils';
+import { cn, getShortLabel, getContrastColor, blendColors, getTrackTagLabel } from '../../lib/utils';
 
 interface Props { show: boolean; onClose: () => void }
-
-function blendColors(hex1: string, hex2: string): string {
-  const r1 = parseInt(hex1.slice(1, 3), 16);
-  const g1 = parseInt(hex1.slice(3, 5), 16);
-  const b1 = parseInt(hex1.slice(5, 7), 16);
-  const r2 = parseInt(hex2.slice(1, 3), 16);
-  const g2 = parseInt(hex2.slice(3, 5), 16);
-  const b2 = parseInt(hex2.slice(5, 7), 16);
-  return '#' + [r1, g1, b1].map((_, i) =>
-    Math.floor(([r1, g1, b1][i] + [r2, g2, b2][i]) / 2).toString(16).padStart(2, '0')
-  ).join('');
-}
 
 export const VoicingChooserModal: React.FC<Props> = ({ show, onClose }) => {
   const tracks = useStore(s => s.tracks);
@@ -55,7 +43,8 @@ export const VoicingChooserModal: React.FC<Props> = ({ show, onClose }) => {
 
   const previewId = useMemo(() => {
     if (selected.length < 2) return '';
-    return `combo-${selected.map(t => t.id).sort().join('-')}`;
+    const labels = selected.map(t => getTrackTagLabel(t)).sort();
+    return `[${labels.join('+')}]`;
   }, [selected]);
 
   const canAdd = selected.length >= 2;

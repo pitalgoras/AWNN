@@ -70,7 +70,7 @@ interface AppState {
   lyricsText: string;
   lyricsSegments: VoicingSegment[];
   lyricsViewMode: 'fixed' | 'scaled';
-  activeColorId: string;
+  activeTagId: string;
   customTags: VoiceTag[];
   comboTagSeparator: '&' | '+';
   sectionTags: string[];
@@ -183,7 +183,7 @@ interface AppState {
   setLyricsText: (text: string) => void;
   setLyricsSegments: (segments: VoicingSegment[]) => void;
   setLyricsViewMode: (mode: 'fixed' | 'scaled') => void;
-  setActiveColorId: (colorId: string) => void;
+  setActiveTagId: (tagId: string) => void;
   addCustomTag: (tag: VoiceTag) => void;
   markCustomTagUsed: (id: string) => void;
   setComboTagSeparator: (separator: '&' | '+') => void;
@@ -226,7 +226,7 @@ const defaultSettings = {
   lyricsText: '',
   lyricsSegments: [] as VoicingSegment[],
   lyricsViewMode: 'fixed' as const,
-  activeColorId: '#FACC15',
+  activeTagId: '[ALL]',
   customTags: [],
   comboTagSeparator: '+' as const,
   sectionTags: ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'],
@@ -266,7 +266,7 @@ export const useStore = create<AppState>()(
         setLyricsText: (text) => set({ lyricsText: text }),
         setLyricsSegments: (segments) => set({ lyricsSegments: segments }),
         setLyricsViewMode: (mode) => set({ lyricsViewMode: mode }),
-        setActiveColorId: (colorId) => set({ activeColorId: colorId }),
+        setActiveTagId: (tagId) => set({ activeTagId: tagId }),
         addCustomTag: (tag) => set((state) => {
           const voiceTracks = state.tracks.filter(t => t.id !== 'metronome' && !t.isInstrument);
           const maxCustom = 4 + Math.max(0, (voiceTracks.length - 4) * 2);
@@ -576,7 +576,7 @@ export const useStore = create<AppState>()(
         lyricsText: state.lyricsText,
         lyricsSegments: state.lyricsSegments,
         lyricsViewMode: state.lyricsViewMode,
-        activeColorId: state.activeColorId,
+        activeTagId: state.activeTagId,
         customTags: state.customTags,
         comboTagSeparator: state.comboTagSeparator,
         sectionTags: state.sectionTags,

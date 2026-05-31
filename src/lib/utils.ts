@@ -51,13 +51,78 @@ export interface VoiceTag {
   usedInSession?: boolean;
 }
 
+// Single source of truth for built-in voice tag IDs, colors, and labels
+// Tag ID is the canonical tag text (always uses + separator for combos)
+export const TAG_COLOR_MAP: Record<string, string> = {
+  '[ALL]': '#A0AEC0',
+  '[Har]': '#F97316',
+  '[Acc]': '#4a5568',
+  '[S]': '#F6E05E',
+  '[A]': '#F56565',
+  '[T]': '#48BB78',
+  '[B]': '#4299E1',
+};
+
+export const TAG_LABEL_MAP: Record<string, string> = {
+  '[ALL]': 'All',
+  '[Har]': 'Har',
+  '[Acc]': 'Acc',
+  '[S]': 'S',
+  '[A]': 'A',
+  '[T]': 'T',
+  '[B]': 'B',
+};
+
+const TAG_LONG_LABEL_MAP: Record<string, string> = {
+  '[ALL]': 'All',
+  '[Har]': 'Harmony',
+  '[Acc]': 'Accompaniment',
+  '[S]': 'Soprano',
+  '[A]': 'Alto',
+  '[T]': 'Tenor',
+  '[B]': 'Bass',
+};
+
+export function getTagColor(tagId: string): string {
+  return TAG_COLOR_MAP[tagId] ?? 'transparent';
+}
+
+export function getTagLabel(tagId: string): string {
+  return TAG_LABEL_MAP[tagId] ?? tagId.replace(/[[\]]/g, '');
+}
+
+export function getTagLongLabel(tagId: string): string {
+  return TAG_LONG_LABEL_MAP[tagId] ?? tagId.replace(/[[\]]/g, '');
+}
+
+// Build a canonical combo tag ID (always uses + separator internally)
+export function buildComboTagId(a: string, b: string): string {
+  return `[${a}+${b}]`;
+}
+
+// Build a display label for a combo tag (respects current separator preference)
+export function buildComboLabel(a: string, b: string, sep: string): string {
+  return `${a}${sep}${b}`;
+}
+
+// Build the display color for a combo tag by blending the two source colors
+export function getComboColor(trackA: { color: string }, trackB: { color: string }): string {
+  return blendColors(trackA.color, trackB.color);
+}
+
+// Get the short label for a track (used for tag IDs)
+export function getTrackTagLabel(track: { id: string; name: string; shortLabel?: string }): string {
+  return track.shortLabel || getShortLabel(track.name, 1);
+}
+
 export function generateVoiceTags(tracks: { id: string; name: string; color: string; isInstrument?: boolean; shortLabel?: string }[]): VoiceTag[] {
   const filtered = tracks.filter(t => t.id !== 'metronome');
   const tags: VoiceTag[] = [];
 
   for (const t of filtered) {
+    const tagId = `[${getTrackTagLabel(t)}]`;
     tags.push({
-      id: t.id,
+      id: tagId,
       label: getTrackShortLabel(t, 3),
       color: t.color,
       trackIds: [t.id],
@@ -66,16 +131,15 @@ export function generateVoiceTags(tracks: { id: string; name: string; color: str
   }
 
   tags.push({
-    id: 'all',
+    id: '[ALL]',
     label: 'All',
-    color: '#a1a1aa',
+    color: '#A0AEC0',
     trackIds: [],
     isComposite: false,
   });
 
-  // Har (standalone — not a composite of tracks)
   tags.push({
-    id: 'har',
+    id: '[Har]',
     label: 'Har',
     color: '#F97316',
     trackIds: [],

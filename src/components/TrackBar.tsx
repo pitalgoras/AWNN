@@ -1,6 +1,6 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store/useStore';
-import { cn, getContrastColor, blendColors, getTrackShortLabel } from '../lib/utils';
+import { cn, getContrastColor, blendColors, getTrackShortLabel, getTrackTagLabel, getTagColor } from '../lib/utils';
 import { Mic, Activity, RotateCcw } from 'lucide-react';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
@@ -9,8 +9,8 @@ import { VoicingChooserModal } from './modals/VoicingChooserModal';
 export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer' | 'lyrics'; handlers: any }) => {
   const tracks = useStore(s => s.tracks);
   const selectedTrackId = useStore(s => s.selectedTrackId);
-  const activeColorId = useStore(s => s.activeColorId);
-  const setActiveColorId = useStore(s => s.setActiveColorId);
+  const activeTagId = useStore(s => s.activeTagId);
+  const setActiveTagId = useStore(s => s.setActiveTagId);
   const isRecording = useStore(s => s.isRecording);
   
   const envelopeLocked = useStore(s => s.envelopeLocked);
@@ -63,7 +63,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   const markCustomTagUsed = useStore(s => s.markCustomTagUsed);
   const comboTagSeparator = useStore(s => s.comboTagSeparator);
 
-  const FIXED_TAG_IDS = useMemo(() => new Set(['all', 'har', 'combo-2-3', 'combo-4-5']), []);
+  const FIXED_TAG_IDS = useMemo(() => new Set(['[ALL]', '[Har]', '[S+A]', '[T+B]']), []);
 
   const fixedComboTags = useMemo(() => {
     if (mode !== 'lyrics') return [];
@@ -76,21 +76,21 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
 
     return [
       {
-        id: 'all', label: 'All', color: '#a1a1aa',
+        id: '[ALL]', label: 'All', color: getTagColor('[ALL]'),
         trackIds: [], isComposite: false,
       },
       {
-        id: 'har', label: 'Har', color: '#F97316',
+        id: '[Har]', label: 'Har', color: getTagColor('[Har]'),
         trackIds: [], isComposite: false,
       },
       {
-        id: 'combo-2-3',
+        id: '[S+A]',
         label: `S${sep}A`,
         color: soprano && alto ? blendColors(soprano.color, alto.color) : '#888',
         trackIds: ['2', '3'], isComposite: true,
       },
       {
-        id: 'combo-4-5',
+        id: '[T+B]',
         label: `T${sep}B`,
         color: tenor && bass ? blendColors(tenor.color, bass.color) : '#888',
         trackIds: ['4', '5'], isComposite: true,
@@ -123,7 +123,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   }, [tracks, btnSize]);
 
   const handleTagClick = (tag: { id: string; color: string }) => {
-    setActiveColorId(tag.color);
+    setActiveTagId(tag.id);
     if (!FIXED_TAG_IDS.has(tag.id)) {
       markCustomTagUsed(tag.id);
     }
@@ -160,11 +160,11 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   M
                 </button>
                 <button
-                  onClick={() => setActiveColorId(track.color)}
+                  onClick={() => setActiveTagId(`[${getTrackTagLabel(track)}]`)}
                   className={cn(
                     "rounded font-bold transition-all select-none",
                     getToolbarBtnClass(true),
-                    activeColorId === track.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                    activeTagId === `[${getTrackTagLabel(track)}]` ? "ring-2 ring-white scale-105" : "hover:scale-105"
                   )}
                   style={{ backgroundColor: track.color, color: getContrastColor(track.color) }}
                 >
@@ -180,7 +180,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   className={cn(
                     "rounded font-bold transition-all select-none",
                     getToolbarBtnClass(true),
-                    activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                    activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
                   )}
                   style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                 >
@@ -207,7 +207,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                     className={cn(
                       "rounded font-bold transition-all select-none",
                       getToolbarBtnClass(true),
-                      activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                      activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
                     )}
                     style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                   >
@@ -220,7 +220,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                     className={cn(
                       "rounded font-bold transition-all select-none",
                       getToolbarBtnClass(true),
-                      activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                      activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
                     )}
                     style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                   >
@@ -281,12 +281,12 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                           useSingleRow ? "flex-1" : "w-full"
                         )}>
                           <button
-                            onClick={() => mode === 'lyrics' ? setActiveColorId(track.color) : useStore.getState().setSelectedTrackId(track.id)}
+                            onClick={() => mode === 'lyrics' ? setActiveTagId(`[${getTrackTagLabel(track)}]`) : useStore.getState().setSelectedTrackId(track.id)}
                             onPointerDown={(e) => mode === 'lyrics' && e.stopPropagation()}
                             className={cn(
                               "rounded flex items-center justify-center font-bold transition-all",
                               mode === 'lyrics' ? getToolbarBtnClass(true) : "w-full h-full text-[10px]",
-                              mode === 'lyrics' && (activeColorId === track.color ? "ring-2 ring-white scale-105" : "hover:scale-105")
+                              mode === 'lyrics' && (activeTagId === `[${getTrackTagLabel(track)}]` ? "ring-2 ring-white scale-105" : "hover:scale-105")
                             )}
                             style={{ 
                               backgroundColor: trackColor,
@@ -457,7 +457,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                       className={cn(
                         "rounded font-bold transition-all select-none",
                         getToolbarBtnClass(true),
-                        activeColorId === tag.color ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                        activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
                       )}
                       style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                     >

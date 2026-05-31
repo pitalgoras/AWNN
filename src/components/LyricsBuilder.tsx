@@ -1,27 +1,13 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { cn } from '../lib/utils';
+import { cn, TAG_COLOR_MAP } from '../lib/utils';
 import { AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
 
 
-const TAG_COLOR_MAP: Record<string, string> = {
-  '[ALL]': '#A0AEC0', '[S]': '#F6E05E', '[A]': '#F56565',
-  '[T]': '#48BB78', '[B]': '#4299E1', '[Acc]': '#4a5568',
-  '[S&A]': '#ED8936', '[S+A]': '#ED8936',
-  '[T&B]': '#38B2AC', '[T+B]': '#38B2AC',
-};
 
-const BASE_VOICINGS = [
-  { id: '#4a5568', label: 'Accompaniment', tag: '[Acc]', trackId: '1' },
-  { id: '#F6E05E', label: 'Soprano', tag: '[S]', trackId: '2' },
-  { id: '#F56565', label: 'Alto', tag: '[A]', trackId: '3' },
-  { id: '#48BB78', label: 'Tenor', tag: '[T]', trackId: '4' },
-  { id: '#4299E1', label: 'Bass', tag: '[B]', trackId: '5' },
-  { id: '#A0AEC0', label: 'Unison', tag: '[ALL]', trackId: null },
-];
 
 interface Props {
   isEditMode: boolean;
@@ -36,8 +22,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     setLyricsText,
     lyricsViewMode,
     setLyricsViewMode,
-    activeColorId,
-    setActiveColorId,
+    activeTagId,
     currentTime,
     duration,
     tracks,
@@ -46,20 +31,10 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     setIsRecording,
     setSelectedTrackId,
     selectedTrackId,
-    comboTagSeparator,
     sectionTags,
   } = useStore();
 
   const [isPainting, setIsPainting] = useState(false);
-
-  const standardVoicings = useMemo(() => {
-    const sep = comboTagSeparator;
-    return [
-      ...BASE_VOICINGS,
-      { id: '#ED8936', label: `Soprano ${sep} Alto`, tag: `[S${sep}A]`, trackId: null },
-      { id: '#38B2AC', label: `Tenor ${sep} Bass`, tag: `[T${sep}B]`, trackId: null },
-    ];
-  }, [comboTagSeparator]);
 
   const toolbarContext = useToolbarContext('vertical');
   const isPortrait = toolbarContext.isPortrait;
@@ -208,9 +183,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
 const handleWordInteraction = (startChar: number, endChar: number) => {
   if (isEditMode) return;
 
-  // Target tag from active color
-  const voiceObj = standardVoicings.find(v => v.id === activeColorId) || standardVoicings[0];
-  const targetTag = voiceObj.tag; // e.g., "[S]"
+  const targetTag = activeTagId;
 
   // Helper: scan forward from a position and remove all targetTag occurrences until a different voicing tag appears
   const removeForwardDuplicates = (text: string, fromIndex: number): string => {
@@ -441,9 +414,9 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
             <div 
               className={cn("w-full font-serif cursor-crosshair select-none", lyricsViewMode === 'scaled' ? "h-full" : "p-6")}
               style={lyricsViewMode === 'scaled' ? { minHeight: `${duration * PIXELS_PER_SECOND}px` } : {}}
-              onMouseDown={() => setIsPainting(true)}
-              onMouseUp={() => setIsPainting(false)}
-              onMouseLeave={() => setIsPainting(false)}
+              onPointerDown={() => setIsPainting(true)}
+              onPointerUp={() => setIsPainting(false)}
+              onPointerLeave={() => setIsPainting(false)}
             >
               {!lyricsText.trim() && (
                 <div className="text-zinc-600 text-center mt-20">Click 'Edit Text' to add lyrics.</div>
@@ -465,7 +438,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                   >
                     {/* Anchor Button */}
                     <button 
-                      onMouseDown={(e) => { e.stopPropagation(); handleAnchorLine(line.startIndex); }}
+                      onPointerDown={(e) => { e.stopPropagation(); handleAnchorLine(line.startIndex); }}
                       className={cn(
                         "absolute -left-10 opacity-0 group-hover/line:opacity-100 transition-all bg-zinc-800 rounded-full shadow-lg",
                         getBtnClass(true)
@@ -522,8 +495,8 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                       return (
                         <span
                           key={`el-${idx}-${eIdx}`}
-                          onMouseDown={() => handleWordInteraction(el.startChar, el.endChar)}
-                          onMouseEnter={() => { if (isPainting) handleWordInteraction(el.startChar, el.endChar) }}
+                          onPointerDown={() => handleWordInteraction(el.startChar, el.endChar)}
+                          onPointerEnter={() => { if (isPainting) handleWordInteraction(el.startChar, el.endChar) }}
                           className={cn(
                             "inline-block transition-colors cursor-pointer text-sm md:text-base h-[1.5rem] leading-[1.5rem] align-top",
                             !isPainted && "hover:bg-zinc-800"
