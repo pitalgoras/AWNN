@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useStore } from '../store/useStore';
-import { cn, TAG_COLOR_MAP } from '../lib/utils';
+import { cn, TAG_COLOR_MAP, getContrastColor } from '../lib/utils';
 import { AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
 import { useToolbarContext } from '../hooks/useToolbarContext';
@@ -32,6 +32,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     setSelectedTrackId,
     selectedTrackId,
     sectionTags,
+    customTags,
   } = useStore();
 
   const [isPainting, setIsPainting] = useState(false);
@@ -78,6 +79,17 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
 
   // Sync scroll with playback time ONLY if user allows it (for now, simply let users scroll freely, or if we want lock-to-playhead we can do that. User said "allow text scrolling with 2 finger on desktop and drag on mobile keeping stripes in sync", so they MUST be in the same scroll container).
 
+  // Build a dynamic tag→color map from static tags + custom combos
+  const tagColorMap = useMemo(() => {
+    const map: Record<string, string> = { ...TAG_COLOR_MAP };
+    for (const ct of customTags) {
+      map[ct.id] = ct.color;
+    }
+    return map;
+  }, [customTags]);
+
+  const isVoicingTag = (tagText: string): boolean => tagColorMap[tagText] !== undefined;
+
   // Parse text into lines, words, and tags
   const parsedLines = useMemo(() => {
     const list: any[] = [];
@@ -86,7 +98,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     let charIndex = 0;
 
     // Tokenize: TimeTags, VoiceTags, SectionTags, Newlines, Words, Whitespace
-    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|Acc|S[+&]A|T[+&]B)\])|(\[[A-Za-z][A-Za-z0-9\s\-]*?\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
+    const regex = /(\[T:\d+(\.\d+)?\])|(\[(ALL|S|A|T|B|Acc|S[+&]A|T[+&]B)\])|(\[[A-Za-z][A-Za-z0-9\s\-+&]*?\])|(\n)|([^\s\[\]\n]+)|([ \t]+)/g;
     let match;
 
     while ((match = regex.exec(lyricsText)) !== null) {
@@ -101,14 +113,20 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
         
         currentLine.elements.push({ type: 'time-tag', text: matchText, startChar, endChar, time: currentLine.time });
       } else if (match[3]) {
-        // Voice Tag
-        const vId = TAG_COLOR_MAP[match[0]];
+        // Voice Tag (fast path for known tags)
+        const vId = tagColorMap[match[0]];
         if (vId) currentVoiceColor = vId;
         
         currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
       } else if (match[5]) {
-        // Section Tag
-        currentLine.elements.push({ type: 'section-tag', text: matchText, startChar, endChar });
+        // Catch-all bracket tag — could be voicing tag ([Har], custom combo) or section tag
+        const vId = tagColorMap[matchText];
+        if (vId) {
+          currentVoiceColor = vId;
+          currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
+        } else {
+          currentLine.elements.push({ type: 'section-tag', text: matchText, startChar, endChar });
+        }
       } else if (match[6]) {
         // Newline
         currentLine.endIndex = endChar;
@@ -129,7 +147,7 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     list.push(currentLine);
 
     return list;
-  }, [lyricsText]);
+  }, [lyricsText, tagColorMap]);
 
   const setLyricsCleanText = (text: string) => {
     // Basic cleanup logic: remove consecutive duplicate tags, enforce one time tag per line
@@ -154,26 +172,34 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
     }).join('\n');
 
     // Rule: [ALL] overwrites others nearby (simplification)
-    cleaned = cleaned.replace(/\[(S|A|T|B|S[+&]A|T[+&]B)\]\s*\[ALL\]/g, '[ALL]');
-    cleaned = cleaned.replace(/\[ALL\]\s*\[(S|A|T|B|S[+&]A|T[+&]B)\]/g, '[ALL]');
+    cleaned = cleaned.replace(/(\[[^\]]+\])\s*\[ALL\]/g, (match, tag) => {
+      if (tag !== '[ALL]' && isVoicingTag(tag)) return '[ALL]';
+      return match;
+    });
+    cleaned = cleaned.replace(/\[ALL\]\s*(\[[^\]]+\])/g, (match, tag) => {
+      if (tag !== '[ALL]' && isVoicingTag(tag)) return '[ALL]';
+      return match;
+    });
     
-// Rule: remove duplicate voicing tags with text between them (line-by-line)
+ // Rule: remove duplicate voicing tags with text between them (line-by-line)
      cleaned = cleaned.split('\n').map(line => {
-       let lastTag = null;
-       return line.replace(/\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g, (match, tag) => {
-         if (tag === lastTag) return ''; // Remove duplicate
-         lastTag = tag;
+       let lastTag: string | null = null;
+       return line.replace(/\[[^\]]+\]/g, (match) => {
+         if (!isVoicingTag(match)) return match;
+         if (match === lastTag) return '';
+         lastTag = match;
          return match;
        });
      }).join('\n');
     
     // Rule: if multiple conflicting voices, just keep the last painted one (this is tricky to regex perfectly, but we'll prune obvious ones)
     // E.g. [S] [A] -> [A]
-    cleaned = cleaned.replace(/(\[(S|A|T|B|S[+&]A|T[+&]B|ALL)\]\s*)+\[(S|A|T|B|S[+&]A|T[+&]B|ALL)\]/g, (match, p1, p2, p3) => {
-      // Return just the last tag in the sequence
-      const tags = match.match(/\[.*?\]/g);
-      const lastTag = tags ? tags[tags.length - 1] : match;
-      return lastTag + ' ';
+    cleaned = cleaned.replace(/(\[[^\]]+\]\s*)+\[[^\]]+\]/g, (match) => {
+      // Return just the last voicing tag in the sequence
+      const tags = match.match(/\[.*?\]/g) || [];
+      const voicingTags = tags.filter(t => isVoicingTag(t));
+      if (voicingTags.length <= 1) return match;
+      return voicingTags[voicingTags.length - 1] + ' ';
     });
 
     setLyricsText(cleaned);
@@ -187,11 +213,12 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
 
   // Helper: scan forward from a position and remove all targetTag occurrences until a different voicing tag appears
   const removeForwardDuplicates = (text: string, fromIndex: number): string => {
-    const voicingTagPattern = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g;
+    const voicingTagPattern = /\[[^\]]+\]/g;
     let output = text.slice(0, fromIndex);
     let rest = text.slice(fromIndex);
     let match: RegExpExecArray | null;
     while ((match = voicingTagPattern.exec(rest)) !== null) {
+      if (!isVoicingTag(match[0])) continue;
       const matchedTag = match[0];
       if (matchedTag === targetTag) {
         // Remove this tag: skip it
@@ -210,10 +237,11 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
 
   // 1. Backward scan for nearest voicing tag V
   const textBefore = lyricsText.slice(0, startChar);
-  const tagRegex = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/g;
+  const tagRegex = /\[[^\]]+\]/g;
   let lastMatch: RegExpExecArray | null = null;
   let m: RegExpExecArray | null;
   while ((m = tagRegex.exec(textBefore)) !== null) {
+    if (!isVoicingTag(m[0])) continue;
     lastMatch = m;
   }
   const V = lastMatch ? lastMatch[0] : null;
@@ -228,7 +256,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
     // Check if cleaned contains any non-whitespace
     const hasText = /\S/.test(cleaned);
     // Check if there is any voicing tag in afterV (should not happen, but just in case)
-    const hasVoicing = /\[(ALL|S|A|T|B|S[+&]A|T[+&]B)\]/.test(afterV);
+    const hasVoicing = afterV.match(/\[[^\]]+\]/g)?.some(t => isVoicingTag(t)) ?? false;
     isRightBefore = !hasText && !hasVoicing;
   }
 
@@ -503,7 +531,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                           )}
                           style={{
                             backgroundColor: el.colorId,
-                            color: isPainted ? '#fff' : 'inherit',
+                            color: isPainted ? getContrastColor(el.colorId) : 'inherit',
                           }}
                         >
                           {el.text}

@@ -31,15 +31,42 @@ export function getTrackInitials(name: string, existingInitials: string[]): stri
 }
 
 export function blendColors(hex1: string, hex2: string): string {
-  const r1 = parseInt(hex1.slice(1, 3), 16);
-  const g1 = parseInt(hex1.slice(3, 5), 16);
-  const b1 = parseInt(hex1.slice(5, 7), 16);
-  const r2 = parseInt(hex2.slice(1, 3), 16);
-  const g2 = parseInt(hex2.slice(3, 5), 16);
-  const b2 = parseInt(hex2.slice(5, 7), 16);
-  return '#' + [r1, g1, b1].map((_, i) =>
-    Math.floor(([r1, g1, b1][i] + [r2, g2, b2][i]) / 2).toString(16).padStart(2, '0')
-  ).join('');
+  const toHsl = (hex: string): [number, number, number] => {
+    const r = parseInt(hex.slice(1, 3), 16) / 255;
+    const g = parseInt(hex.slice(3, 5), 16) / 255;
+    const b = parseInt(hex.slice(5, 7), 16) / 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    if (max === min) return [0, 0, l];
+    const d = max - min;
+    const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    let h = 0;
+    if (max === r) h = (g - b) / d + (g < b ? 6 : 0);
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    return [h * 60, s * 100, l * 100];
+  };
+  const fromHsl = (h: number, s: number, l: number): string => {
+    s /= 100; l /= 100;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n: number) => {
+      const k = (n + h / 30) % 12;
+      return Math.round(255 * (l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1))).toString(16).padStart(2, '0');
+    };
+    return `#${f(0)}${f(8)}${f(4)}`;
+  };
+
+  const [h1, s1, l1] = toHsl(hex1);
+  const [h2, s2, l2] = toHsl(hex2);
+
+  let ah1 = h1, ah2 = h2;
+  if (Math.abs(h1 - h2) > 180) {
+    if (h1 < h2) ah1 += 360; else ah2 += 360;
+  }
+  let h = (ah1 + ah2) / 2;
+  if (h >= 360) h -= 360;
+
+  return fromHsl(h, Math.max(s1, s2), (l1 + l2) / 2);
 }
 
 export interface VoiceTag {
@@ -61,6 +88,10 @@ export const TAG_COLOR_MAP: Record<string, string> = {
   '[A]': '#F56565',
   '[T]': '#48BB78',
   '[B]': '#4299E1',
+  '[S+A]': '#F6A161',
+  '[S&A]': '#F6A161',
+  '[T+B]': '#34DFD4',
+  '[T&B]': '#34DFD4',
 };
 
 export const TAG_LABEL_MAP: Record<string, string> = {

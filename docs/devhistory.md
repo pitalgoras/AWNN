@@ -914,4 +914,23 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 **Root Cause:** Global `keydown` listener in `src/App.tsx` (registered with `{ capture: true }`) had an `else if (e.key === 'd')` branch that called `setAppMode('mixer')`. The capture-phase listener fired before React's synthetic events, so typing 'd' into a textarea triggered both the character input and the app mode switch.
 **Decision:** Removed the dead `else if (e.key === 'd')` block. The spacebar handler already guards against input elements.
 ### Files Modified
-- `src/App.tsx` — removed dead 'd' key handler<｜end▁of▁thinking｜>
+- `src/App.tsx` — removed dead 'd' key handler
+
+## S. Combo Color Saturation & Custom Combo Parser Fixes
+**Problem:** Three bugs in the voicing palette combo system:
+1. Custom combo tag IDs were reversed (`.sort()` in `VoicingChooserModal` placed labels alphabetically)
+2. Custom combo tags (e.g. `[B+S+T]`) were not recognized by the parser — the catch-all bracket group `[A-Za-z0-9\s\-]` didn't include `+`/`&`, so `B+S+T` landed as a plain word and brackets were consumed
+3. Combo colors were desaturated — `blendColors` used simple RGB averaging which drifted toward gray
+
+**Decision:**
+- Removed `.sort()` from combo tag preview ID generation
+- Added `+&` to the parser's catch-all bracket character class
+- Replaced 8 hardcoded regex alternations with a dynamic `isVoicingTag()` helper that checks against a `tagColorMap` built from `TAG_COLOR_MAP` + `customTags`
+- Rewrote `blendColors` to use HSL space with max-saturation preservation (takes the higher saturation of the two source colors instead of averaging)
+- Updated hardcoded combo colors in `TAG_COLOR_MAP` to match new HSL blend
+- Changed LyricsBuilder painted word text from hardcoded `'#fff'` to `getContrastColor(el.colorId)` for proper contrast on light backgrounds
+
+### Files Modified
+- `src/lib/utils.ts` — `blendColors` HSL rewrite, combo color updates
+- `src/components/modals/VoicingChooserModal.tsx` — removed `.sort()`
+- `src/components/LyricsBuilder.tsx` — dynamic `tagColorMap`, `isVoicingTag`, custom combo parsing, contrast text color<｜end▁of▁thinking｜>

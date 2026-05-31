@@ -43,7 +43,7 @@ export const VoicingChooserModal: React.FC<Props> = ({ show, onClose }) => {
 
   const previewId = useMemo(() => {
     if (selected.length < 2) return '';
-    const labels = selected.map(t => getTrackTagLabel(t)).sort();
+    const labels = selected.map(t => getTrackTagLabel(t));
     return `[${labels.join('+')}]`;
   }, [selected]);
 
