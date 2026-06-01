@@ -363,7 +363,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
       <div 
         ref={containerRef}
         className={cn(
-          "flex-1 flex flex-row overflow-y-auto relative scroll-smooth",
+          "flex-1 flex flex-row overflow-y-auto relative scroll-smooth min-w-0",
           isEditMode && "overflow-hidden" // Hide scroll if edit mode uses full screen textarea
         )}
       >
@@ -400,7 +400,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
         )}
 
         {/* Lyrics Editor / Canvas */}
-        <div className={cn("flex-1", isEditMode ? "h-full" : "relative max-w-4xl")}>
+        <div className={cn("flex-1 relative", isEditMode ? "h-full" : "max-w-4xl")}>
           {!isEditMode && (
             <button onClick={() => setIsEditMode(true)}
               className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-800 text-white hover:bg-zinc-700 shadow-sm"

@@ -936,8 +936,8 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 - `src/components/LyricsBuilder.tsx` — dynamic `tagColorMap`, `isVoicingTag`, custom combo parsing, contrast text color
 
 ## T. Edit Mode Layout Fixes
-**Problem:** Two issues in lyrics edit mode: the textarea didn't fill available height, and the Edit/Done buttons were hidden in portrait mode.
-**Root Cause:** The LyricsBuilder outer div used `flex-1` but its parent was `position: absolute` (not a flex container), so flex sizing didn't apply and height collapsed to content. Edit/Done buttons were gated behind `!isPortrait`, hiding them on phones.
-**Decision:** Changed outer div from `flex-1` to `h-full` to inherit the definite height from the positioned parent. Removed the `!isPortrait` guard from both Edit and Done buttons so they're visible at any orientation.
+**Problem:** Three issues in lyrics edit mode: textarea didn't fill available height, Edit/Done buttons were hidden in portrait mode, and on mobile the textarea overflowed the viewport width causing layout breakage and browser crash.
+**Root Cause:** (1) LyricsBuilder outer div used `flex-1` but its parent was `position: absolute` (not a flex container), so flex sizing didn't apply and height collapsed to content. (2) Edit/Done buttons were gated behind `!isPortrait`, hiding them on phones. (3) Flex container chain lacked `min-w-0`, so the textarea refused to shrink below its intrinsic content width on mobile — causing overflow beyond viewport. (4) Edit mode container had no `relative`, so the Done button's `absolute` positioning was relative to the workspace div instead.
+**Decision:** Changed outer div from `flex-1` to `h-full` to inherit definite height. Removed `!isPortrait` guard from both buttons. Added `min-w-0` to workspace flex container to allow proper shrinkage. Extracted `relative` to the shared className so both Edit and Done buttons position correctly.
 ### Files Modified
-- `src/components/LyricsBuilder.tsx` — outer div `flex-1` → `h-full`, Edit/Done button visibility<｜end▁of▁thinking｜>
+- `src/components/LyricsBuilder.tsx` — outer div `flex-1` → `h-full`, Edit/Done button visibility, `min-w-0`, `relative` fix<｜end▁of▁thinking｜>
