@@ -150,7 +150,10 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   <Mic className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => useStore.getState().updateTrack?.(track.id, { isMuted: !track.isMuted })}
+                  onClick={() => {
+                    const t = useStore.getState().tracks.find(t => t.id === track.id);
+                    if (t) useStore.getState().updateTrack(t.id, { isMuted: !t.isMuted });
+                  }}
                   className={cn(
                     "rounded flex items-center justify-center font-bold transition-colors",
                     getToolbarBtnClass(true),
@@ -318,7 +321,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                           ) : (
                             <button 
                               onPointerDown={(e) => handleMutePointerDown(e, track.id)}
-                              onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
+                              onPointerUp={(e) => handleMutePointerUp(e, track.id)}
                               className={cn(
                                 "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
                                 muteBtnWidth,
@@ -388,7 +391,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                           ) : (
                             <button 
                               onPointerDown={(e) => handleMutePointerDown(e, track.id)}
-                              onPointerUp={(e) => handleMutePointerUp(e, track.id, track.isMuted)}
+                              onPointerUp={(e) => handleMutePointerUp(e, track.id)}
                               className={cn(
                                 "rounded flex items-center justify-center text-[10px] font-bold transition-all select-none",
                                 muteBtnWidth,

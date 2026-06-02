@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useRef } from 'react';
 import { useStore } from '../store/useStore';
 import { cn, TAG_COLOR_MAP, getContrastColor } from '../lib/utils';
+import { rawToTabular, tabularToRaw, normalizeVoicingTag } from '../lib/lyricsFormat';
 import { AlignLeft, Anchor, Wand2, ArrowLeftRight, Mic, Edit3 } from 'lucide-react';
 import { VerticalHeatmap } from './VerticalHeatmap';
 import { useToolbarContext } from '../hooks/useToolbarContext';
@@ -119,11 +120,12 @@ export const LyricsBuilder: React.FC<Props> = ({ isEditMode, setIsEditMode, star
         
         currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
       } else if (match[5]) {
-        // Catch-all bracket tag — could be voicing tag ([Har], custom combo) or section tag
-        const vId = tagColorMap[matchText];
+        // Catch-all bracket tag — could be voicing tag ([Har], custom combo, expanded name) or section tag
+        const normalizedTag = normalizeVoicingTag(matchText);
+        const vId = tagColorMap[normalizedTag];
         if (vId) {
           currentVoiceColor = vId;
-          currentLine.elements.push({ type: 'voice-tag', text: matchText, startChar, endChar, colorId: currentVoiceColor });
+          currentLine.elements.push({ type: 'voice-tag', text: normalizedTag, startChar, endChar, colorId: currentVoiceColor });
         } else {
           currentLine.elements.push({ type: 'section-tag', text: matchText, startChar, endChar });
         }
@@ -311,8 +313,12 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
     const start = textarea.selectionStart;
     const end = textarea.selectionEnd;
     const currentEditText = textarea.value;
-    const newEditText = currentEditText.slice(0, start) + `[${tagName}]\n` + currentEditText.slice(end);
-    handleEditTextChange({ target: { value: newEditText } } as React.ChangeEvent<HTMLTextAreaElement>);
+    const insertion = `[${tagName}]\t`;
+    textarea.value = currentEditText.slice(0, start) + insertion + currentEditText.slice(end);
+    requestAnimationFrame(() => {
+      textarea.selectionStart = textarea.selectionEnd = start + insertion.length;
+    });
+    saveEdit();
   };
 
   const handleAutoSync = () => {
@@ -330,28 +336,15 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
     setLyricsCleanText(newText);
   };
 
-  // The user says "on text edit, the [T:time] labels must not show."
-  // If we strip them for the textarea, they will be removed from state.
-  // "let's develop the logic as cases arise."
   const editTextValue = useMemo(() => {
-    return lyricsText.replace(/\[T:\d+(\.\d+)?\]\s?/g, '');
+    return rawToTabular(lyricsText);
   }, [lyricsText]);
 
-  const handleEditTextChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    // The user edits the text stripped of [T:xx] tags.
-    // We attempt to preserve the time tags by mapping them back line-by-line.
-    const newTextRaw = e.target.value;
-    const newLines = newTextRaw.split('\n');
-    const oldLines = lyricsText.split('\n');
-
-    const mergedText = newLines.map((newLine, i) => {
-      const oldLine = oldLines[i] || '';
-      const tMatch = oldLine.match(/(\[T:\d+(\.\d+)?\]\s*)/);
-      const tTag = tMatch ? tMatch[0] : '';
-      return tTag + newLine;
-    }).join('\n');
-
-    setLyricsCleanText(mergedText);
+  const saveEdit = () => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const raw = tabularToRaw(ta.value);
+    setLyricsCleanText(raw);
   };
 
   return (
@@ -374,13 +367,16 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
         {!isEditMode && (
           <div className="w-8 md:w-10 border-l border-r border-zinc-800 flex flex-col shrink-0 bg-zinc-950 relative">
              {parsedLines.map((line: any, idx: number) => (
-                <div key={`anchor-${idx}`} className={cn("text-xs flex items-center justify-center relative group", lyricsViewMode === 'scaled' ? "absolute min-w-full" : "h-[1.5rem]")}
-                     style={lyricsViewMode === 'scaled' && line.time !== null ? { top: `${line.time * PIXELS_PER_SECOND}px`, marginTop: '-0.75rem' } : {}}
-                >
-                  <div className={cn("transition-opacity", line.time !== null ? "opacity-100" : "opacity-0 group-hover:opacity-100")}>
-                    <ArrowLeftRight size={12} className="text-zinc-600" />
-                  </div>
-                </div>
+                 <button key={`anchor-${idx}`}
+                   onPointerDown={(e) => { e.stopPropagation(); handleAnchorLine(line.startIndex); }}
+                   className={cn("w-full flex items-center justify-center transition-colors relative group",
+                     lyricsViewMode === 'scaled' ? "absolute min-w-full" : "h-[1.5rem]"
+                   )}
+                   style={lyricsViewMode === 'scaled' && line.time !== null ? { top: `${line.time * PIXELS_PER_SECOND}px`, marginTop: '-0.75rem' } : {}}
+                   title="Anchor line to current playback time"
+                 >
+                   <Anchor size={12} className={cn("transition-opacity", line.time !== null ? "opacity-100" : "opacity-0 group-hover:opacity-100 text-zinc-600")} />
+                 </button>
               ))}
 
              {/* Fixed/Scaled toggle at bottom of stripe */}
@@ -410,7 +406,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
             </button>
           )}
           {isEditMode && (
-            <button onClick={() => setIsEditMode(false)}
+            <button onClick={() => { saveEdit(); setIsEditMode(false); }}
               className="absolute top-2 right-2 z-10 flex items-center gap-1 px-3 py-1 rounded text-xs font-semibold uppercase tracking-wider bg-zinc-100 text-zinc-900 shadow-sm"
               title="Finish Editing"
             >
@@ -434,8 +430,21 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                 ref={textareaRef}
                 className="flex-1 w-full bg-zinc-950 border border-zinc-800 rounded p-6 text-sm md:text-base font-serif text-zinc-200 outline-none resize-none leading-loose"
                 placeholder="Paste or type lyrics here...\nUse [ALL], [S], [A], [T], [B] to tag voicings."
-                value={editTextValue}
-                onChange={handleEditTextChange}
+                defaultValue={editTextValue}
+                onBlur={saveEdit}
+                onKeyDown={(e) => {
+                  if (e.key === 'Tab') {
+                    e.preventDefault();
+                    const ta = textareaRef.current;
+                    if (!ta) return;
+                    const start = ta.selectionStart;
+                    const end = ta.selectionEnd;
+                    ta.value = ta.value.slice(0, start) + '\t' + ta.value.slice(end);
+                    requestAnimationFrame(() => {
+                      ta.selectionStart = ta.selectionEnd = start + 1;
+                    });
+                  }
+                }}
               />
             </div>
           ) : (
@@ -464,18 +473,7 @@ const handleWordInteraction = (startChar: number, endChar: number) => {
                     // Calculate Y position based on time marker if in scaled mode
                     style={lyricsViewMode === 'scaled' && line.time !== null ? { top: `${line.time * PIXELS_PER_SECOND}px`, marginTop: '-0.75rem' } : {}}
                   >
-                    {/* Anchor Button */}
-                    <button 
-                      onPointerDown={(e) => { e.stopPropagation(); handleAnchorLine(line.startIndex); }}
-                      className={cn(
-                        "absolute -left-10 opacity-0 group-hover/line:opacity-100 transition-all bg-zinc-800 rounded-full shadow-lg",
-                        getBtnClass(true)
-                      )}
-                      title="Anchor line to current playback time"
-                    >
-                      <Anchor size={btnIconSize} />
-                    </button>
-                    
+                    {/* Time label */}
                     {line.time !== null && (
                       <span className="absolute -left-[4.5rem] text-[9px] font-mono text-zinc-600 mt-1 hidden md:block">
                         {line.time.toFixed(1)}s

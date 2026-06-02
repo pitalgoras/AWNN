@@ -940,4 +940,34 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 **Root Cause:** (1) LyricsBuilder outer div used `flex-1` but its parent was `position: absolute` (not a flex container), so flex sizing didn't apply and height collapsed to content. (2) Edit/Done buttons were gated behind `!isPortrait`, hiding them on phones. (3) Flex container chain lacked `min-w-0`, so the textarea refused to shrink below its intrinsic content width on mobile — causing overflow beyond viewport. (4) Edit mode container had no `relative`, so the Done button's `absolute` positioning was relative to the workspace div instead.
 **Decision:** Changed outer div from `flex-1` to `h-full` to inherit definite height. Removed `!isPortrait` guard from both buttons. Added `min-w-0` to workspace flex container to allow proper shrinkage. Extracted `relative` to the shared className so both Edit and Done buttons position correctly.
 ### Files Modified
-- `src/components/LyricsBuilder.tsx` — outer div `flex-1` → `h-full`, Edit/Done button visibility, `min-w-0`, `relative` fix<｜end▁of▁thinking｜>
+- `src/components/LyricsBuilder.tsx` — outer div `flex-1` → `h-full`, Edit/Done button visibility, `min-w-0`, `relative` fix
+
+## U. Tabular Lyrics Edit Format & Mute Stale-Closure Fix
+
+**Problem:** Two unrelated bugs:
+1. Lyrics textarea cursor jumped on every keystroke — React controlled component reset the DOM value after `rawToTabular`/`tabularToRaw` roundtrip
+2. Mute toggle inconsistently failed on fast double-tap — stale `track.isMuted` captured in render closure
+
+**Root Cause (1):** The textarea was a controlled component (`value={editTextValue}` `onChange={...}`). On every keystroke, `tabularToRaw` → cleanup → `rawToTabular` produced a value that differed from the current DOM (empty lines got `\t\t` injected, bracket tags moved to column 2). React saw `value !== DOM`, replaced the DOM value, and reset the cursor to the end.
+
+**Root Cause (2):** `handleMutePointerUp(e, track.id, track.isMuted)` passed `track.isMuted` captured at render time. A fast second click before re-render used the stale pre-mute value, computing the wrong toggle result. Same issue in `TrackBar.tsx` mobile mute `onClick` and `App.tsx` metronome mute `onClick`.
+
+**Decision (1):**
+- Replaced controlled `<textarea value={onChange}>` with uncontrolled `<textarea defaultValue onBlur>`
+- `onBlur` calls `saveEdit()` which reads `textareaRef.current.value` directly, converts via `tabularToRaw`, and saves to store
+- Done button also calls `saveEdit()` before `setIsEditMode(false)`
+- Tab key handler no longer dispatches `input` event (no longer needed)
+- `insertSectionTag` modifies `textarea.value` directly + calls `saveEdit()`
+- Created `src/lib/lyricsFormat.ts` with `rawToTabular`, `tabularToRaw`, `normalizeVoicingTag`, `EXPANDED_TAG_MAP`
+- Added `normalizeVoicingTag` to parser catch-all handler so expanded names like `[Soprano]` resolve to canonical `[S]` colors
+
+**Decision (2):**
+- Changed `handleMutePointerUp` to read `isMuted` fresh from `useStore.getState()` at event time (removed `isMuted` parameter)
+- Always performs toggle (removed timer-guard skip that could silently fail on touch)
+- Same fix for mobile mute `onClick` in `TrackBar.tsx` and metronome mute `onClick` in `App.tsx`
+
+### Files Modified
+- `src/lib/lyricsFormat.ts` — new file: tabular/raw converters, expanded tag map, normalize helper
+- `src/components/LyricsBuilder.tsx` — uncontrolled textarea, saveEdit, parser normalization, tab key cleanup
+- `src/App.tsx` — `handleMutePointerUp` fresh store read, metronome mute fresh read
+- `src/components/TrackBar.tsx` — mobile mute onClick fresh store read, landscape mute handler signature<｜end▁of▁thinking｜>

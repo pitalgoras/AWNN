@@ -581,16 +581,17 @@ export default function App() {
     }, 500);
   };
 
-  const handleMutePointerUp = (e: React.PointerEvent, trackId: string, isMuted: boolean) => {
+  const handleMutePointerUp = (e: React.PointerEvent, trackId: string) => {
     e.stopPropagation();
     // During recording on this track, mute up is a no-op (handled by down)
     if (isRecording && selectedTrackId === trackId) return;
     if (muteLongPressTimer.current[trackId]) {
       clearTimeout(muteLongPressTimer.current[trackId]!);
       muteLongPressTimer.current[trackId] = null;
-      // Short tap: toggle mute
-      updateTrack(trackId, { isMuted: !isMuted });
     }
+    // Always read fresh isMuted from store — don't trust render-closure value
+    const track = useStore.getState().tracks.find(t => t.id === trackId);
+    if (track) updateTrack(trackId, { isMuted: !track.isMuted });
   };
 
   const handleTrackPointerUp = (trackId: string) => {
@@ -683,7 +684,7 @@ export default function App() {
     <button
       onClick={(e) => {
         e.stopPropagation();
-        const metronome = tracks.find(t => t.id === 'metronome');
+        const metronome = useStore.getState().tracks.find(t => t.id === 'metronome');
         if (metronome) updateTrack('metronome', { isMuted: !metronome.isMuted });
       }}
       className={cn(
