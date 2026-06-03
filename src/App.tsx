@@ -148,7 +148,6 @@ export default function App() {
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [showCues, setShowCues] = useState(false);
-  const [lyricsEditMode, setLyricsEditMode] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
   const [isManualCalibrating, setIsManualCalibrating] = useState(false);
   const [isLatencyCalibrating, setIsLatencyCalibrating] = useState(false);
@@ -221,7 +220,7 @@ export default function App() {
         setShowMetronomeSettings(false);
         setEditingTrackId(null);
         setSelectedPhraseId(null);
-       } else if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+       } else if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target instanceof HTMLElement && e.target.isContentEditable))) {
         e.preventDefault();
         e.stopPropagation();
         playPause();
@@ -1043,7 +1042,7 @@ export default function App() {
           {/* Lyrics — absolutely positioned over waveforms */}
           {appMode === 'lyrics' && (
             <div className="absolute inset-0 z-10 bg-zinc-950">
-              <LyricsBuilder isEditMode={lyricsEditMode} setIsEditMode={setLyricsEditMode} startRecording={startRecording} stopRecording={stopRecording} />
+              <LyricsBuilder startRecording={startRecording} stopRecording={stopRecording} />
             </div>
           )}
         </div>

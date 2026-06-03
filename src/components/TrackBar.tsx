@@ -1,6 +1,8 @@
 import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { cn, getContrastColor, blendColors, getTrackShortLabel, getTrackTagLabel, getTagColor } from '../lib/utils';
+import { buildTagColorMap } from '../lib/lyricsCore';
+import { paintAtCursor } from '../lib/lyricsDOM';
 import { Mic, Activity, RotateCcw } from 'lucide-react';
 import { useToolbarContext } from '../hooks/useToolbarContext';
 import { useAdaptiveLabels } from '../hooks/useAdaptiveLabels';
@@ -11,6 +13,8 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   const selectedTrackId = useStore(s => s.selectedTrackId);
   const activeTagId = useStore(s => s.activeTagId);
   const setActiveTagId = useStore(s => s.setActiveTagId);
+  const isSpreeMode = useStore(s => s.isSpreeMode);
+  const setSpreeMode = useStore(s => s.setSpreeMode);
   const isRecording = useStore(s => s.isRecording);
   
   const envelopeLocked = useStore(s => s.envelopeLocked);
@@ -49,6 +53,7 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   } = handlers;
 
   const recordLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const spreeLongPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const isCompact = toolbarProposal === 3;
   const showLabels = toolbarVisibleLabels && !isCompact;
@@ -62,6 +67,8 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
   const customTags = useStore(s => s.customTags);
   const markCustomTagUsed = useStore(s => s.markCustomTagUsed);
   const comboTagSeparator = useStore(s => s.comboTagSeparator);
+
+  const tagColorMap = useMemo(() => buildTagColorMap(customTags), [customTags]);
 
   const FIXED_TAG_IDS = useMemo(() => new Set(['[ALL]', '[Har]', '[S+A]', '[T+B]']), []);
 
@@ -122,10 +129,51 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
     return () => ro.disconnect();
   }, [tracks, btnSize]);
 
-  const handleTagClick = (tag: { id: string; color: string }) => {
-    setActiveTagId(tag.id);
+  const handleTagPointerDown = (tag: { id: string; color: string }) => {
+    spreeLongPressTimer.current = setTimeout(() => {
+      spreeLongPressTimer.current = null;
+      const store = useStore.getState();
+      store.setSpreeMode(!store.isSpreeMode);
+      if (!store.isSpreeMode) store.setActiveTagId(tag.id);
+    }, 500);
+  };
+
+  const handleTagClick = (tag: { id: string }) => {
+    const state = useStore.getState();
+    state.setActiveTagId(tag.id);
+    const newRaw = paintAtCursor(tag.id, tagColorMap);
+    if (newRaw !== null) {
+      state.setLyricsText(newRaw);
+    }
     if (!FIXED_TAG_IDS.has(tag.id)) {
       markCustomTagUsed(tag.id);
+    }
+  };
+
+  const handleTagPointerUp = (tag: { id: string; color: string }) => {
+    if (spreeLongPressTimer.current) {
+      clearTimeout(spreeLongPressTimer.current);
+      spreeLongPressTimer.current = null;
+      handleTagClick(tag);
+    }
+  };
+
+  const handleTagPointerLeave = () => {
+    if (spreeLongPressTimer.current) {
+      clearTimeout(spreeLongPressTimer.current);
+      spreeLongPressTimer.current = null;
+    }
+  };
+
+  const isTagActive = (tagId: string) => activeTagId === tagId;
+
+  const handleTrackTagClick = (track: any) => {
+    const tagId = `[${getTrackTagLabel(track)}]`;
+    const state = useStore.getState();
+    state.setActiveTagId(tagId);
+    const newRaw = paintAtCursor(tagId, tagColorMap);
+    if (newRaw !== null) {
+      state.setLyricsText(newRaw);
     }
   };
 
@@ -163,11 +211,12 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                   M
                 </button>
                 <button
-                  onClick={() => setActiveTagId(`[${getTrackTagLabel(track)}]`)}
+                  onClick={() => handleTrackTagClick(track)}
                   className={cn(
                     "rounded font-bold transition-all select-none",
                     getToolbarBtnClass(true),
-                    activeTagId === `[${getTrackTagLabel(track)}]` ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                    isTagActive(`[${getTrackTagLabel(track)}]`) ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                    isSpreeMode && activeTagId === `[${getTrackTagLabel(track)}]` && "animate-pulse"
                   )}
                   style={{ backgroundColor: track.color, color: getContrastColor(track.color) }}
                 >
@@ -179,11 +228,14 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
             <div className="grid grid-cols-3 gap-1 shrink-0 items-start">
               {displayTags.slice(0, 8).map(tag => (
                 <button key={tag.id}
-                  onClick={() => handleTagClick(tag)}
+                  onPointerDown={() => handleTagPointerDown(tag)}
+                  onPointerUp={() => handleTagPointerUp(tag)}
+                  onPointerLeave={handleTagPointerLeave}
                   className={cn(
                     "rounded font-bold transition-all select-none",
                     getToolbarBtnClass(true),
-                    activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                    isTagActive(tag.id) ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                    isSpreeMode && activeTagId === tag.id && "animate-pulse"
                   )}
                   style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                 >
@@ -206,11 +258,14 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
               <div className="grid grid-cols-2 gap-1.5 items-start">
                 {fixedComboTags.map(tag => (
                   <button key={tag.id}
-                    onClick={() => handleTagClick(tag)}
+                    onPointerDown={() => handleTagPointerDown(tag)}
+                    onPointerUp={() => handleTagPointerUp(tag)}
+                    onPointerLeave={handleTagPointerLeave}
                     className={cn(
                       "rounded font-bold transition-all select-none",
                       getToolbarBtnClass(true),
-                      activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                      isTagActive(tag.id) ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                      isSpreeMode && activeTagId === tag.id && "animate-pulse"
                     )}
                     style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                   >
@@ -219,11 +274,14 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                 ))}
                 {customTags.map(tag => (
                   <button key={tag.id}
-                    onClick={() => handleTagClick(tag)}
+                    onPointerDown={() => handleTagPointerDown(tag)}
+                    onPointerUp={() => handleTagPointerUp(tag)}
+                    onPointerLeave={handleTagPointerLeave}
                     className={cn(
                       "rounded font-bold transition-all select-none",
                       getToolbarBtnClass(true),
-                      activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                      isTagActive(tag.id) ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                      isSpreeMode && activeTagId === tag.id && "animate-pulse"
                     )}
                     style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                   >
@@ -284,12 +342,13 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                           useSingleRow ? "flex-1" : "w-full"
                         )}>
                           <button
-                            onClick={() => mode === 'lyrics' ? setActiveTagId(`[${getTrackTagLabel(track)}]`) : useStore.getState().setSelectedTrackId(track.id)}
+                            onClick={() => mode === 'lyrics' ? handleTrackTagClick(track) : useStore.getState().setSelectedTrackId(track.id)}
                             onPointerDown={(e) => mode === 'lyrics' && e.stopPropagation()}
                             className={cn(
                               "rounded flex items-center justify-center font-bold transition-all",
                               mode === 'lyrics' ? getToolbarBtnClass(true) : "w-full h-full text-[10px]",
-                              mode === 'lyrics' && (activeTagId === `[${getTrackTagLabel(track)}]` ? "ring-2 ring-white scale-105" : "hover:scale-105")
+                              mode === 'lyrics' && (isTagActive(`[${getTrackTagLabel(track)}]`) ? "ring-2 ring-white scale-105" : "hover:scale-105"),
+                    isSpreeMode && activeTagId === `[${getTrackTagLabel(track)}]` && "animate-pulse"
                             )}
                             style={{ 
                               backgroundColor: trackColor,
@@ -456,11 +515,14 @@ export const TrackBar = ({ mode = 'mixer' as const, handlers }: { mode?: 'mixer'
                 <div className="grid grid-cols-3 gap-1 items-start">
                   {displayTags.slice(0, 8).map(tag => (
                     <button key={tag.id}
-                      onClick={() => handleTagClick(tag)}
+                      onPointerDown={() => handleTagPointerDown(tag)}
+                      onPointerUp={() => handleTagPointerUp(tag)}
+                      onPointerLeave={handleTagPointerLeave}
                       className={cn(
                         "rounded font-bold transition-all select-none",
                         getToolbarBtnClass(true),
-                        activeTagId === tag.id ? "ring-2 ring-white scale-105" : "hover:scale-105"
+                        isTagActive(tag.id) ? "ring-2 ring-white scale-105" : "hover:scale-105",
+                        isSpreeMode && activeTagId === tag.id && "animate-pulse"
                       )}
                       style={{ backgroundColor: tag.color, color: getContrastColor(tag.color) }}
                     >

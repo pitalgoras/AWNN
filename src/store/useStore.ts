@@ -65,12 +65,16 @@ export interface VoicingSegment {
   colorId: string;
 }
 
+export type TagPreviewMode = 'hidden' | 'chip' | 'full';
+
 interface AppState {
   appMode: 'mixer' | 'lyrics';
   lyricsText: string;
   lyricsSegments: VoicingSegment[];
   lyricsViewMode: 'fixed' | 'scaled';
   activeTagId: string;
+  tagPreviewMode: TagPreviewMode;
+  isSpreeMode: boolean;
   customTags: VoiceTag[];
   comboTagSeparator: '&' | '+';
   sectionTags: string[];
@@ -184,6 +188,8 @@ interface AppState {
   setLyricsSegments: (segments: VoicingSegment[]) => void;
   setLyricsViewMode: (mode: 'fixed' | 'scaled') => void;
   setActiveTagId: (tagId: string) => void;
+  setTagPreviewMode: (mode: TagPreviewMode) => void;
+  setSpreeMode: (active: boolean) => void;
   addCustomTag: (tag: VoiceTag) => void;
   markCustomTagUsed: (id: string) => void;
   setComboTagSeparator: (separator: '&' | '+') => void;
@@ -227,6 +233,8 @@ const defaultSettings = {
   lyricsSegments: [] as VoicingSegment[],
   lyricsViewMode: 'fixed' as const,
   activeTagId: '[ALL]',
+  tagPreviewMode: 'chip' as const,
+  isSpreeMode: false,
   customTags: [],
   comboTagSeparator: '+' as const,
   sectionTags: ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'],
@@ -267,6 +275,8 @@ export const useStore = create<AppState>()(
         setLyricsSegments: (segments) => set({ lyricsSegments: segments }),
         setLyricsViewMode: (mode) => set({ lyricsViewMode: mode }),
         setActiveTagId: (tagId) => set({ activeTagId: tagId }),
+        setTagPreviewMode: (tagPreviewMode) => set({ tagPreviewMode }),
+        setSpreeMode: (active) => set({ isSpreeMode: active }),
         addCustomTag: (tag) => set((state) => {
           const voiceTracks = state.tracks.filter(t => t.id !== 'metronome' && !t.isInstrument);
           const maxCustom = 4 + Math.max(0, (voiceTracks.length - 4) * 2);
@@ -577,6 +587,7 @@ export const useStore = create<AppState>()(
         lyricsSegments: state.lyricsSegments,
         lyricsViewMode: state.lyricsViewMode,
         activeTagId: state.activeTagId,
+        tagPreviewMode: state.tagPreviewMode,
         customTags: state.customTags,
         comboTagSeparator: state.comboTagSeparator,
         sectionTags: state.sectionTags,
