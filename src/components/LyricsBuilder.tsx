@@ -88,7 +88,7 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
     setEditorRef(editorRef.current);
     renderRawToDOM(editorRef.current, parsedLines, tagPreviewMode);
     return () => setEditorRef(null);
-  }, [parsedLines, tagPreviewMode]);
+  }, [parsedLines, tagPreviewMode, showRaw]);
 
   const handleRecord = async (trackId: string) => {
     if (isRecording) {
@@ -122,8 +122,7 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
       const beforeLine = currentRaw.slice(0, lineStart);
       const afterLine = currentRaw.slice(lineEndIdx);
       const sep1 = beforeCursor.length > 0 ? '\n\n' : '\n';
-      const sep2 = afterCursor.length > 0 ? '\n\n' : '\n';
-      newText = beforeLine + beforeCursor + sep1 + tTag + sep2 + afterCursor + afterLine;
+      newText = beforeLine + beforeCursor + sep1 + tTag + '\n' + afterCursor + afterLine;
     } else {
       newText = tTag + '\n' + currentRaw;
     }

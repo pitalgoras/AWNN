@@ -100,7 +100,13 @@ export function renderRawToDOM(container: HTMLElement, parsedLines: ParsedLine[]
   const frag = document.createDocumentFragment();
 
   for (const line of parsedLines) {
-    if (line.elements.length === 0) continue;
+    if (line.elements.length === 0) {
+      const emptyDiv = document.createElement('div');
+      emptyDiv.setAttribute('data-line', String(line.id));
+      emptyDiv.className = 'w-full leading-[1.5rem] min-h-[1.5rem]';
+      frag.appendChild(emptyDiv);
+      continue;
+    }
 
     const lineDiv = document.createElement('div');
     lineDiv.setAttribute('data-line', String(line.id));
@@ -166,13 +172,24 @@ export function serializeEditor(root: HTMLElement): string {
     } else if (child instanceof HTMLElement) {
       s = serializeNode(child);
     }
-    if (s) {
+    if (s || (child instanceof HTMLElement && child.hasAttribute('data-line'))) {
       if (!first) text += '\n';
       text += s;
       first = false;
     }
   }
   return text;
+}
+
+function getNodeSerializedLen(node: Node): number {
+  if (node.nodeType === Node.TEXT_NODE) return (node.nodeValue ?? '').length;
+  if (node instanceof HTMLElement) {
+    if (node.hasAttribute('data-raw')) return (node.getAttribute('data-raw') ?? '').length;
+    let sum = 0;
+    for (const c of node.childNodes) sum += getNodeSerializedLen(c);
+    return sum;
+  }
+  return 0;
 }
 
 export function getSelectedCharRange(root: HTMLElement, expandWords = true): { start: number; end: number } | null {
@@ -236,6 +253,13 @@ export function getSelectedCharRange(root: HTMLElement, expandWords = true): { s
         end = entry.charIndex + (entry.node.getAttribute('data-raw')!.length);
       }
     }
+  }
+
+  // CharMap lookup failed — anchor/focus is a container node (e.g. root on Ctrl+A).
+  // Use full serialized text length for non-collapsed selections.
+  if (start === 0 && end === 0 && !range.collapsed) {
+    const fullText = serializeEditor(root);
+    end = fullText.length;
   }
 
   if (expandWords && start === end) {
