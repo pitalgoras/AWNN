@@ -67,6 +67,7 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
 
   const containerRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const lastCursorPosRef = useRef(0);
 
   const PIXELS_PER_SECOND = 20;
 
@@ -109,20 +110,23 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
   const insertSectionTag = (tagName: string) => {
     const tTag = `[${tagName}]`;
     const currentRaw = editorRef.current ? serializeEditor(editorRef.current) : lyricsText;
+    let cursorPos = -1;
     const range = editorRef.current ? getSelectedCharRange(editorRef.current, false) : null;
+    if (range) {
+      cursorPos = range.start;
+    } else if (currentRaw.length > 0) {
+      cursorPos = Math.min(lastCursorPosRef.current, currentRaw.length);
+    }
     let newText: string;
-    if (range && currentRaw.length > 0) {
-      const cursorPos = range.start;
+    if (cursorPos >= 0) {
       const lineStart = currentRaw.lastIndexOf('\n', cursorPos - 1) + 1;
       const lineEnd = currentRaw.indexOf('\n', cursorPos);
       const lineEndIdx = lineEnd === -1 ? currentRaw.length : lineEnd;
-      const cursorInLine = cursorPos - lineStart;
       const beforeCursor = currentRaw.slice(lineStart, cursorPos);
       const afterCursor = currentRaw.slice(cursorPos, lineEndIdx);
       const beforeLine = currentRaw.slice(0, lineStart);
       const afterLine = currentRaw.slice(lineEndIdx);
-      const sep1 = beforeCursor.length > 0 ? '\n\n' : '\n';
-      newText = beforeLine + beforeCursor + sep1 + tTag + '\n' + afterCursor + afterLine;
+      newText = beforeLine + beforeCursor + '\n' + tTag + '\n' + afterCursor + afterLine;
     } else {
       newText = tTag + '\n' + currentRaw;
     }
@@ -148,10 +152,12 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
   const handleEditorPointerUp = useCallback((e: React.PointerEvent) => {
     clearPaintPending();
     const store = useStore.getState();
-    if (!store.activeTagId || !store.isSpreeMode || !editorRef.current) return;
+    if (!editorRef.current) return;
 
     const range = getSelectedCharRange(editorRef.current);
-    if (!range) return;
+    if (range) lastCursorPosRef.current = range.start;
+
+    if (!store.activeTagId || !store.isSpreeMode || !range) return;
 
     const currentRaw = serializeEditor(editorRef.current);
 
@@ -266,7 +272,7 @@ export const LyricsBuilder: React.FC<Props> = ({ startRecording, stopRecording }
             {sectionTags.filter(Boolean).map((tag) => (
               <button
                 key={tag}
-                onClick={() => insertSectionTag(tag)}
+                onPointerDown={(e) => { e.preventDefault(); insertSectionTag(tag); }}
                 className="px-2.5 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[9px] font-bold uppercase tracking-wider transition-all"
               >
                 [{tag}]

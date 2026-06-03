@@ -660,10 +660,9 @@ export default function App() {
   );
 
   const renderAppModeBtn = () => {
-    const showIcon = isWidePortrait || !isSmallPortrait;
     return (
       <button onClick={() => setAppMode(appMode === 'mixer' ? 'lyrics' : 'mixer')} className={cn(toolbarBtn(false, "text-xs font-semibold bg-zinc-800 text-white"))}>
-        {showIcon && (appMode === 'mixer' ? <FileText size={14} /> : <Mic size={14} />)}
+        {appMode === 'mixer' ? <FileText size={14} /> : <Mic size={14} />}
         {appMode === 'mixer' ? mainToolbarLabel('Lyrics', 'Lyrics') : mainToolbarLabel('Multitrack', 'Mix')}
       </button>
     );
@@ -794,10 +793,10 @@ export default function App() {
       {/* Combined Header & Transport */}
       <header className={cn(
         "border-b border-zinc-800 bg-zinc-900/90 flex shrink-0 z-50 w-full",
-        isSmallPortrait ? (isWidePortrait ? "flex-col" : "flex-col min-h-32") : "min-h-10 sm:min-h-12 items-center px-1.5"
+        isSmallPortrait ? (isWidePortrait || appMode === 'lyrics' ? "flex-col" : "flex-col min-h-32") : "min-h-10 sm:min-h-12 items-center px-1.5"
       )}>
         {isSmallPortrait ? (
-          isWidePortrait ? (
+          (isWidePortrait || appMode === 'lyrics') ? (
             /* Wide Portrait: 2-row Layout */
             <div className="flex-1 flex flex-col px-1.5 py-1 gap-1">
               {/* Row 1: left items | transport | right items */}
@@ -805,7 +804,7 @@ export default function App() {
                 <div className="flex items-center justify-between flex-[5]">
                   <div className="flex items-center gap-1">
                     {showTier(1) && renderMenuBtn()}
-                    {showTier(1) && <h1 className="font-semibold text-xs tracking-wide shrink-0">AWNN</h1>}
+                    {showTier(1) && isWidePortrait && <h1 className="font-semibold text-xs tracking-wide shrink-0">AWNN</h1>}
                   </div>
                   {showTier(1) && renderAppModeBtn()}
                 </div>
