@@ -52,7 +52,17 @@ export class VisualCalibrator {
           sampleRate: this.ctx.sampleRate,
         }
       }
-      this.stream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints)
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio } as MediaStreamConstraints)
+      } catch {
+        // Firefox may reject sampleRate constraint; retry without it
+        const fallback: MediaTrackConstraints = {
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        }
+        this.stream = await navigator.mediaDevices.getUserMedia({ audio: fallback })
+      }
     }
 
     try {
@@ -77,15 +87,16 @@ export class VisualCalibrator {
    * Run the visual calibration.
    * Plays N clicks at the given BPM through the output,
    * records mic input, returns the capture for display.
+   * @param wakeUpClicks - Extra clicks before the measurement pattern to wake BT speakers (0 = none)
    */
-  async run(bpm = 120, clickCount = 8): Promise<CalibrationCapture> {
+  async run(bpm = 120, clickCount = 8, wakeUpClicks = 0): Promise<CalibrationCapture> {
     if (!this.workletNode) throw new Error('Calibrator not initialized')
 
     const sr = this.ctx.sampleRate
     const beatDuration = 60 / bpm
     const clickTimes: number[] = []
 
-    // Start worklet recording
+    // Start worklet recording — captures everything
     this.workletNode.port.postMessage({ type: 'START' })
 
     const startedMsg = await new Promise<{ startFrame: number }>((resolve) => {
@@ -98,14 +109,17 @@ export class VisualCalibrator {
 
     // Schedule clicks at known AudioContext times
     // First click starts at currentTime + 0.5s to give the worklet time to spin up
+    const totalClicks = clickCount + wakeUpClicks
     const firstClickTime = this.ctx.currentTime + 0.5
     const oscGain = this.ctx.createGain()
     oscGain.gain.value = 0.3
     oscGain.connect(this.ctx.destination)
 
-    for (let i = 0; i < clickCount; i++) {
-      const t = firstClickTime + i * beatDuration
-      clickTimes.push(t)
+    for (let i = 0; i < totalClicks; i++) {
+      let t = firstClickTime + i * beatDuration
+      // Last measurement click arrives half-beat early — unmistakable visual anchor
+      if (i === totalClicks - 1) t -= beatDuration / 2
+      if (i >= wakeUpClicks) clickTimes.push(t)
       const osc = this.ctx.createOscillator()
       osc.type = 'sine'
       osc.frequency.value = 1000
@@ -116,7 +130,8 @@ export class VisualCalibrator {
     }
 
     // Wait for all clicks to finish + 1s margin
-    const totalDuration = firstClickTime + clickCount * beatDuration - startTime + 1.0
+    const lastT = firstClickTime + (totalClicks - 1) * beatDuration
+    const totalDuration = lastT + 1.0 - startTime
     const recordFrames = Math.ceil(totalDuration * sr)
     await new Promise((resolve) => setTimeout(resolve, totalDuration * 1000 + 200))
 

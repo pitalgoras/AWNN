@@ -2,7 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { ModalShell } from './ModalShell';
 import { VisualCalibrator, CalibrationCapture } from '../../audio/calibration/VisualCalibrator';
-import { Play, RotateCcw, Check, AlertTriangle } from 'lucide-react';
+import { Play, RotateCcw, Check, AlertTriangle, Bluetooth } from 'lucide-react';
 
 interface VisualCalibrationModalProps {
   show: boolean;
@@ -21,6 +21,8 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
   const [totalRoundtripMs, setTotalRoundtripMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [deviceFingerprint, setDeviceFingerprint] = useState('');
+  const [deviceChanged, setDeviceChanged] = useState(false);
+  const [wakeUpClicks, setWakeUpClicks] = useState(0);
 
   const calibratorRef = useRef<VisualCalibrator | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -29,6 +31,7 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
     setIsCalibrating(true);
     setError(null);
     setCapture(null);
+    setDeviceChanged(false);
 
     try {
       const ctx = (window as any).__audioContext;
@@ -38,7 +41,7 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       calibratorRef.current = calibrator;
 
       await calibrator.init();
-      const result = await calibrator.run(120, 8);
+      const result = await calibrator.run(120, 8, wakeUpClicks);
 
       const fp = `${calibrator.inputDeviceId}-${Math.round(result.outputLatencyMs / 5) * 5}`;
       setDeviceFingerprint(fp);
@@ -52,7 +55,7 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
     } finally {
       setIsCalibrating(false);
     }
-  }, []);
+  }, [wakeUpClicks]);
 
   useEffect(() => {
     if (!show) {
@@ -60,6 +63,7 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       calibratorRef.current = null;
       setCapture(null);
       setError(null);
+      setDeviceChanged(false);
     }
   }, [show]);
 
@@ -69,6 +73,14 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       calibratorRef.current = null;
     };
   }, []);
+
+  // Detect device changes while a capture exists
+  useEffect(() => {
+    if (!capture) return;
+    const handler = () => setDeviceChanged(true);
+    navigator.mediaDevices?.addEventListener('devicechange', handler);
+    return () => navigator.mediaDevices?.removeEventListener('devicechange', handler);
+  }, [capture]);
 
   useEffect(() => {
     if (!capture || !canvasRef.current) return;
@@ -136,13 +148,13 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       ctx.beginPath();
       ctx.moveTo(x, 0);
       ctx.lineTo(x, h);
-      ctx.strokeStyle = i === 0 ? '#f87171' : clickColor;
+      ctx.strokeStyle = i === clicks.clickTimes.length - 1 ? '#f87171' : clickColor;
       ctx.lineWidth = 1;
       ctx.stroke();
 
       ctx.fillStyle = clickColor;
       ctx.font = '9px monospace';
-      ctx.fillText(`${i + 1}`, x + 3, 12);
+      ctx.fillText(`${clicks.clickTimes.length - i}`, x + 3, 12);
     });
 
     ctx.beginPath();
@@ -184,8 +196,9 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
         <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
           <p className="text-[10px] text-zinc-500 leading-snug">
             Plays 8 clicks through your speakers and records them via microphone.
-            Adjust the slider until click markers (amber lines) align with waveform peaks.
-            First click shown in red.
+            Click markers are numbered from last (anchor, half-beat early) to first.
+            Adjust the slider until <strong className="text-zinc-400">marker 1</strong> aligns with the
+            last waveform peak.
           </p>
         </div>
 
@@ -207,6 +220,12 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
 
         {capture && !isCalibrating && (
           <>
+            {deviceChanged && (
+              <div className="p-2 bg-amber-500/10 border border-amber-500/20 rounded-md text-[9px] text-amber-400 flex items-start gap-1.5">
+                <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+                <span>Audio device changed since capture — retry calibration for accuracy.</span>
+              </div>
+            )}
             <div className="bg-zinc-800/30 rounded-lg p-3 border border-zinc-800">
               <div className="flex items-center justify-between mb-2">
                 <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Waveform</h3>
@@ -317,10 +336,15 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
             <div className="flex gap-2">
               <button
                 onClick={handleAccept}
-                className="flex-1 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-md transition-all text-[10px] flex items-center justify-center gap-1.5"
+                disabled={deviceChanged}
+                className={`flex-1 py-2.5 font-bold rounded-md transition-all text-[10px] flex items-center justify-center gap-1.5 ${
+                  deviceChanged
+                    ? 'bg-zinc-700 text-zinc-500 cursor-not-allowed'
+                    : 'bg-emerald-700 hover:bg-emerald-600 text-white'
+                }`}
               >
                 <Check className="w-3.5 h-3.5" />
-                Accept Calibration
+                {deviceChanged ? 'Retry Required' : 'Accept Calibration'}
               </button>
               <button
                 onClick={handleRetry}
@@ -334,7 +358,17 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
         )}
 
         {!capture && !isCalibrating && !error && (
-          <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
+          <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800 space-y-3">
+            <label className="flex items-center gap-2 text-[10px] text-zinc-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={wakeUpClicks > 0}
+                onChange={(e) => setWakeUpClicks(e.target.checked ? 3 : 0)}
+                className="accent-zinc-500"
+              />
+              <Bluetooth className="w-3 h-3" />
+              Bluetooth speaker (adds 3 wake-up clicks)
+            </label>
             <button
               onClick={runCalibration}
               className="w-full py-3 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-md transition-all flex items-center justify-center gap-2 text-xs"
