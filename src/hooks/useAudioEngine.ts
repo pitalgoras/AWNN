@@ -5,6 +5,7 @@ import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
 import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
 import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
+import { WelcomeBeep } from '../audio/calibration/WelcomeBeep';
 import { perfLogger } from '../utils/PerformanceLogger';
 
 // Override WaveSurfer.prototype.load to catch unhandled promise rejections globally
@@ -42,6 +43,8 @@ export function useAudioEngine() {
   const multitrackRef = useRef<MultiTrack | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const isPreRollingRef = useRef(false);
+  const welcomeBeepRef = useRef<WelcomeBeep | null>(null);
+  const previousSinkIdRef = useRef<string | null>(null);
   const [multitrack, setMultitrack] = useState<MultiTrack | null>(null);
   
   // Engine refs for modular audio architecture
@@ -70,6 +73,7 @@ const {
   baseLatencyMs,
   extraLatencyMs,
   calibratedLatency,
+  deviceLatencyCache,
   setIsPlaying,
   setIsRecording,
   setCurrentTime,
@@ -112,6 +116,7 @@ const {
         baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
         calibratedLatencyMap: calibratedLatency || {},
+        deviceLatencyCache: deviceLatencyCache || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -166,6 +171,7 @@ const {
         baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
         calibratedLatencyMap: calibratedLatency || {},
+        deviceLatencyCache: deviceLatencyCache || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -205,9 +211,22 @@ const {
     }
   }, [isPlaying]);
 
-  // Listen for device changes (headphone plug/unplug) and refresh latency + calibration
+  // Listen for device changes (headphone plug/unplug) and refresh latency + calibration.
+  // 1s debounce + sinkId comparison to suppress spurious Firefox events.
   useEffect(() => {
-    const refresh = () => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = async () => {
+      const ctx = audioContextRef.current;
+      let currentSinkId: string | null = null;
+      if (ctx && typeof (ctx as any).sinkId === 'string') {
+        currentSinkId = (ctx as any).sinkId;
+      }
+
+      // Firefox fires devicechange on unrelated events; skip if sinkId unchanged.
+      if (currentSinkId !== null && currentSinkId === previousSinkIdRef.current) return;
+      previousSinkIdRef.current = currentSinkId;
+
       useStore.getState().refreshAudioLatency();
       if (recordingEngineRef.current) {
         const state = useStore.getState();
@@ -215,12 +234,21 @@ const {
           outputLatencyMs: state.outputLatencyMs || 0,
           baseLatencyMs: state.baseLatencyMs || 0,
           calibratedLatencyMap: state.calibratedLatency || {},
+          deviceLatencyCache: state.deviceLatencyCache || {},
         });
       }
     };
 
-    navigator.mediaDevices?.addEventListener('devicechange', refresh);
-    return () => navigator.mediaDevices?.removeEventListener('devicechange', refresh);
+    const debouncedRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(refresh, 1000);
+    };
+
+    navigator.mediaDevices?.addEventListener('devicechange', debouncedRefresh);
+    return () => {
+      navigator.mediaDevices?.removeEventListener('devicechange', debouncedRefresh);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Stop playback when metronome master is disabled (but not during recording)
@@ -419,6 +447,12 @@ const {
           Math.round((audioContextRef.current.outputLatency || 0) * 1000),
           Math.round((audioContextRef.current.baseLatency || 0) * 1000),
         );
+
+        // Play welcome beep on first engine init
+        if (!welcomeBeepRef.current) {
+          welcomeBeepRef.current = new WelcomeBeep(audioContextRef.current);
+          welcomeBeepRef.current.play();
+        }
 
         const multitrackItems: (TrackOptions & { trackId: string })[] = [];
 

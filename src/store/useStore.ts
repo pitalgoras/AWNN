@@ -65,6 +65,15 @@ export interface VoicingSegment {
   colorId: string;
 }
 
+export interface DeviceLatencyProfile {
+  deviceFingerprint: string;
+  label?: string;
+  totalRoundtripMs: number;
+  extraLatencyMs: number;
+  lastCalibrated: number;
+  calibrationMethod: 'visual' | 'auto' | 'manual' | 'clap';
+}
+
 export type TagPreviewMode = 'hidden' | 'chip' | 'full';
 
 interface AppState {
@@ -106,6 +115,7 @@ interface AppState {
   outputLatencyMs: number; // AudioContext.outputLatency * 1000 (browser-reported output delay)
   baseLatencyMs: number; // AudioContext.baseLatency * 1000 (render quantum buffer delay)
   calibratedLatency: Record<string, number>; // deviceKey → calibrated HW compensation (replaces heuristic)
+  deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
   minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
@@ -174,6 +184,9 @@ interface AppState {
   refreshAudioLatency: () => void;
   setCalibratedLatency: (key: string, value: number) => void;
   removeCalibratedLatency: (key: string) => void;
+  getDeviceLatency: (fingerprint: string) => DeviceLatencyProfile | undefined;
+  setDeviceLatency: (profile: DeviceLatencyProfile) => void;
+  clearDeviceLatency: (fingerprint: string) => void;
   setToolbarProposal: (proposal: 1 | 2 | 3) => void;
   setToolbarVisibleLabels: (visible: boolean) => void;
   reorderTracks: (startIndex: number, endIndex: number) => void;
@@ -242,6 +255,7 @@ const defaultSettings = {
   outputLatencyMs: 0,
   baseLatencyMs: 0,
   calibratedLatency: {},
+  deviceLatencyCache: {},
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
   mediumBtnSize: 44,
@@ -342,6 +356,13 @@ export const useStore = create<AppState>()(
         }),
         removeCalibratedLatency: (key) => set((state) => {
           delete state.calibratedLatency[key];
+        }),
+        getDeviceLatency: (fingerprint) => get().deviceLatencyCache[fingerprint],
+        setDeviceLatency: (profile) => set((state) => {
+          state.deviceLatencyCache[profile.deviceFingerprint] = profile;
+        }),
+        clearDeviceLatency: (fingerprint) => set((state) => {
+          delete state.deviceLatencyCache[fingerprint];
         }),
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
@@ -593,6 +614,7 @@ export const useStore = create<AppState>()(
         sectionTags: state.sectionTags,
         toolbarProposal: state.toolbarProposal,
         toolbarVisibleLabels: state.toolbarVisibleLabels,
+        deviceLatencyCache: state.deviceLatencyCache,
       }),
     }
   )

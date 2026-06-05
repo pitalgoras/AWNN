@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../../store/useStore';
-import { Play, RotateCcw, Info, Check, Trash2 } from 'lucide-react';
+import { Play, RotateCcw, Info, Check, Trash2, Eye } from 'lucide-react';
 import { LatencyCalibrator, LatencyCalibrationResult, ProbeCycleData } from '../../lib/audio/LatencyCalibrator';
 import { defaultHWCompMs } from '../../audio/recording/RecordingEngine';
 import { ModalShell } from './ModalShell';
 import { ProbeMonitor } from './ProbeMonitor';
+import { VisualCalibrationModal } from './VisualCalibrationModal';
 
 interface LatencyCalibrationModalProps {
   show: boolean;
@@ -33,6 +34,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   const [continuousProbe, setContinuousProbe] = useState(false);
   const [probeCycles, setProbeCycles] = useState<ProbeCycleData[]>([]);
   const [probeActive, setProbeActive] = useState(false);
+  const [showVisual, setShowVisual] = useState(false);
 
   const calibratorRef = useRef<LatencyCalibrator | null>(null);
 
@@ -137,6 +139,25 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
   return (
     <ModalShell show={show} onClose={onClose} title="Auto Calibration" maxWidth="max-w-md" singleColumn>
       <div className="space-y-4 text-sm text-zinc-300 cursor-default">
+          {/* Visual Calibration Section */}
+          <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-[10px] font-bold uppercase tracking-widest text-zinc-400">Visual Calibration</h3>
+              <span className="text-[9px] text-emerald-500 font-mono">Recommended</span>
+            </div>
+            <p className="text-[10px] text-zinc-500 mb-3 leading-snug">
+              Plays clicks through speakers, records via microphone. Adjust slider until markers
+              align with waveform peaks. Works even with Bluetooth headsets.
+            </p>
+            <button
+              onClick={() => setShowVisual(true)}
+              className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-md transition-all flex items-center justify-center gap-1.5 text-[10px]"
+            >
+              <Eye className="w-3.5 h-3.5" />
+              Open Visual Calibration
+            </button>
+          </div>
+
           {/* Auto Calibration Section */}
           <div className="bg-zinc-800/30 rounded-lg p-4 border border-zinc-800">
             <div className="flex items-center justify-between mb-3">
@@ -378,6 +399,7 @@ export const LatencyCalibrationModal: React.FC<LatencyCalibrationModalProps> = (
             </div>
           </div>
         </div>
+      <VisualCalibrationModal show={showVisual} onClose={() => setShowVisual(false)} />
     </ModalShell>
   );
 };

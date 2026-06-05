@@ -8,6 +8,7 @@
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
 import { perfLogger } from '../../utils/PerformanceLogger';
+import type { DeviceLatencyProfile } from '../../store/useStore';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
@@ -24,7 +25,8 @@ export interface RecordingConfig {
   bufferSafetyMs: number; // Extra ms wait to ensure buffer is populated
   audioContextRef: React.RefObject<AudioContext | null>;
   // AudioWorklet is mandatory - no useAudioWorklet option
-  calibratedLatencyMap: Record<string, number>; // deviceKey → calibrated HW compensation
+  calibratedLatencyMap: Record<string, number>; // deviceKey → calibrated HW compensation (legacy)
+  deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
 }
 
 export function defaultHWCompMs(outputLatencyMs: number): number {
@@ -343,12 +345,26 @@ export class RecordingEngine {
     // (Chrome returns 0-8ms for outputLatency before audio flows, then updates to ~46ms)
     const outputLatencyMs = Math.round((audioContext.outputLatency || 0) * 1000);
     const baseLatencyMs = Math.round((audioContext.baseLatency || 0) * 1000);
-    // HW compensation: use per-device calibrated value if available, else heuristic
+
+    // Check deviceLatencyCache first (new visual calibration system)
+    const inputDeviceId = this.continuousMicStream?.getAudioTracks()[0]?.getSettings()?.deviceId || 'unknown';
+    const deviceFingerprint = `${inputDeviceId}-${Math.round(outputLatencyMs / 5) * 5}`;
+    const cachedProfile = this.config.deviceLatencyCache?.[deviceFingerprint];
+
+    // Fallback HW compensation for log reporting
     const deviceKey = `${Math.round(outputLatencyMs / 5) * 5}`;
     const calibratedHW = this.config.calibratedLatencyMap?.[deviceKey];
     const HW_COMP_MS = calibratedHW ?? defaultHWCompMs(outputLatencyMs);
-    const browserLatencyMs = outputLatencyMs + baseLatencyMs;
-    const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
+
+    let latencyCompMs: number;
+    if (cachedProfile) {
+      // Use cached total round-trip + extra offset
+      latencyCompMs = cachedProfile.totalRoundtripMs + (this.config.extraLatencyMs || 0);
+    } else {
+      // Fall back to legacy formula: browser latency + HW heuristic + extra offset
+      const browserLatencyMs = outputLatencyMs + baseLatencyMs;
+      latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
+    }
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 
     // Pre-calculate peaks
