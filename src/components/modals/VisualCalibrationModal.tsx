@@ -2,7 +2,9 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useStore } from '../../store/useStore';
 import { ModalShell } from './ModalShell';
 import { VisualCalibrator, CalibrationCapture } from '../../audio/calibration/VisualCalibrator';
-import { Play, RotateCcw, Check, AlertTriangle, Bluetooth } from 'lucide-react';
+import { LatencyCalibrator, LatencyCalibrationResult, ProbeCycleData } from '../../lib/audio/LatencyCalibrator';
+import { Play, RotateCcw, Check, AlertTriangle, Bluetooth, Info } from 'lucide-react';
+import { ProbeMonitor } from './ProbeMonitor';
 
 interface VisualCalibrationModalProps {
   show: boolean;
@@ -15,6 +17,7 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
   const extraLatencyMs = useStore(s => s.extraLatencyMs);
   const setExtraLatencyMs = useStore(s => s.setExtraLatencyMs);
   const setDeviceLatency = useStore(s => s.setDeviceLatency);
+  const refreshAudioLatency = useStore(s => s.refreshAudioLatency);
 
   const [capture, setCapture] = useState<CalibrationCapture | null>(null);
   const [isCalibrating, setIsCalibrating] = useState(false);
@@ -24,8 +27,21 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
   const [deviceChanged, setDeviceChanged] = useState(false);
   const [wakeUpClicks, setWakeUpClicks] = useState(0);
 
+  // Auto calibration (collapsed fallback)
+  const [showAutoCal, setShowAutoCal] = useState(false);
+  const [isAutoCalibrating, setIsAutoCalibrating] = useState(false);
+  const [autoCalProgress, setAutoCalProgress] = useState(0);
+  const [autoCalStatus, setAutoCalStatus] = useState<string | null>(null);
+  const [autoCalError, setAutoCalError] = useState<string | null>(null);
+  const [autoCalProbeCycles, setAutoCalProbeCycles] = useState<ProbeCycleData[]>([]);
+  const [continuousProbe, setContinuousProbe] = useState(false);
+  const [probeActive, setProbeActive] = useState(false);
+  const autoCalibratorRef = useRef<LatencyCalibrator | null>(null);
+
   const calibratorRef = useRef<VisualCalibrator | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const currentBrowserMs = outputLatencyMs + baseLatencyMs;
 
   const runCalibration = useCallback(async () => {
     setIsCalibrating(true);
@@ -64,6 +80,10 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       setCapture(null);
       setError(null);
       setDeviceChanged(false);
+      autoCalibratorRef.current?.cancel();
+      autoCalibratorRef.current = null;
+      setIsAutoCalibrating(false);
+      setShowAutoCal(false);
     }
   }, [show]);
 
@@ -71,6 +91,8 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
     return () => {
       calibratorRef.current?.cleanup();
       calibratorRef.current = null;
+      autoCalibratorRef.current?.cancel();
+      autoCalibratorRef.current = null;
     };
   }, []);
 
@@ -175,6 +197,8 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
       deviceFingerprint,
       label: `Visual calibration (${capture.clicks.bpm}BPM, ${capture.clicks.clickTimes.length} clicks)`,
       totalRoundtripMs,
+      captureOutputLatencyMs: capture.outputLatencyMs,
+      captureBaseLatencyMs: capture.baseLatencyMs,
       extraLatencyMs: 0,
       lastCalibrated: Date.now(),
       calibrationMethod: 'visual',
@@ -188,6 +212,56 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
     setCapture(null);
     setTotalRoundtripMs(0);
     runCalibration();
+  };
+
+  const stopAutoCal = () => {
+    autoCalibratorRef.current?.cancel();
+    autoCalibratorRef.current = null;
+    setIsAutoCalibrating(false);
+    setProbeActive(false);
+    setAutoCalStatus(null);
+  };
+
+  const runAutoCalibration = async () => {
+    setIsAutoCalibrating(true);
+    setAutoCalProgress(0);
+    setAutoCalStatus(null);
+    setAutoCalError(null);
+    setAutoCalProbeCycles([]);
+    setProbeActive(true);
+
+    autoCalibratorRef.current?.cancel();
+
+    const calibrator = new LatencyCalibrator(
+      {
+        onProgress: (p) => setAutoCalProgress(p),
+        onStatus: (s) => setAutoCalStatus(s),
+        onProbeReading: (_data, history) => setAutoCalProbeCycles([...history]),
+        onComplete: (result: LatencyCalibrationResult & { signalQuality?: string }) => {
+          setIsAutoCalibrating(false);
+          setProbeActive(false);
+          setAutoCalProgress(100);
+          setAutoCalStatus(null);
+          if (result.success && result.averageLatencyMs > 0) {
+            setTotalRoundtripMs(Math.round(result.averageLatencyMs));
+            setAutoCalStatus(`Auto-detected: ${Math.round(result.averageLatencyMs)}ms`);
+          } else {
+            setAutoCalError(result.error || 'Could not detect the test tone.');
+          }
+          autoCalibratorRef.current = null;
+        },
+        onError: (err) => {
+          setAutoCalError(err);
+          setIsAutoCalibrating(false);
+          setProbeActive(false);
+          setAutoCalStatus(null);
+          autoCalibratorRef.current = null;
+        },
+      },
+      { continuousProbe }
+    );
+    autoCalibratorRef.current = calibrator;
+    calibrator.calibrate();
   };
 
   return (
@@ -320,17 +394,33 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
                 <span className="font-mono text-zinc-400 truncate ml-2 max-w-[200px]">{deviceFingerprint}</span>
               </div>
               <div className="flex items-center justify-between text-[9px] mt-1">
-                <span className="text-zinc-500">Browser</span>
+                <span className="text-zinc-500">Browser at capture</span>
                 <span className="font-mono text-zinc-400">
                   out={capture.outputLatencyMs}ms base={capture.baseLatencyMs}ms
                 </span>
               </div>
               <div className="flex items-center justify-between text-[9px] mt-1">
-                <span className="text-zinc-500">Commit formula</span>
+                <span className="text-zinc-500">Browser (current)</span>
                 <span className="font-mono text-zinc-400">
-                  totalRoundtrip={totalRoundtripMs}ms + extra={extraLatencyMs}ms = {totalRoundtripMs + extraLatencyMs}ms
+                  out={outputLatencyMs}ms base={baseLatencyMs}ms
+                  <button onClick={refreshAudioLatency} className="ml-1.5 text-zinc-600 hover:text-zinc-400">
+                    <RotateCcw className="w-2.5 h-2.5 inline" />
+                  </button>
                 </span>
               </div>
+              {(() => {
+                const capBrowser = capture.outputLatencyMs + capture.baseLatencyMs;
+                const hwDelta = totalRoundtripMs - capBrowser;
+                const totalEff = currentBrowserMs + hwDelta + extraLatencyMs;
+                return (
+                  <div className="flex items-center justify-between text-[9px] mt-1">
+                    <span className="text-zinc-500">Commit formula</span>
+                    <span className="font-mono text-zinc-400">
+                      browser+Δhw+extra = {currentBrowserMs}+{hwDelta}+{extraLatencyMs} = {totalEff}ms
+                    </span>
+                  </div>
+                );
+              })()}
             </div>
 
             <div className="flex gap-2">
@@ -353,6 +443,56 @@ export const VisualCalibrationModal: React.FC<VisualCalibrationModalProps> = ({ 
                 <RotateCcw className="w-3.5 h-3.5" />
                 Retry
               </button>
+            </div>
+
+            {/* Auto calibration (collapsed fallback) */}
+            <div className="border-t border-zinc-800 pt-2">
+              <button
+                onClick={() => setShowAutoCal(!showAutoCal)}
+                className="w-full py-2 text-[10px] text-zinc-500 hover:text-zinc-400 flex items-center justify-center gap-1 transition-colors"
+              >
+                <Info className="w-3 h-3" />
+                {showAutoCal ? 'Hide' : 'Show'} auto calibration (probe-based)
+              </button>
+              {showAutoCal && (
+                <div className="mt-2 bg-zinc-800/30 rounded-lg p-3 border border-zinc-800 space-y-2">
+                  {isAutoCalibrating ? (
+                    <>
+                      <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="h-full bg-blue-500 transition-all duration-300" style={{ width: `${autoCalProgress}%` }} />
+                      </div>
+                      {autoCalStatus && <div className="text-center text-[9px] text-zinc-400">{autoCalStatus}</div>}
+                      {probeActive && autoCalProbeCycles.length > 0 && (
+                        <div className="bg-zinc-900/50 rounded p-2 border border-zinc-800">
+                          <ProbeMonitor cycle={autoCalProbeCycles[autoCalProbeCycles.length - 1]} cycleCount={autoCalProbeCycles.length} />
+                        </div>
+                      )}
+                      <button onClick={stopAutoCal} className="w-full py-2 bg-red-600 hover:bg-red-500 text-white font-bold rounded text-[10px] transition-all">
+                        Stop
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-[10px] text-zinc-500 leading-snug">Plays a noise pattern and correlates with mic input. Less reliable than visual alignment.</p>
+                      <div className="flex items-center gap-2">
+                        <button onClick={runAutoCalibration} className="flex-1 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded text-[10px] transition-all">
+                          Run Auto Calibration
+                        </button>
+                        <label className="flex items-center gap-1.5 text-[9px] text-zinc-500 cursor-pointer shrink-0">
+                          <input type="checkbox" checked={continuousProbe} onChange={(e) => setContinuousProbe(e.target.checked)} className="accent-zinc-500" />
+                          Non-stop
+                        </label>
+                      </div>
+                      {autoCalError && (
+                        <div className="p-2 bg-red-500/10 border border-red-500/20 rounded text-[9px] text-red-400 flex items-start gap-1.5">
+                          <Info className="w-2.5 h-2.5 shrink-0 mt-0.5" />
+                          <span>{autoCalError}</span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </>
         )}

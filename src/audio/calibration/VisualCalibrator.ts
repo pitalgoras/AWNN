@@ -132,7 +132,6 @@ export class VisualCalibrator {
     // Wait for all clicks to finish + 1s margin
     const lastT = firstClickTime + (totalClicks - 1) * beatDuration
     const totalDuration = lastT + 1.0 - startTime
-    const recordFrames = Math.ceil(totalDuration * sr)
     await new Promise((resolve) => setTimeout(resolve, totalDuration * 1000 + 200))
 
     // Stop worklet

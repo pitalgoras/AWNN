@@ -72,7 +72,6 @@ const {
   outputLatencyMs,
   baseLatencyMs,
   extraLatencyMs,
-  calibratedLatency,
   deviceLatencyCache,
   setIsPlaying,
   setIsRecording,
@@ -115,7 +114,6 @@ const {
         outputLatencyMs: outputLatencyMs || 0,
         baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
-        calibratedLatencyMap: calibratedLatency || {},
         deviceLatencyCache: deviceLatencyCache || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
@@ -163,15 +161,10 @@ const {
       recordingEngineRef.current = new RecordingEngine(config, callbacks);
     }
 
-    // Update RecordingEngine config (excluding isPlaying - handled separately)
+    // Update RecordingEngine config (excluding isPlaying and latency - handled separately)
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
-        outputLatencyMs: outputLatencyMs || 0,
-        baseLatencyMs: baseLatencyMs || 0,
-        extraLatencyMs: extraLatencyMs || 0,
-        calibratedLatencyMap: calibratedLatency || {},
-        deviceLatencyCache: deviceLatencyCache || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -211,7 +204,19 @@ const {
     }
   }, [isPlaying]);
 
-  // Listen for device changes (headphone plug/unplug) and refresh latency + calibration.
+  // Dedicated effect to propagate latency config to RecordingEngine on any change.
+  // Separated from the main init effect so it can re-run without triggering re-init.
+  useEffect(() => {
+    if (!recordingEngineRef.current) return;
+    recordingEngineRef.current.updateConfig({
+      outputLatencyMs: outputLatencyMs || 0,
+      baseLatencyMs: baseLatencyMs || 0,
+      extraLatencyMs: extraLatencyMs || 0,
+      deviceLatencyCache: deviceLatencyCache || {},
+    });
+  }, [outputLatencyMs, baseLatencyMs, extraLatencyMs, deviceLatencyCache]);
+
+  // Listen for device changes (headphone plug/unplug).
   // 1s debounce + sinkId comparison to suppress spurious Firefox events.
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -228,15 +233,19 @@ const {
       previousSinkIdRef.current = currentSinkId;
 
       useStore.getState().refreshAudioLatency();
-      if (recordingEngineRef.current) {
-        const state = useStore.getState();
-        recordingEngineRef.current.updateConfig({
-          outputLatencyMs: state.outputLatencyMs || 0,
-          baseLatencyMs: state.baseLatencyMs || 0,
-          calibratedLatencyMap: state.calibratedLatency || {},
-          deviceLatencyCache: state.deviceLatencyCache || {},
-        });
-      }
+      const state = useStore.getState();
+      // Show device change notification (will be dismissed after 6s by the banner component)
+      const inpDeviceId = state.deviceLatencyCache
+        ? Object.keys(state.deviceLatencyCache).find(k =>
+            k.endsWith(`-${Math.round((state.outputLatencyMs || 0) / 5) * 5}`))
+        : null;
+      const notifFingerprint = inpDeviceId || `unknown-${Math.round((state.outputLatencyMs || 0) / 5) * 5}`;
+      useStore.getState().setDeviceChangeNotif({
+        deviceFingerprint: notifFingerprint,
+        timestamp: Date.now(),
+        outputLatencyMs: state.outputLatencyMs || 0,
+        baseLatencyMs: state.baseLatencyMs || 0,
+      });
     };
 
     const debouncedRefresh = () => {

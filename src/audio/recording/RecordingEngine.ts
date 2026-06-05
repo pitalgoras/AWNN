@@ -25,7 +25,6 @@ export interface RecordingConfig {
   bufferSafetyMs: number; // Extra ms wait to ensure buffer is populated
   audioContextRef: React.RefObject<AudioContext | null>;
   // AudioWorklet is mandatory - no useAudioWorklet option
-  calibratedLatencyMap: Record<string, number>; // deviceKey → calibrated HW compensation (legacy)
   deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
 }
 
@@ -278,7 +277,7 @@ export class RecordingEngine {
             this.callbacks.onSetIsRecording(false);
           } else {
             // Pass audio data directly (no race condition)
-            this.handleAudioWorkletStop(data.audioData, data.anchoredFrame, data.rollingOffset);
+            this.handleAudioWorkletStop(data.audioData, data.anchoredFrame);
           }
         } else if (data.type === 'DEBUG') {
           console.log('AudioWorklet DEBUG:', data);
@@ -307,7 +306,7 @@ export class RecordingEngine {
   }
 
   // Handle AudioWorklet recording stop (shared clock with playback)
-  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number, _rollingOffset?: number): Promise<void> {
+  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number): Promise<void> {
     if (!audioData || audioData.length === 0) {
       console.warn('handleAudioWorkletStop: no data received');
       return;
@@ -346,23 +345,25 @@ export class RecordingEngine {
     const outputLatencyMs = Math.round((audioContext.outputLatency || 0) * 1000);
     const baseLatencyMs = Math.round((audioContext.baseLatency || 0) * 1000);
 
-    // Check deviceLatencyCache first (new visual calibration system)
+    // Check deviceLatencyCache (visual calibration system)
     const inputDeviceId = this.continuousMicStream?.getAudioTracks()[0]?.getSettings()?.deviceId || 'unknown';
     const deviceFingerprint = `${inputDeviceId}-${Math.round(outputLatencyMs / 5) * 5}`;
     const cachedProfile = this.config.deviceLatencyCache?.[deviceFingerprint];
 
-    // Fallback HW compensation for log reporting
-    const deviceKey = `${Math.round(outputLatencyMs / 5) * 5}`;
-    const calibratedHW = this.config.calibratedLatencyMap?.[deviceKey];
-    const HW_COMP_MS = calibratedHW ?? defaultHWCompMs(outputLatencyMs);
+    const browserLatencyMs = outputLatencyMs + baseLatencyMs;
 
     let latencyCompMs: number;
-    if (cachedProfile) {
-      // Use cached total round-trip + extra offset
+    if (cachedProfile && cachedProfile.captureOutputLatencyMs !== undefined) {
+      // New-style profile: compute hwDelta from calibrated total minus browser latency at capture time
+      const captureBrowserMs = cachedProfile.captureOutputLatencyMs + cachedProfile.captureBaseLatencyMs;
+      const hwDeltaMs = cachedProfile.totalRoundtripMs - captureBrowserMs;
+      latencyCompMs = browserLatencyMs + hwDeltaMs + (this.config.extraLatencyMs || 0);
+    } else if (cachedProfile) {
+      // Legacy profile (no capture latencies): use totalRoundtripMs directly
       latencyCompMs = cachedProfile.totalRoundtripMs + (this.config.extraLatencyMs || 0);
     } else {
-      // Fall back to legacy formula: browser latency + HW heuristic + extra offset
-      const browserLatencyMs = outputLatencyMs + baseLatencyMs;
+      // No cache — fall back to browser latency + HW heuristic + extra offset
+      const HW_COMP_MS = defaultHWCompMs(outputLatencyMs);
       latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     }
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
@@ -379,29 +380,21 @@ export class RecordingEngine {
     const wavBlob = new Blob([audioBufferToWav(audioBuffer)], { type: 'audio/wav' });
     const finalAudioUrl = URL.createObjectURL(wavBlob);
 
-    const anchoredFrameTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : 0;
     const ctxTimeNow = audioContext.currentTime;
-    const clockDomainDelta = anchoredFrameTime - this.punchInUserTime;
-    const workletFrameAge = ctxTimeNow - anchoredFrameTime;
-    const beatDelta = clockDomainDelta / secondsPerBeat;
     console.log('RECORDING_DELTA', {
       punchInUserTime: this.punchInUserTime,
-      punchInUserTime_Real: anchoredFrameTime,
       startPos,
       latencyCompMs,
       outputLatencyMs,
       baseLatencyMs,
       extraLatencyMs: this.config.extraLatencyMs,
-      HW_COMP_MS,
       headLength: this.headLength,
-      clockDomainDeltaSec: clockDomainDelta,
-      clockDomainDeltaBeats: beatDelta,
       anchoredFrame,
-      anchoredFrameAsTime: anchoredFrameTime,
       ctxTimeAtStop: ctxTimeNow,
-      workletFrameAgeSec: workletFrameAge,
       secondsPerBar,
       secondsPerBeat,
+      deviceFingerprint,
+      hasCache: !!cachedProfile,
     });
     perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {

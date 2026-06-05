@@ -69,6 +69,8 @@ export interface DeviceLatencyProfile {
   deviceFingerprint: string;
   label?: string;
   totalRoundtripMs: number;
+  captureOutputLatencyMs: number;
+  captureBaseLatencyMs: number;
   extraLatencyMs: number;
   lastCalibrated: number;
   calibrationMethod: 'visual' | 'auto' | 'manual' | 'clap';
@@ -114,7 +116,6 @@ interface AppState {
   sampleRate: number; // AudioContext sample rate for anchor calculations
   outputLatencyMs: number; // AudioContext.outputLatency * 1000 (browser-reported output delay)
   baseLatencyMs: number; // AudioContext.baseLatency * 1000 (render quantum buffer delay)
-  calibratedLatency: Record<string, number>; // deviceKey → calibrated HW compensation (replaces heuristic)
   deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
@@ -125,7 +126,8 @@ interface AppState {
   preRollMode: 'always' | 'recording' | 'none';
   waveformQuality: 'low' | 'medium' | 'high';
   isReady: boolean;
-  
+  deviceChangeNotif: { deviceFingerprint: string; timestamp: number; outputLatencyMs: number; baseLatencyMs: number } | null;
+
   // Responsive Layout State
   trackHeight: number;
   metronomeHeight: number;
@@ -178,12 +180,11 @@ interface AppState {
   setPreRollMode: (mode: 'always' | 'recording' | 'none') => void;
   setWaveformQuality: (quality: 'low' | 'medium' | 'high') => void;
   setIsReady: (isReady: boolean) => void;
+  setDeviceChangeNotif: (notif: { deviceFingerprint: string; timestamp: number; outputLatencyMs: number; baseLatencyMs: number } | null) => void;
   setResponsiveLayout: (layout: { trackHeight: number, metronomeHeight: number, sidebarWidth: number }) => void;
   setSampleRate: (rate: number) => void;
   setAudioContextLatency: (outputLatencyMs: number, baseLatencyMs: number) => void;
   refreshAudioLatency: () => void;
-  setCalibratedLatency: (key: string, value: number) => void;
-  removeCalibratedLatency: (key: string) => void;
   getDeviceLatency: (fingerprint: string) => DeviceLatencyProfile | undefined;
   setDeviceLatency: (profile: DeviceLatencyProfile) => void;
   clearDeviceLatency: (fingerprint: string) => void;
@@ -254,8 +255,8 @@ const defaultSettings = {
   sampleRate: 44100, // Default; updated when AudioContext is created
   outputLatencyMs: 0,
   baseLatencyMs: 0,
-  calibratedLatency: {},
   deviceLatencyCache: {},
+  deviceChangeNotif: null,
   // Configurable button sizes (CSS pixels)
   smallBtnSize: 36,
   mediumBtnSize: 44,
@@ -351,12 +352,6 @@ export const useStore = create<AppState>()(
             });
           }
         },
-        setCalibratedLatency: (key, value) => set((state) => {
-          state.calibratedLatency[key] = value;
-        }),
-        removeCalibratedLatency: (key) => set((state) => {
-          delete state.calibratedLatency[key];
-        }),
         getDeviceLatency: (fingerprint) => get().deviceLatencyCache[fingerprint],
         setDeviceLatency: (profile) => set((state) => {
           state.deviceLatencyCache[profile.deviceFingerprint] = profile;
@@ -367,6 +362,7 @@ export const useStore = create<AppState>()(
         setPreRollMode: (mode) => set({ preRollMode: mode }),
         setWaveformQuality: (quality) => set({ waveformQuality: quality }),
         setIsReady: (isReady) => set({ isReady }),
+        setDeviceChangeNotif: (notif) => set({ deviceChangeNotif: notif }),
         setResponsiveLayout: (layout) => set(layout),
         setToolbarProposal: (toolbarProposal) => set({ toolbarProposal }),
         setToolbarVisibleLabels: (toolbarVisibleLabels) => set({ toolbarVisibleLabels }),

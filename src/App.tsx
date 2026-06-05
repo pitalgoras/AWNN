@@ -16,15 +16,14 @@ import { SyncTool } from './components/SyncTool';
 import { EnvelopeEditor } from './components/EnvelopeEditor';
 import { useToolbarContext, type ScreenSize, type ToolbarType } from './hooks/useToolbarContext';
 import { useAdaptiveLabels } from './hooks/useAdaptiveLabels';
-import { ManualCalibrationModal } from './components/modals/ManualCalibrationModal';
-import { LatencyCalibrationModal } from './components/modals/LatencyCalibrationModal';
 import { TimelineGrid } from './components/TimelineGrid';
 import { LyricsBuilder } from './components/LyricsBuilder';
 import { TrackBar } from './components/TrackBar';
 import { exportProjectToJSON, importProjectFromJSON } from './audio/project/projectIO';
 
 import { TransportTimeDisplay } from './components/TransportTimeDisplay';
-import { StatusLogger } from './components/StatusLogger';
+import { DeviceChangeBanner } from './components/DeviceChangeBanner';
+import { VisualCalibrationModal } from './components/modals/VisualCalibrationModal';
 import { perfLogger } from './utils/PerformanceLogger';
 
 import { formatBarBeat } from './audio/time/timeFormat';
@@ -38,7 +37,6 @@ export default function App() {
   const zoom = useStore(s => s.zoom);
   const bpm = useStore(s => s.bpm);
   const timeSignature = useStore(s => s.timeSignature);
-  const globalLatencyMs = useStore(s => s.globalLatencyMs);
   const selectedTrackId = useStore(s => s.selectedTrackId);
   const moveLocked = useStore(s => s.moveLocked);
   const envelopeLocked = useStore(s => s.envelopeLocked);
@@ -145,12 +143,11 @@ export default function App() {
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTracksModal, setShowTracksModal] = useState(false);
   const [showMetronomeSettings, setShowMetronomeSettings] = useState(false);
+  const [showCalibration, setShowCalibration] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [showCues, setShowCues] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
-  const [isManualCalibrating, setIsManualCalibrating] = useState(false);
-  const [isLatencyCalibrating, setIsLatencyCalibrating] = useState(false);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
@@ -1048,10 +1045,6 @@ export default function App() {
 
       </main>
 
-      <ManualCalibrationModal show={isManualCalibrating} onClose={() => setIsManualCalibrating(false)} />
-
-      <LatencyCalibrationModal show={isLatencyCalibrating} onClose={() => setIsLatencyCalibrating(false)} />
-
       <ModalShell show={showAdvancedSettings} onClose={() => setShowAdvancedSettings(false)} title="Advanced Settings">
         <div>
           <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
@@ -1095,15 +1088,9 @@ export default function App() {
           <label className="block text-[10px] font-bold uppercase tracking-[0.2em] text-zinc-500 mb-2">
             Diagnostics
           </label>
-          <button 
-            onClick={() => {
-              setShowAdvancedSettings(false);
-              setIsManualCalibrating(true);
-            }}
-            className="w-full py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-          >
-            Start Loopback Latency Test
-          </button>
+          <span className="block text-[10px] text-zinc-600 leading-snug">
+            Calibration is now done through the visual calibration tool in Settings → Calibration.
+          </span>
         </div>
 
         <div>
@@ -1199,6 +1186,12 @@ export default function App() {
           </div>
         </div>
       </ModalShell>
+
+      {/* Device Change Notification */}
+      <DeviceChangeBanner onOpenCalibration={() => setShowCalibration(true)} />
+
+      {/* Calibration Modal */}
+      <VisualCalibrationModal show={showCalibration} onClose={() => setShowCalibration(false)} />
 
       {/* Settings Modal */}
       <SettingsModal
