@@ -669,7 +669,7 @@ export default function App() {
   };
 
   const renderBpmSig = () => (
-    <div className="flex flex-col items-center gap-0 px-1">
+    <div className="flex flex-col items-center gap-0 px-1" onClick={() => setShowMetronomeSettings(true)}>
       <div className="flex items-center gap-1 leading-tight">
         <span className="text-[9px] font-bold text-zinc-500 uppercase">BPM</span>
         <span className="text-[9px] font-mono font-bold text-zinc-300">{bpm}</span>
