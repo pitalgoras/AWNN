@@ -390,7 +390,6 @@ export class RecordingEngine {
     perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {
       url: finalAudioUrl,
-      blob: wavBlob,
       audioBuffer: audioBuffer,
       peaks: peaks,
       startPosition: startPos,
