@@ -689,7 +689,7 @@ const {
             const targetVolume = trackBaseVolume * envVal;
 
             const wsList = multitrackRef.current.wavesurfers || [];
-            const count = track.phrases.length === 0 ? 0 : track.phrases.length;
+            const count = track.phrases.length === 0 ? 1 : track.phrases.length;
             
             for (let j = 0; j < count; j++) {
               const ws = wsList[itemIndex];
