@@ -441,7 +441,18 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       }
       $('status').textContent = 'Resuming AudioContext...';
       log(`ctx.state=suspended, calling resume() (real gesture: ${gestureType})...`);
-      await ctx.resume();
+      try {
+        await Promise.race([
+          ctx.resume(),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('resume timed out after 3s')), 3000)),
+        ]);
+      } catch (e) {
+        log(`ctx.resume() failed: ${e}`, 'err');
+        $('status').textContent = '⏳ Tap the screen to activate audio (resume failed)';
+        $('status').className = 'msg';
+        initRunning = false;
+        return false;
+      }
       log(`ctx.state=${ctx.state} after resume()`);
     }
     readOL('T1: after resume()');
@@ -455,7 +466,10 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       const audioConstraints = isChrome
         ? { echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false } }
         : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: ctx.sampleRate };
-      micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      micStream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({ audio: audioConstraints }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('getUserMedia timed out after 10s')), 10000)),
+      ]);
       log('getUserMedia OK');
       readOL('T2: after getUserMedia');
 
