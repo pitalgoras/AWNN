@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../lib/utils';
-import { Settings, Save, FolderOpen, Zap } from 'lucide-react';
+import { Settings, Save, FolderOpen, Eye } from 'lucide-react';
 import { ModalShell, ModalHeading, ModalRow, ModalLabel } from './ModalShell';
 import { ToggleRow } from '../settings/ToggleRow';
-import { LatencyCalibrationModal } from './LatencyCalibrationModal';
+import { VisualCalibrationModal } from './VisualCalibrationModal';
 
 interface Props { show: boolean; onClose: () => void; onOpenAdvanced: () => void; onOpenTracks: () => void }
 
 export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, onOpenTracks }) => {
-  const [latencyCal, setLatencyCal] = useState<'closed' | 'manual' | 'auto'>('closed');
-  const globalLatencyMs = useStore(s => s.globalLatencyMs);
-  const setGlobalLatencyMs = useStore(s => s.setGlobalLatencyMs);
+  const [showCalibration, setShowCalibration] = useState(false);
   const metronomeEnabled = useStore(s => s.metronomeEnabled);
   const barLinesEnabled = useStore(s => s.barLinesEnabled);
   const saveProject = useStore(s => s.saveProject);
@@ -25,19 +23,13 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
     <ModalShell show={show} onClose={onClose} title="Settings" maxWidth="max-w-lg">
       {/* Latency Section */}
       <div>
-        <ModalHeading>Audio Latency Compensation</ModalHeading>
-        <div className="flex gap-2 mt-2">
-          <button onClick={() => { console.log('SettingsModal: Auto Calibration clicked'); setLatencyCal('auto'); }}
-            className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2"
-          >
-            <Zap size={14} /> Auto Calibration
-          </button>
-          <button onClick={() => { console.log('SettingsModal: ms button clicked', globalLatencyMs + 'ms'); setLatencyCal('manual'); }}
-            className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-blue-400 rounded text-[10px] font-mono font-bold transition-all"
-          >
-            {globalLatencyMs}ms
-          </button>
-        </div>
+        <ModalHeading>Audio Latency Calibration</ModalHeading>
+        <button onClick={() => setShowCalibration(true)}
+          className="w-full py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-md transition-all flex items-center justify-center gap-1.5 text-[10px]"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          Open Calibration
+        </button>
       </div>
 
       {/* Advanced Audio */}
@@ -134,6 +126,6 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
         </div>
       </div>
     </ModalShell>
-      <LatencyCalibrationModal show={latencyCal !== 'closed'} onClose={() => setLatencyCal('closed')} autoStart={latencyCal === 'auto'} />
+      <VisualCalibrationModal show={showCalibration} onClose={() => setShowCalibration(false)} />
     </>);
 };

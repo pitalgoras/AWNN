@@ -5,6 +5,7 @@ import RegionsPlugin from 'wavesurfer.js/dist/plugins/regions.esm.js';
 import { useStore } from '../store/useStore';
 import { RecordingEngine, RecordingConfig, RecordingCallbacks } from '../audio/recording/RecordingEngine';
 import { MetronomeEngine } from '../audio/metronome/MetronomeEngine';
+import { WelcomeBeep } from '../audio/calibration/WelcomeBeep';
 import { perfLogger } from '../utils/PerformanceLogger';
 
 // Override WaveSurfer.prototype.load to catch unhandled promise rejections globally
@@ -42,6 +43,8 @@ export function useAudioEngine() {
   const multitrackRef = useRef<MultiTrack | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
   const isPreRollingRef = useRef(false);
+  const welcomeBeepRef = useRef<WelcomeBeep | null>(null);
+  const previousSinkIdRef = useRef<string | null>(null);
   const [multitrack, setMultitrack] = useState<MultiTrack | null>(null);
   
   // Engine refs for modular audio architecture
@@ -69,7 +72,7 @@ const {
   outputLatencyMs,
   baseLatencyMs,
   extraLatencyMs,
-  calibratedLatency,
+  deviceLatencyCache,
   setIsPlaying,
   setIsRecording,
   setCurrentTime,
@@ -111,7 +114,7 @@ const {
         outputLatencyMs: outputLatencyMs || 0,
         baseLatencyMs: baseLatencyMs || 0,
         extraLatencyMs: extraLatencyMs || 0,
-        calibratedLatencyMap: calibratedLatency || {},
+        deviceLatencyCache: deviceLatencyCache || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -158,14 +161,10 @@ const {
       recordingEngineRef.current = new RecordingEngine(config, callbacks);
     }
 
-    // Update RecordingEngine config (excluding isPlaying - handled separately)
+    // Update RecordingEngine config (excluding isPlaying and latency - handled separately)
     if (recordingEngineRef.current) {
       recordingEngineRef.current.updateConfig({
         rawRecordingMode,
-        outputLatencyMs: outputLatencyMs || 0,
-        baseLatencyMs: baseLatencyMs || 0,
-        extraLatencyMs: extraLatencyMs || 0,
-        calibratedLatencyMap: calibratedLatency || {},
         bpm: bpm || 120,
         timeSignature: timeSignature || [4, 4],
         preRollMode,
@@ -205,22 +204,60 @@ const {
     }
   }, [isPlaying]);
 
-  // Listen for device changes (headphone plug/unplug) and refresh latency + calibration
+  // Dedicated effect to propagate latency config to RecordingEngine on any change.
+  // Separated from the main init effect so it can re-run without triggering re-init.
   useEffect(() => {
-    const refresh = () => {
-      useStore.getState().refreshAudioLatency();
-      if (recordingEngineRef.current) {
-        const state = useStore.getState();
-        recordingEngineRef.current.updateConfig({
-          outputLatencyMs: state.outputLatencyMs || 0,
-          baseLatencyMs: state.baseLatencyMs || 0,
-          calibratedLatencyMap: state.calibratedLatency || {},
-        });
+    if (!recordingEngineRef.current) return;
+    recordingEngineRef.current.updateConfig({
+      outputLatencyMs: outputLatencyMs || 0,
+      baseLatencyMs: baseLatencyMs || 0,
+      extraLatencyMs: extraLatencyMs || 0,
+      deviceLatencyCache: deviceLatencyCache || {},
+    });
+  }, [outputLatencyMs, baseLatencyMs, extraLatencyMs, deviceLatencyCache]);
+
+  // Listen for device changes (headphone plug/unplug).
+  // 1s debounce + sinkId comparison to suppress spurious Firefox events.
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const refresh = async () => {
+      const ctx = audioContextRef.current;
+      let currentSinkId: string | null = null;
+      if (ctx && typeof (ctx as any).sinkId === 'string') {
+        currentSinkId = (ctx as any).sinkId;
       }
+
+      // Firefox fires devicechange on unrelated events; skip if sinkId unchanged.
+      if (currentSinkId !== null && currentSinkId === previousSinkIdRef.current) return;
+      previousSinkIdRef.current = currentSinkId;
+
+      useStore.getState().refreshAudioLatency();
+      const state = useStore.getState();
+      // Show device change notification (will be dismissed after 6s by the banner component)
+      const inpDeviceId = state.deviceLatencyCache
+        ? Object.keys(state.deviceLatencyCache).find(k =>
+            k.endsWith(`-${Math.round((state.outputLatencyMs || 0) / 5) * 5}`))
+        : null;
+      const notifFingerprint = inpDeviceId || `unknown-${Math.round((state.outputLatencyMs || 0) / 5) * 5}`;
+      useStore.getState().setDeviceChangeNotif({
+        deviceFingerprint: notifFingerprint,
+        timestamp: Date.now(),
+        outputLatencyMs: state.outputLatencyMs || 0,
+        baseLatencyMs: state.baseLatencyMs || 0,
+      });
     };
 
-    navigator.mediaDevices?.addEventListener('devicechange', refresh);
-    return () => navigator.mediaDevices?.removeEventListener('devicechange', refresh);
+    const debouncedRefresh = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(refresh, 1000);
+    };
+
+    navigator.mediaDevices?.addEventListener('devicechange', debouncedRefresh);
+    return () => {
+      navigator.mediaDevices?.removeEventListener('devicechange', debouncedRefresh);
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
   // Stop playback when metronome master is disabled (but not during recording)
@@ -419,6 +456,12 @@ const {
           Math.round((audioContextRef.current.outputLatency || 0) * 1000),
           Math.round((audioContextRef.current.baseLatency || 0) * 1000),
         );
+
+        // Play welcome beep on first engine init
+        if (!welcomeBeepRef.current) {
+          welcomeBeepRef.current = new WelcomeBeep(audioContextRef.current);
+          welcomeBeepRef.current.play();
+        }
 
         const multitrackItems: (TrackOptions & { trackId: string })[] = [];
 

@@ -163,7 +163,7 @@ export function applyTagToWord(raw: string, startChar: number, endChar: number, 
 export function applyTagToSelection(raw: string, selStart: number, selEnd: number, targetTag: string, tagColorMap: Record<string, string>): string {
   const endTagMatch = findPrevTag(raw, selEnd);
   const endTag = endTagMatch ? endTagMatch.tag : null;
-  let cleaned = removeTagsInRange(raw, selStart, selEnd, tagColorMap);
+  const cleaned = removeTagsInRange(raw, selStart, selEnd, tagColorMap);
   const offset1 = 0;
   let afterFront = applyTagToWord(cleaned, selStart, selStart, targetTag, tagColorMap);
   if (endTag) {

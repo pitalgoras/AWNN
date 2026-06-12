@@ -8,6 +8,7 @@
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 import { calculatePeaksAsync } from '../processing/audioUtils';
 import { perfLogger } from '../../utils/PerformanceLogger';
+import type { DeviceLatencyProfile } from '../../store/useStore';
 
 export interface RecordingConfig {
   rawRecordingMode: boolean;
@@ -24,7 +25,7 @@ export interface RecordingConfig {
   bufferSafetyMs: number; // Extra ms wait to ensure buffer is populated
   audioContextRef: React.RefObject<AudioContext | null>;
   // AudioWorklet is mandatory - no useAudioWorklet option
-  calibratedLatencyMap: Record<string, number>; // deviceKey → calibrated HW compensation
+  deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
 }
 
 export function defaultHWCompMs(outputLatencyMs: number): number {
@@ -276,7 +277,7 @@ export class RecordingEngine {
             this.callbacks.onSetIsRecording(false);
           } else {
             // Pass audio data directly (no race condition)
-            this.handleAudioWorkletStop(data.audioData, data.anchoredFrame, data.rollingOffset);
+            this.handleAudioWorkletStop(data.audioData, data.anchoredFrame);
           }
         } else if (data.type === 'DEBUG') {
           console.log('AudioWorklet DEBUG:', data);
@@ -305,7 +306,7 @@ export class RecordingEngine {
   }
 
   // Handle AudioWorklet recording stop (shared clock with playback)
-  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number, _rollingOffset?: number): Promise<void> {
+  private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number): Promise<void> {
     if (!audioData || audioData.length === 0) {
       console.warn('handleAudioWorkletStop: no data received');
       return;
@@ -343,12 +344,28 @@ export class RecordingEngine {
     // (Chrome returns 0-8ms for outputLatency before audio flows, then updates to ~46ms)
     const outputLatencyMs = Math.round((audioContext.outputLatency || 0) * 1000);
     const baseLatencyMs = Math.round((audioContext.baseLatency || 0) * 1000);
-    // HW compensation: use per-device calibrated value if available, else heuristic
-    const deviceKey = `${Math.round(outputLatencyMs / 5) * 5}`;
-    const calibratedHW = this.config.calibratedLatencyMap?.[deviceKey];
-    const HW_COMP_MS = calibratedHW ?? defaultHWCompMs(outputLatencyMs);
+
+    // Check deviceLatencyCache (visual calibration system)
+    const inputDeviceId = this.continuousMicStream?.getAudioTracks()[0]?.getSettings()?.deviceId || 'unknown';
+    const deviceFingerprint = `${inputDeviceId}-${Math.round(outputLatencyMs / 5) * 5}`;
+    const cachedProfile = this.config.deviceLatencyCache?.[deviceFingerprint];
+
     const browserLatencyMs = outputLatencyMs + baseLatencyMs;
-    const latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
+
+    let latencyCompMs: number;
+    if (cachedProfile && cachedProfile.captureOutputLatencyMs !== undefined) {
+      // New-style profile: compute hwDelta from calibrated total minus browser latency at capture time
+      const captureBrowserMs = cachedProfile.captureOutputLatencyMs + cachedProfile.captureBaseLatencyMs;
+      const hwDeltaMs = cachedProfile.totalRoundtripMs - captureBrowserMs;
+      latencyCompMs = browserLatencyMs + hwDeltaMs + (this.config.extraLatencyMs || 0);
+    } else if (cachedProfile) {
+      // Legacy profile (no capture latencies): use totalRoundtripMs directly
+      latencyCompMs = cachedProfile.totalRoundtripMs + (this.config.extraLatencyMs || 0);
+    } else {
+      // No cache — fall back to browser latency + HW heuristic + extra offset
+      const HW_COMP_MS = defaultHWCompMs(outputLatencyMs);
+      latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
+    }
     const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
 
     // Pre-calculate peaks
@@ -363,29 +380,21 @@ export class RecordingEngine {
     const wavBlob = new Blob([audioBufferToWav(audioBuffer)], { type: 'audio/wav' });
     const finalAudioUrl = URL.createObjectURL(wavBlob);
 
-    const anchoredFrameTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : 0;
     const ctxTimeNow = audioContext.currentTime;
-    const clockDomainDelta = anchoredFrameTime - this.punchInUserTime;
-    const workletFrameAge = ctxTimeNow - anchoredFrameTime;
-    const beatDelta = clockDomainDelta / secondsPerBeat;
     console.log('RECORDING_DELTA', {
       punchInUserTime: this.punchInUserTime,
-      punchInUserTime_Real: anchoredFrameTime,
       startPos,
       latencyCompMs,
       outputLatencyMs,
       baseLatencyMs,
       extraLatencyMs: this.config.extraLatencyMs,
-      HW_COMP_MS,
       headLength: this.headLength,
-      clockDomainDeltaSec: clockDomainDelta,
-      clockDomainDeltaBeats: beatDelta,
       anchoredFrame,
-      anchoredFrameAsTime: anchoredFrameTime,
       ctxTimeAtStop: ctxTimeNow,
-      workletFrameAgeSec: workletFrameAge,
       secondsPerBar,
       secondsPerBeat,
+      deviceFingerprint,
+      hasCache: !!cachedProfile,
     });
     perfLogger.log(24, trackId, startPos);
     this.callbacks.onAddPhrase(trackId, {
