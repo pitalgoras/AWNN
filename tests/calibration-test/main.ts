@@ -15,6 +15,7 @@ let initRunning = false;
 let vuTimer: ReturnType<typeof setInterval> | null = null;
 let noiseFloorRms = 0;
 let noiseFloorTargetAmp = 0.2;
+let feedbackEnabled = true;
 let inputVuElement: HTMLDivElement;
 let inputVuVal: HTMLSpanElement;
 const logBuffer: string[] = [];
@@ -138,6 +139,18 @@ function startVUPoll() {
 
 function stopVUPoll() {
   if (vuTimer) { clearInterval(vuTimer); vuTimer = null; }
+}
+
+/* ── Feedback Toggle ──────────────────────────────────── */
+
+function toggleFeedback() {
+  const btn = $('btn-feedback');
+  const newState = !feedbackEnabled;
+  feedbackEnabled = newState;
+  btn.textContent = newState ? 'Mute Feedback' : 'Unmute Feedback';
+  btn.className = newState ? 'btn-secondary btn-sm' : 'btn-secondary btn-sm';
+  if (workletNode) workletNode.port.postMessage({ type: 'TOGGLE_FEEDBACK', enabled: newState });
+  log(`Feedback ${newState ? 'enabled' : 'muted'}`, 'ok');
 }
 
 /* ── Health Poll ─────────────────────────────────────── */
@@ -898,6 +911,8 @@ $('btn-init').onclick = () => ensureWorkletReady();
 $('btn-diagnose').onclick = runDiagnose;
 
 $('btn-capture-noise').onclick = captureNoiseFloor;
+
+$('btn-feedback').onclick = toggleFeedback;
 
 $('btn-refresh-devices').onclick = enumerateAllDevices;
 

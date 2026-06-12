@@ -19,6 +19,7 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
     // in MLS correlation removes this frequency entirely.
     this._activatorPhase = 0;
     this._activatorGain = 0.02;
+    this._feedbackEnabled = true;
 
     this.port.onmessage = (e) => {
       this._onmessageCount++;
@@ -30,6 +31,7 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
           bufferLength: this._buffer.length,
           processCount: this._processCount,
           onmessageCount: this._onmessageCount,
+          feedbackEnabled: this._feedbackEnabled,
         });
       } else if (e.data.type === 'RESET') {
         this._buffer = [];
@@ -44,6 +46,8 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
         this._startFrame = e.data.startFrame;
         this._duration = e.data.duration;
         this._stopFrame = this._startFrame + this._duration;
+      } else if (e.data.type === 'TOGGLE_FEEDBACK') {
+        this._feedbackEnabled = !!e.data.enabled;
       }
     };
   }
@@ -62,15 +66,21 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
     // Generate output: internal 20Hz tone + raw mic when idle.
     // During recording, mic pass-through is muted to avoid contaminating
     // the MLS probe playback with feedback.
+    // When feedback is disabled, output silence (activator still runs internally
+    // to avoid phase discontinuity on re-enable).
     const out = outputs[0]?.[0];
     if (out) {
       const inp = inputs[0]?.[0];
       for (let i = 0; i < out.length; i++) {
         this._activatorPhase += 2 * Math.PI * 20 / sampleRate;
         if (this._activatorPhase > 2 * Math.PI) this._activatorPhase -= 2 * Math.PI;
-        const activator = Math.sin(this._activatorPhase) * this._activatorGain;
-        const mic = (this._recording || this._pending) ? 0 : (inp?.[i] ?? 0);
-        out[i] = activator + mic;
+        if (this._feedbackEnabled) {
+          const activator = Math.sin(this._activatorPhase) * this._activatorGain;
+          const mic = (this._recording || this._pending) ? 0 : (inp?.[i] ?? 0);
+          out[i] = activator + mic;
+        } else {
+          out[i] = 0;
+        }
       }
     }
 
