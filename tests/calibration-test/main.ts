@@ -255,20 +255,82 @@ async function captureNoiseFloor() {
   $('btn-capture-noise').textContent = 'Capture Noise Floor';
 };
 
-function showGainHint(noiseFloorDb: number) {
-  const hint = $('gain-hint');
-  const isMobile = /Android|iPhone|iPad|iPod|webOS/i.test(navigator.userAgent);
-  if (isMobile) {
-    hint.textContent = '📱 Mic gain not adjustable on this platform. Ensure mic is close to speaker.';
-    return;
+function showGainHint(_noiseFloorDb: number) {
+  // Noise floor is unreliable with Bluetooth noise gates — no gain advice
+  $('gain-hint').textContent = '';
+}
+
+/* ── Amplitude Ladder ──────────────────────────────────── */
+
+function generateAmplitudes(): number[] {
+  const amps: number[] = [];
+  for (let a = 0.05; a <= 0.80; a *= 1.5) {
+    amps.push(Math.round(a * 1000) / 1000);
   }
-  if (noiseFloorDb < -50) {
-    hint.textContent = '🔊 Mic level seems very low. Increase system mic gain (Settings → Sound → Input → raise mic volume).';
-  } else if (noiseFloorDb > -20) {
-    hint.textContent = '🔉 Mic level is high (noisy environment or gain too high). Decrease system mic gain if possible.';
-  } else {
-    hint.textContent = '✓ Mic level looks reasonable.';
+  return amps;
+}
+
+/* ── Latency Clustering ────────────────────────────────── */
+
+interface LatencyCluster {
+  latencyMs: number;
+  stddev: number;
+  count: number;
+  amplitudes: number[];
+}
+
+function findLatencyCluster(results: SweepResult[]): LatencyCluster | null {
+  const good = results.filter(r => r.p2n >= 18 && !r.error);
+  if (good.length < 2) return null;
+
+  const bins = new Map<number, SweepResult[]>();
+  for (const r of good) {
+    const bin = Math.round(r.latencyMs / 5) * 5;
+    if (!bins.has(bin)) bins.set(bin, []);
+    bins.get(bin)!.push(r);
   }
+
+  let largest: SweepResult[] = [];
+  for (const group of bins.values()) {
+    if (group.length > largest.length) largest = group;
+  }
+  if (largest.length < 2) return null;
+
+  const latencies = largest.map(r => r.latencyMs);
+  const mean = latencies.reduce((a, b) => a + b, 0) / latencies.length;
+  const variance = latencies.reduce((a, b) => a + (b - mean) ** 2, 0) / latencies.length;
+  return { latencyMs: mean, stddev: Math.sqrt(variance), count: largest.length, amplitudes: largest.map(r => r.amplitude) };
+}
+
+/* ── Sweep History (localStorage) ──────────────────────── */
+
+const HISTORY_KEY = 'awnn-cal-history';
+
+interface SweepHistoryEntry {
+  timestamp: string;
+  userAgent: string;
+  micDeviceId: string;
+  latencyMs: number;
+  stddev: number;
+  amplitudeCount: number;
+}
+
+function getSweepHistory(micDeviceId: string): SweepHistoryEntry[] {
+  try {
+    const all: SweepHistoryEntry[] = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    return all.filter(h => h.userAgent === navigator.userAgent && h.micDeviceId === micDeviceId);
+  } catch { return []; }
+}
+
+function storeSweep(entry: SweepHistoryEntry) {
+  try {
+    const all: SweepHistoryEntry[] = JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]');
+    const mine = all.filter(h => h.userAgent === navigator.userAgent && h.micDeviceId === entry.micDeviceId);
+    const others = all.filter(h => !(h.userAgent === navigator.userAgent && h.micDeviceId === entry.micDeviceId));
+    mine.push(entry);
+    while (mine.length > 5) mine.shift();
+    localStorage.setItem(HISTORY_KEY, JSON.stringify([...others, ...mine]));
+  } catch { /* localStorage may be full */ }
 }
 
 /* ── MLS with Level Sweep ─────────────────────────────── */
@@ -306,13 +368,11 @@ async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitud
       endConfidence: r.endConfidence,
       latencySource: r.latencySource,
     });
-    // Stop early if strong result
-    if (r.peakToNoise >= 18 && r.success) break;
   }
   return results;
 }
 
-function renderSweepTable(results: SweepResult[]) {
+function renderSweepTable(results: SweepResult[], cluster?: LatencyCluster | null) {
   const el = $('sweep-section');
   if (results.length === 0) { el.style.display = 'none'; return; }
   el.style.display = 'block';
@@ -320,15 +380,23 @@ function renderSweepTable(results: SweepResult[]) {
   let html = '<table class="sweep-table"><tr><th>Amp</th><th>P2N(dB)</th><th>Lat(ms)</th><th>End(ms)</th><th>Src</th><th>RMS</th><th>Status</th></tr>';
   for (const r of results) {
     const isBest = r === best;
+    const inCluster = cluster && cluster.amplitudes.includes(r.amplitude);
     const srcLabel = r.latencySource === 'end-detection' ? 'END' : 'START';
-    html += `<tr style="${isBest ? 'background:#1e293b' : ''}">
+    html += `<tr style="${inCluster ? 'background:#1e293b' : isBest ? 'background:#18181b' : ''}">
       <td>${r.amplitude.toFixed(2)}</td>
       <td style="color:${r.p2n >= 18 ? '#86efac' : '#fca5a5'}">${r.p2n.toFixed(1)}</td>
-      <td>${r.latencyMs.toFixed(1)}</td>
+      <td>${r.latencyMs.toFixed(1)}${inCluster ? ' ←' : ''}</td>
       <td style="color:${r.endConfidence > 0.3 ? '#86efac' : '#71717a'}">${r.endLatencyMs.toFixed(1)}</td>
       <td style="font-size:10px;color:${r.latencySource === 'end-detection' ? '#fbbf24' : '#71717a'}">${srcLabel}</td>
       <td>${r.inputRms.toFixed(5)}</td>
       <td>${r.error ? '✗' : '✓'}</td>
+    </tr>`;
+  }
+  if (cluster) {
+    html += `<tr style="background:#1e1b4b;font-weight:600">
+      <td colspan="7" style="padding:6px;color:#a5b4fc;font-size:11px">
+        Cluster: ${cluster.latencyMs.toFixed(1)}ms ±${cluster.stddev.toFixed(1)}ms across ${cluster.count} amplitudes (${cluster.amplitudes.map(a => a.toFixed(2)).join(', ')})
+      </td>
     </tr>`;
   }
   html += '</table>';
@@ -717,37 +785,49 @@ $('btn-mls').onclick = async () => {
   btn.textContent = 'Running...';
   $('mls-result').textContent = '';
 
-  // Determine amplitudes to sweep
-  const amplitudes = noiseFloorTargetAmp > 0
-    ? [noiseFloorTargetAmp, 0.1, 0.2, 0.4, 0.6]
-    : [0.05, 0.1, 0.2, 0.4, 0.6];
-  // Deduplicate and sort
-  const uniqueAmps = [...new Set(amplitudes.map(a => Math.round(a * 100) / 100))].sort();
-
-  const results = await runMlsWithSweep(ctx, workletNode, uniqueAmps);
+  const amplitudes = generateAmplitudes();
+  const results = await runMlsWithSweep(ctx, workletNode, amplitudes);
   lastMlsResults = results;
 
-  renderSweepTable(results);
-  const best = results.reduce((a, b) => a.p2n > b.p2n ? a : b);
+  const cluster = findLatencyCluster(results);
+  renderSweepTable(results, cluster);
+
+  const track = micStream?.getAudioTracks()[0];
+  const micDeviceId = track?.getSettings()?.deviceId || '';
+  const history = getSweepHistory(micDeviceId);
 
   const el = $('mls-result');
-  if (best.p2n >= 18 && !best.error) {
+  if (cluster) {
     el.className = 'result ok';
-    const srcLabel = best.latencySource === 'end-detection' ? ' (end-detection)' : '';
+    storeSweep({ timestamp: new Date().toISOString(), userAgent: navigator.userAgent, micDeviceId, latencyMs: cluster.latencyMs, stddev: cluster.stddev, amplitudeCount: cluster.count });
+
+    let historyHtml = '';
+    if (history.length > 0) {
+      const histMean = history.reduce((a, b) => a + b.latencyMs, 0) / history.length;
+      const histDev = history.length > 1 ? Math.sqrt(history.reduce((a, b) => a + (b.latencyMs - histMean) ** 2, 0) / history.length) : 0;
+      const allHist = [...history, { latencyMs: cluster.latencyMs }];
+      const totalMean = allHist.reduce((a, b) => a + b.latencyMs, 0) / allHist.length;
+      historyHtml = `<div style="font-size:10px;margin-top:4px;color:#6ee7b7">Consistent with ${history.length} previous sweeps (avg ${histMean.toFixed(1)}ms ±${histDev.toFixed(1)}ms) — all-time avg ${totalMean.toFixed(1)}ms</div>`;
+    }
+
     el.innerHTML = `
-      <div>Amp ${best.amplitude.toFixed(2)}: Latency <strong>${best.latencyMs.toFixed(1)}ms${srcLabel}</strong> · P2N ${best.peakToNoise.toFixed(1)}dB${best.endLatencyMs > 0 ? ` · End: ${best.endLatencyMs.toFixed(1)}ms` : ''}</div>
-      <div style="font-size:10px;margin-top:4px;color:#6ee7b7">${results.length} sweep(s), best amp=${best.amplitude.toFixed(2)}</div>`;
-    log(`MLS: latency=${best.latencyMs.toFixed(1)}ms P2N=${best.p2n.toFixed(1)}dB amp=${best.amplitude.toFixed(2)} src=${best.latencySource}`, 'ok');
-  } else if (best.latencyMs > 0) {
-    el.className = 'result err';
-    el.innerHTML = `
-      <div>Failed (best: amp=${best.amplitude.toFixed(2)}, P2N=${best.p2n.toFixed(1)}dB, need >18dB)</div>
-      <div style="font-size:10px;margin-top:4px;color:#fca5a5">Best guess: ${best.latencyMs.toFixed(1)}ms · outputLat: ${((ctx.outputLatency || 0) * 1000).toFixed(0)}ms${best.endLatencyMs > 0 ? ` · End: ${best.endLatencyMs.toFixed(1)}ms(${best.endConfidence.toFixed(2)})` : ''}</div>`;
-    log(`MLS: failed — best P2N=${best.p2n.toFixed(1)}dB at amp=${best.amplitude.toFixed(2)} src=${best.latencySource}`, 'err');
+      <div>Latency <strong>${cluster.latencyMs.toFixed(1)}ms</strong> ±${cluster.stddev.toFixed(1)}ms · ${cluster.count} amplitudes agree</div>
+      <div style="font-size:10px;margin-top:4px;color:#a5b4fc">Amplitudes: ${cluster.amplitudes.map(a => a.toFixed(2)).join(', ')}</div>
+      ${historyHtml}`;
+    log(`MLS: cluster ${cluster.latencyMs.toFixed(1)}ms ±${cluster.stddev.toFixed(1)}ms across ${cluster.count} amplitudes`, 'ok');
   } else {
-    el.className = 'result err';
-    el.innerHTML = 'MLS failed — no valid recording from worklet';
-    log('MLS: failed — no recording', 'err');
+    const p2nCount = results.filter(r => r.p2n >= 18).length;
+    if (p2nCount > 0) {
+      el.className = 'result err';
+      el.innerHTML = `<div>No cluster — ${p2nCount} amplitude(s) passed P2N but disagree on latency</div>
+        <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, ${p2nCount} with P2N≥18dB</div>`;
+      log(`MLS: no cluster — ${p2nCount}/${results.length} amplitudes with P2N≥18dB but no agreement`, 'err');
+    } else {
+      el.className = 'result err';
+      el.innerHTML = `<div>No valid measurements — 0 amplitudes passed P2N≥18dB threshold</div>
+        <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, check mic→speaker path</div>`;
+      log(`MLS: no valid measurements — ${results.length} amplitudes all below P2N threshold`, 'err');
+    }
   }
 
   btn.disabled = false;
