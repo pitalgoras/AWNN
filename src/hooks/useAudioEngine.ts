@@ -584,30 +584,31 @@ const {
       const realStartPosition = event?.startPosition;
       
       if (!id || realStartPosition === undefined) return;
-      
-      const state = useStore.getState();
-      for (const track of state.tracks) {
-        if (track.phrases.some(p => p.id === id)) {
-          const phrase = track.phrases.find(p => p.id === id);
-          if (!phrase) break;
+       
+        const state = useStore.getState();
+        const sBpm = state.bpm || 120;
+        const sSig = state.timeSignature || [4, 4];
+        const sSecPerBar = (60 / sBpm) * sSig[0];
+        for (const track of state.tracks) {
+          if (track.phrases.some(p => p.id === id)) {
+            const phrase = track.phrases.find(p => p.id === id);
+            if (!phrase) break;
 
-          // FIXED: Convert RealTime → UserTime before storing
-          // RealTime = UserTime + secondsPerBar + trackOffset
-          // So: UserTime = RealTime - secondsPerBar - trackOffset
-          const isMetronome = track.id === 'metronome';
-          const trackOffset = track.offset || 0;
-          const userStartPosition = isMetronome ? realStartPosition : realStartPosition - secondsPerBar - trackOffset;
+            // Convert RealTime → UserTime before storing
+            const isMetronome = track.id === 'metronome';
+            const trackOffset = track.offset || 0;
+            const userStartPosition = isMetronome ? realStartPosition : realStartPosition - sSecPerBar - trackOffset;
 
-          // Only update if the position actually changed to avoid infinite loops
-          if (Math.abs(phrase.startPosition - userStartPosition) > 0.01) {
-            console.log('start-position-change: RealTime=', realStartPosition, '→ UserTime=', userStartPosition, '(sPB=', secondsPerBar, 'offset=', trackOffset, ')');
-            state.updatePhrasePosition(track.id, id, userStartPosition);
+            // Only update if the position actually changed to avoid infinite loops
+            if (Math.abs(phrase.startPosition - userStartPosition) > 0.01) {
+              console.log('start-position-change: RealTime=', realStartPosition, '→ UserTime=', userStartPosition, '(sPB=', sSecPerBar, 'offset=', trackOffset, ')');
+              state.updatePhrasePosition(track.id, id, userStartPosition);
+            }
+            break;
           }
-          break;
         }
-      }
-    });
-  }, [multitrack, secondsPerBar, setCurrentTime]);
+      });
+  }, [multitrack, setCurrentTime]);
 
   // Safe polling mechanism for currentTime that doesn't trigger excessive re-renders
   useEffect(() => {
@@ -620,8 +621,11 @@ const {
       if (multitrackRef.current && typeof multitrackRef.current.getCurrentTime === 'function') {
         try {
           const state = useStore.getState();
+          const currentBpm = state.bpm || 120;
+          const currentSig = state.timeSignature || [4, 4];
+          const currentSecPerBar = (60 / currentBpm) * currentSig[0];
           const realTime = multitrackRef.current.getCurrentTime();
-          const userTime = realTime - secondsPerBar;
+          const userTime = realTime - currentSecPerBar;
           
           // Requirement 1 & 5: Clamp userTime to 0 for display and store, unless recording or pre-rolling
           const isPreRolling = state.isRecording || isPreRollingRef.current;
@@ -708,7 +712,7 @@ const {
           const syncLoop = useStore.getState().syncLoop;
           if (syncLoop && userTime >= syncLoop.end) {
             if (typeof multitrackRef.current.setTime === 'function') {
-              multitrackRef.current.setTime(syncLoop.start + secondsPerBar);
+              multitrackRef.current.setTime(syncLoop.start + currentSecPerBar);
             }
           }
         } catch {
@@ -747,7 +751,7 @@ const {
         console.error("Error destroying multitrack:", e);
       }
     };
-  }, [trackStructureHash, waveformQuality, secondsPerBar]);
+  }, [trackStructureHash, waveformQuality]);
 
   // Sync track heights dynamically
   useEffect(() => {
