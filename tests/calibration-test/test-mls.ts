@@ -69,6 +69,21 @@ export async function runMlsTest(
   const startFrame = Math.round(playStartTime * sr);
   const recordDuration = Math.round((totalSamples / sr + 0.5) * sr);
 
+  // Reset worklet state and drain stale messages before each test
+  workletNode.port.postMessage({ type: 'RESET' });
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(() => resolve(), 1000);
+    const handler = (e: MessageEvent) => {
+      if (e.data.type === 'PONG') {
+        clearTimeout(timer);
+        workletNode.port.removeEventListener('message', handler);
+        resolve();
+      }
+    };
+    workletNode.port.addEventListener('message', handler);
+    workletNode.port.postMessage({ type: 'PING' });
+  });
+
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       cleanup();

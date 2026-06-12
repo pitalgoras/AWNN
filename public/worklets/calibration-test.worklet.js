@@ -31,6 +31,11 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
           processCount: this._processCount,
           onmessageCount: this._onmessageCount,
         });
+      } else if (e.data.type === 'RESET') {
+        this._buffer = [];
+        this._recording = false;
+        this._pending = false;
+        this._inputCount = 0;
       } else if (e.data.type === 'START') {
         this._buffer = [];
         this._recording = false;

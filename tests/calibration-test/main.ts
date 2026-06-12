@@ -288,6 +288,7 @@ interface SweepResult {
 }
 
 async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitudes: number[]): Promise<SweepResult[]> {
+  wn.port.postMessage({ type: 'RESET' });
   const results: SweepResult[] = [];
   for (const amp of amplitudes) {
     log(`MLS sweep: amplitude=${amp.toFixed(2)}`);
