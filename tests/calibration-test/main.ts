@@ -326,123 +326,146 @@ function renderSweepTable(results: SweepResult[]) {
 
 /* ── AudioWorklet Init ──────────────────────────────── */
 
-async function ensureWorkletReady(): Promise<boolean> {
+async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
   if (isInitialized && ctx && workletNode) return true;
   if (initRunning) return false;
   initRunning = true;
 
-  setButtonsLoading();
+  const isRealGesture = !gestureType || REAL_GESTURES.has(gestureType);
 
   try {
-    logDiag('worklet-status', 'Creating AudioContext...', 'pending');
+    // ─── Phase 0: Create AudioContext + worklet (works in suspended state) ───
+    if (!ctx) {
+      logDiag('worklet-status', 'Creating AudioContext...', 'pending');
+      ctx = new AudioContext({ sampleRate: 44100, latencyHint: 0 });
+      log('Created AudioContext');
+      readOL('T0: after new AudioContext()');
+    }
 
-    ctx = new AudioContext({ sampleRate: 44100, latencyHint: 0 });
-    log('Created AudioContext');
-    readOL('T0: after new AudioContext()');
+    if (!workletNode) {
+      $('status').textContent = 'Loading worklet module...';
+      logDiag('worklet-status', 'Loading worklet module...', 'pending');
+      await ctx.audioWorklet.addModule('/worklets/calibration-test.worklet.js');
+      log('addModule OK');
+      readOL('T3: after addModule');
 
+      $('status').textContent = 'Creating AudioWorkletNode...';
+      logDiag('worklet-status', 'Creating AudioWorkletNode...', 'pending');
+
+      workletNode = new AudioWorkletNode(ctx, 'test-recorder', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: 'explicit',
+      });
+
+      workletNode.addEventListener('processorerror', () => {
+        log(`⚠ processorerror: worklet-side error occurred!`, 'err');
+        logDiag('worklet-status', `🔴 processorerror — worklet crashed`, 'err');
+      });
+      workletNode.port.addEventListener('messageerror', (e: Event) => {
+        log(`⚠ messageerror on port: ${e}`, 'err');
+      });
+
+      // Persistent heartbeat listener
+      let heartbeatCount = 0;
+      workletNode.port.addEventListener('message', (e: MessageEvent) => {
+        if (e.data.type === 'HEARTBEAT') {
+          heartbeatCount++;
+          logDiag('heartbeat-status',
+            `💓 heartbeat #${heartbeatCount} · process() calls=${e.data.processCount}`,
+            'ok');
+        }
+      });
+      workletNode.port.start();
+
+      log('AudioWorkletNode created');
+      readOL('T4: after AudioWorkletNode');
+    }
+
+    // Set up the output-only part of the audio graph (no mic needed)
+    // This is done once and stays — when mic connects later, it feeds into the existing chain
+    // Graph: [extActivator + mic] → mixer → worklet → outputAnalyser → destination
+    // The outputAnalyser and mixer are created once and reused.
+    if (!outputAnalyser) {
+      log('Setting up output audio graph...');
+      $('status').textContent = 'Connecting audio graph...';
+      logDiag('worklet-status', 'Connecting audio graph...', 'pending');
+
+      const mixer = ctx.createGain();
+      mixer.gain.value = 1;
+
+      // External activator keeps worklet input non-null (Chrome requirement)
+      const extActivator = ctx.createOscillator();
+      extActivator.frequency.value = 20;
+      const extActivatorGain = ctx.createGain();
+      extActivatorGain.gain.value = 0.001;
+      extActivator.connect(extActivatorGain);
+      extActivatorGain.connect(mixer);
+      extActivator.start();
+
+      mixer.connect(workletNode);
+
+      outputAnalyser = ctx.createAnalyser();
+      outputAnalyser.fftSize = 1024;
+      outputAnalyser.smoothingTimeConstant = 0.3;
+      workletNode.connect(outputAnalyser);
+      outputAnalyser.connect(ctx.destination);
+
+      inputAnalyser = ctx.createAnalyser();
+      inputAnalyser.fftSize = 1024;
+      inputAnalyser.smoothingTimeConstant = 0.3;
+
+      log('Output graph ready (20Hz activator → mixer → worklet → outputAnalyser → destination)');
+      readOL('T5: after connect');
+    }
+
+    // ─── Phase 1: Resume AudioContext (needs real user gesture) ───
     if (ctx.state === 'suspended') {
+      if (!isRealGesture) {
+        $('status').textContent = '⏳ Tap the screen to activate audio';
+        log(`ctx.state=suspended, waiting for real user gesture (scrolling can't resume AudioContext)`);
+        $('status').className = 'msg';
+        initRunning = false;
+        return false;
+      }
       $('status').textContent = 'Resuming AudioContext...';
-      log(`ctx.state=suspended, calling resume()...`);
-      await Promise.race([
-        ctx.resume(),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('resume timed out after 5s')), 5000)),
-      ]);
+      log(`ctx.state=suspended, calling resume() (real gesture: ${gestureType})...`);
+      await ctx.resume();
       log(`ctx.state=${ctx.state} after resume()`);
     }
     readOL('T1: after resume()');
 
-    $('status').textContent = 'Requesting microphone access...';
-    logDiag('worklet-status', 'Requesting mic permission...', 'pending');
+    // ─── Phase 2: Mic access (needs running context + user gesture) ───
+    if (!micStream) {
+      $('status').textContent = 'Requesting microphone access...';
+      logDiag('worklet-status', 'Requesting mic permission...', 'pending');
 
-    const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
-    const audioConstraints = isChrome
-      ? { echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false } }
-      : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: ctx.sampleRate };
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
-    log('getUserMedia OK');
-    readOL('T2: after getUserMedia');
+      const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
+      const audioConstraints = isChrome
+        ? { echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false } }
+        : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: ctx.sampleRate };
+      micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
+      log('getUserMedia OK');
+      readOL('T2: after getUserMedia');
 
-    const micSrc = ctx.createMediaStreamSource(micStream);
+      const micSrc = ctx.createMediaStreamSource(micStream);
+      // Find the mixer we created in Phase 0
+      // (We stored no direct reference — look it up via the worklet's input)
+      log('Connecting mic → inputAnalyser + mixer → worklet');
+      // The mixer was connected to workletNode in Phase 0. We need a reference.
+      // Instead, connect mic directly to the worklet node (second input if available)
+      // or use a gain node as the mixer
+      const mixerNode = ctx.createGain();
+      mixerNode.gain.value = 1;
+      micSrc.connect(inputAnalyser!);
+      micSrc.connect(mixerNode);
+      mixerNode.connect(workletNode!);
+      log('Mic connected to worklet');
+    }
 
-    $('status').textContent = 'Loading worklet module...';
-    logDiag('worklet-status', 'Loading worklet module...', 'pending');
-
-    await ctx.audioWorklet.addModule('/worklets/calibration-test.worklet.js');
-    log('addModule OK');
-    readOL('T3: after addModule');
-
-    $('status').textContent = 'Creating AudioWorkletNode...';
-    logDiag('worklet-status', 'Creating AudioWorkletNode...', 'pending');
-
-    workletNode = new AudioWorkletNode(ctx, 'test-recorder', {
-      numberOfInputs: 1,
-      numberOfOutputs: 1,
-      outputChannelCount: [1],
-      channelCount: 1,
-      channelCountMode: 'explicit',
-    });
-
-    workletNode.addEventListener('processorerror', () => {
-      log(`⚠ processorerror: worklet-side error occurred!`, 'err');
-      logDiag('worklet-status', `🔴 processorerror — worklet crashed`, 'err');
-    });
-    workletNode.port.addEventListener('messageerror', (e: Event) => {
-      log(`⚠ messageerror on port: ${e}`, 'err');
-    });
-
-    // Persistent heartbeat listener
-    let heartbeatCount = 0;
-    workletNode.port.addEventListener('message', (e: MessageEvent) => {
-      if (e.data.type === 'HEARTBEAT') {
-        heartbeatCount++;
-        logDiag('heartbeat-status',
-          `💓 heartbeat #${heartbeatCount} · process() calls=${e.data.processCount}`,
-          'ok');
-      }
-    });
-    workletNode.port.start();
-
-    log('AudioWorkletNode created (context is running)');
-    readOL('T4: after AudioWorkletNode');
-
-    $('status').textContent = 'Connecting audio graph...';
-    logDiag('worklet-status', 'Connecting audio graph...', 'pending');
-
-    // Audio graph:
-    //   micSrc ──→ inputAnalyser  (tap, no intercept — parallel read-only VU)
-    //          ──→ mixer ──→ worklet ──→ outputAnalyser ──→ destination
-    //              ↑
-    //   extActivator (20Hz@0.001) — keeps worklet input non-null for Chrome
-    // Worklet also generates internal 20Hz@0.02 for audible monitoring.
-    // During recording, worklet mutes mic pass-through in output to prevent probe
-    // feedback, but the activators continue.
-    const mixer = ctx.createGain();
-    mixer.gain.value = 1;
-    inputAnalyser = ctx.createAnalyser();
-    inputAnalyser.fftSize = 1024;
-    inputAnalyser.smoothingTimeConstant = 0.3;
-    micSrc.connect(inputAnalyser);
-    micSrc.connect(mixer);
-
-    const extActivator = ctx.createOscillator();
-    extActivator.frequency.value = 20;
-    const extActivatorGain = ctx.createGain();
-    extActivatorGain.gain.value = 0.001;
-    extActivator.connect(extActivatorGain);
-    extActivatorGain.connect(mixer);
-    extActivator.start();
-
-    mixer.connect(workletNode);
-
-    outputAnalyser = ctx.createAnalyser();
-    outputAnalyser.fftSize = 1024;
-    outputAnalyser.smoothingTimeConstant = 0.3;
-    workletNode.connect(outputAnalyser);
-    outputAnalyser.connect(ctx.destination);
-
-    log('Audio graph: mic + 20Hz@0.001 → mixer → worklet → destination (+ internal 20Hz@0.02)');
-    readOL('T5: after connect');
-
+    // ─── Phase 3: Settle + display ───
     const probe = (delay: number, label: string) =>
       new Promise<void>(r => setTimeout(() => { readOL(label); r(); }, delay));
 
@@ -457,7 +480,7 @@ async function ensureWorkletReady(): Promise<boolean> {
     $('baseLat').textContent = `${Math.round((ctx.baseLatency || 0) * 1000)}ms`;
     $('heuristic').textContent = `${Math.round(2 * settledMs)}ms`;
 
-    const track = micStream.getAudioTracks()[0];
+    const track = micStream!.getAudioTracks()[0];
     const settings = track.getSettings();
     const inputId = settings.deviceId || '';
     const inputLabel = track.label || 'Unknown mic';
@@ -499,13 +522,15 @@ async function ensureWorkletReady(): Promise<boolean> {
 
 setupVUMeters();
 
-function triggerInit() {
+const REAL_GESTURES = new Set(['touchstart', 'click', 'mousedown', 'keydown']);
+
+function triggerInit(event: Event) {
   GESTURE_EVENTS.forEach(e => window.removeEventListener(e, triggerInit, { capture: true }));
-  log('First gesture detected — starting initialization');
-  ensureWorkletReady();
+  log(`Triggered by ${event.type} (real gesture: ${REAL_GESTURES.has(event.type)})`);
+  ensureWorkletReady(event.type);
 }
 
-const GESTURE_EVENTS = ['mousedown', 'keydown', 'touchstart', 'click'];
+const GESTURE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll'];
 GESTURE_EVENTS.forEach(e => window.addEventListener(e, triggerInit, { capture: true, passive: true }));
 
 /* ── PING/PONG ────────────────────────────────────────── */
