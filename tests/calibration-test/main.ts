@@ -344,7 +344,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
   const isRealGesture = !gestureType || REAL_GESTURES.has(gestureType);
 
   try {
-    // ─── Phase 0: Create AudioContext + worklet (works in suspended state) ───
+    // ─── Create AudioContext ───
     if (!ctx) {
       logDiag('worklet-status', 'Creating AudioContext...', 'pending');
       ctx = new AudioContext({ sampleRate: 44100, latencyHint: 0 });
@@ -352,6 +352,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       readOL('T0: after new AudioContext()');
     }
 
+    // ─── Load worklet module ───
     if (!workletNode) {
       $('status').textContent = 'Loading worklet module...';
       logDiag('worklet-status', 'Loading worklet module...', 'pending');
@@ -378,7 +379,6 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
         log(`⚠ messageerror on port: ${e}`, 'err');
       });
 
-      // Persistent heartbeat listener
       let heartbeatCount = 0;
       workletNode.port.addEventListener('message', (e: MessageEvent) => {
         if (e.data.type === 'HEARTBEAT') {
@@ -394,10 +394,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       readOL('T4: after AudioWorkletNode');
     }
 
-    // Set up the output-only part of the audio graph (no mic needed)
-    // This is done once and stays — when mic connects later, it feeds into the existing chain
-    // Graph: [extActivator + mic] → mixer → worklet → outputAnalyser → destination
-    // The outputAnalyser and mixer are created once and reused.
+    // ─── Setup output audio graph (no mic needed yet) ───
     if (!outputAnalyser) {
       log('Setting up output audio graph...');
       $('status').textContent = 'Connecting audio graph...';
@@ -406,7 +403,6 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       const mixer = ctx.createGain();
       mixer.gain.value = 1;
 
-      // External activator keeps worklet input non-null (Chrome requirement)
       const extActivator = ctx.createOscillator();
       extActivator.frequency.value = 20;
       const extActivatorGain = ctx.createGain();
@@ -431,26 +427,33 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       readOL('T5: after connect');
     }
 
-    // ─── Phase 1: Resume AudioContext (needs real user gesture) ───
+    // ─── Resume AudioContext ───
     if (ctx.state === 'suspended') {
-      if (!isRealGesture) {
-        $('status').textContent = '⏳ Tap the screen to activate audio';
-        log(`ctx.state=suspended, waiting for real user gesture (scrolling can't resume AudioContext)`);
-        $('status').className = 'msg';
-        initRunning = false;
-        return false;
-      }
       $('status').textContent = 'Resuming AudioContext...';
-      log(`ctx.state=suspended, calling resume() (real gesture: ${gestureType})...`);
+      log(`ctx.state=suspended, calling resume() (gesture: ${gestureType || 'none'}, isReal: ${isRealGesture})...`);
       try {
         await Promise.race([
           ctx.resume(),
-          new Promise((_, reject) => setTimeout(() => reject(new Error('resume timed out after 3s')), 3000)),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('resume timed out')), 3000)),
         ]);
       } catch (e) {
-        log(`ctx.resume() failed: ${e}`, 'err');
-        $('status').textContent = '⏳ Tap the screen to activate audio (resume failed)';
-        $('status').className = 'msg';
+        log(`ctx.resume() failed (${e})`, 'err');
+        // Not a real gesture — register one-shot click listener to complete init later
+        if (!isRealGesture) {
+          const onTap = () => {
+            document.removeEventListener('click', onTap);
+            document.removeEventListener('touchstart', onTap);
+            log('Tap detected — completing init');
+            ensureWorkletReady('click');
+          };
+          document.addEventListener('click', onTap, { once: true });
+          document.addEventListener('touchstart', onTap, { once: true });
+          $('status').textContent = '⏳ Tap the screen to activate audio';
+          $('status').className = 'msg';
+        } else {
+          $('status').textContent = `✗ AudioContext resume failed — try Force Init`;
+          $('status').className = 'msg err';
+        }
         initRunning = false;
         return false;
       }
@@ -458,7 +461,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
     }
     readOL('T1: after resume()');
 
-    // ─── Phase 2: Mic access (needs running context + user gesture) ───
+    // ─── Get mic access ───
     if (!micStream) {
       $('status').textContent = 'Requesting microphone access...';
       logDiag('worklet-status', 'Requesting mic permission...', 'pending');
@@ -475,12 +478,6 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       readOL('T2: after getUserMedia');
 
       const micSrc = ctx.createMediaStreamSource(micStream);
-      // Find the mixer we created in Phase 0
-      // (We stored no direct reference — look it up via the worklet's input)
-      log('Connecting mic → inputAnalyser + mixer → worklet');
-      // The mixer was connected to workletNode in Phase 0. We need a reference.
-      // Instead, connect mic directly to the worklet node (second input if available)
-      // or use a gain node as the mixer
       const mixerNode = ctx.createGain();
       mixerNode.gain.value = 1;
       micSrc.connect(inputAnalyser!);
@@ -489,7 +486,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       log('Mic connected to worklet');
     }
 
-    // ─── Phase 3: Settle + display ───
+    // ─── Settle + display ───
     const probe = (delay: number, label: string) =>
       new Promise<void>(r => setTimeout(() => { readOL(label); r(); }, delay));
 
@@ -530,7 +527,6 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
     startHealthPoll();
     startVUPoll();
 
-    // Auto-enumerate devices
     enumerateAllDevices();
 
     return true;
@@ -547,14 +543,18 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
 setupVUMeters();
 
 const REAL_GESTURES = new Set(['touchstart', 'click', 'mousedown', 'keydown']);
+const GESTURE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll'];
 
 function triggerInit(event: Event) {
-  GESTURE_EVENTS.forEach(e => window.removeEventListener(e, triggerInit, { capture: true }));
-  log(`Triggered by ${event.type} (real gesture: ${REAL_GESTURES.has(event.type)})`);
+  if (isInitialized) {
+    // Init complete — cleanup listeners so no further calls
+    GESTURE_EVENTS.forEach(e => window.removeEventListener(e, triggerInit, { capture: true }));
+    return;
+  }
+  log(`Triggered by ${event.type}`);
   ensureWorkletReady(event.type);
 }
 
-const GESTURE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll'];
 GESTURE_EVENTS.forEach(e => window.addEventListener(e, triggerInit, { capture: true, passive: true }));
 
 /* ── PING/PONG ────────────────────────────────────────── */
