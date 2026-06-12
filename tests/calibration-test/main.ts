@@ -281,6 +281,9 @@ interface SweepResult {
   recordedSamples: number;
   inputRms: number;
   inputPeak: number;
+  endLatencyMs: number;
+  endConfidence: number;
+  latencySource: 'start-correlation' | 'end-detection' | 'average';
 }
 
 async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitudes: number[]): Promise<SweepResult[]> {
@@ -297,6 +300,9 @@ async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitud
       recordedSamples: r.recordedSamples,
       inputRms: r.inputRms,
       inputPeak: r.inputPeak,
+      endLatencyMs: r.endLatencyMs,
+      endConfidence: r.endConfidence,
+      latencySource: r.latencySource,
     });
     // Stop early if strong result
     if (r.peakToNoise >= 18 && r.success) break;
@@ -309,13 +315,16 @@ function renderSweepTable(results: SweepResult[]) {
   if (results.length === 0) { el.style.display = 'none'; return; }
   el.style.display = 'block';
   const best = results.reduce((a, b) => a.p2n > b.p2n ? a : b);
-  let html = '<table class="sweep-table"><tr><th>Amp</th><th>P2N(dB)</th><th>Latency(ms)</th><th>RMS</th><th>Status</th></tr>';
+  let html = '<table class="sweep-table"><tr><th>Amp</th><th>P2N(dB)</th><th>Lat(ms)</th><th>End(ms)</th><th>Src</th><th>RMS</th><th>Status</th></tr>';
   for (const r of results) {
     const isBest = r === best;
+    const srcLabel = r.latencySource === 'end-detection' ? 'END' : 'START';
     html += `<tr style="${isBest ? 'background:#1e293b' : ''}">
       <td>${r.amplitude.toFixed(2)}</td>
       <td style="color:${r.p2n >= 18 ? '#86efac' : '#fca5a5'}">${r.p2n.toFixed(1)}</td>
       <td>${r.latencyMs.toFixed(1)}</td>
+      <td style="color:${r.endConfidence > 0.3 ? '#86efac' : '#71717a'}">${r.endLatencyMs.toFixed(1)}</td>
+      <td style="font-size:10px;color:${r.latencySource === 'end-detection' ? '#fbbf24' : '#71717a'}">${srcLabel}</td>
       <td>${r.inputRms.toFixed(5)}</td>
       <td>${r.error ? '✗' : '✓'}</td>
     </tr>`;
@@ -707,16 +716,17 @@ $('btn-mls').onclick = async () => {
   const el = $('mls-result');
   if (best.p2n >= 18 && !best.error) {
     el.className = 'result ok';
+    const srcLabel = best.latencySource === 'end-detection' ? ' (end-detection)' : '';
     el.innerHTML = `
-      <div>Amp ${best.amplitude.toFixed(2)}: Latency <strong>${best.latencyMs.toFixed(1)}ms</strong> · P2N ${best.peakToNoise.toFixed(1)}dB</div>
+      <div>Amp ${best.amplitude.toFixed(2)}: Latency <strong>${best.latencyMs.toFixed(1)}ms${srcLabel}</strong> · P2N ${best.peakToNoise.toFixed(1)}dB${best.endLatencyMs > 0 ? ` · End: ${best.endLatencyMs.toFixed(1)}ms` : ''}</div>
       <div style="font-size:10px;margin-top:4px;color:#6ee7b7">${results.length} sweep(s), best amp=${best.amplitude.toFixed(2)}</div>`;
-    log(`MLS: latency=${best.latencyMs.toFixed(1)}ms P2N=${best.p2n.toFixed(1)}dB amp=${best.amplitude.toFixed(2)}`, 'ok');
+    log(`MLS: latency=${best.latencyMs.toFixed(1)}ms P2N=${best.p2n.toFixed(1)}dB amp=${best.amplitude.toFixed(2)} src=${best.latencySource}`, 'ok');
   } else if (best.latencyMs > 0) {
     el.className = 'result err';
     el.innerHTML = `
       <div>Failed (best: amp=${best.amplitude.toFixed(2)}, P2N=${best.p2n.toFixed(1)}dB, need >18dB)</div>
-      <div style="font-size:10px;margin-top:4px;color:#fca5a5">Best guess: ${best.latencyMs.toFixed(1)}ms · outputLat: ${((ctx.outputLatency || 0) * 1000).toFixed(0)}ms</div>`;
-    log(`MLS: failed — best P2N=${best.p2n.toFixed(1)}dB at amp=${best.amplitude.toFixed(2)}`, 'err');
+      <div style="font-size:10px;margin-top:4px;color:#fca5a5">Best guess: ${best.latencyMs.toFixed(1)}ms · outputLat: ${((ctx.outputLatency || 0) * 1000).toFixed(0)}ms${best.endLatencyMs > 0 ? ` · End: ${best.endLatencyMs.toFixed(1)}ms(${best.endConfidence.toFixed(2)})` : ''}</div>`;
+    log(`MLS: failed — best P2N=${best.p2n.toFixed(1)}dB at amp=${best.amplitude.toFixed(2)} src=${best.latencySource}`, 'err');
   } else {
     el.className = 'result err';
     el.innerHTML = 'MLS failed — no valid recording from worklet';

@@ -1,4 +1,4 @@
-import { generateMLS, biquadBP, normalizeCrossCorrelation, peakToNoiseRatio, computeRMS, peakAmplitude } from './analysis';
+import { generateMLS, biquadBP, normalizeCrossCorrelation, peakToNoiseRatio, computeRMS, peakAmplitude, detectTrailingEdge } from './analysis';
 
 const MLS_SEED = 42;
 const MLS_DURATION = 0.5;
@@ -21,6 +21,10 @@ export interface MlsResult {
   inputPeak: number;
   actualStartFrame: number;
   expectedStartFrame: number;
+  // End-detection (trailing edge of noise → silence)
+  endLatencyMs: number;
+  endConfidence: number;
+  latencySource: 'start-correlation' | 'end-detection' | 'average';
 }
 
 export async function runMlsTest(
@@ -68,7 +72,7 @@ export async function runMlsTest(
   return new Promise((resolve) => {
     const timeout = setTimeout(() => {
       cleanup();
-      resolve({ success: false, latencyMs: 0, confidence: 0, peakToNoise: 0, outputLatencyMs: outputLatMs, heuristicMs, error: 'Timeout: no response from worklet', recordedSamples: -1, inputSamples: -1, inputRms: 0, inputPeak: 0, actualStartFrame: -1, expectedStartFrame: startFrame });
+      resolve({ success: false, latencyMs: 0, confidence: 0, peakToNoise: 0, outputLatencyMs: outputLatMs, heuristicMs, error: 'Timeout: no response from worklet', recordedSamples: -1, inputSamples: -1, inputRms: 0, inputPeak: 0, actualStartFrame: -1, expectedStartFrame: startFrame, endLatencyMs: 0, endConfidence: 0, latencySource: 'start-correlation' });
     }, 15000);
 
     const onMessage = (e: MessageEvent) => {
@@ -92,7 +96,7 @@ export async function runMlsTest(
         };
 
         if (!recorded || recorded.length < sr / 2) {
-          resolve({ success: false, latencyMs: 0, confidence: 0, peakToNoise: 0, outputLatencyMs: outputLatMs, heuristicMs, error: 'Recording too short', ...diag });
+          resolve({ success: false, latencyMs: 0, confidence: 0, peakToNoise: 0, outputLatencyMs: outputLatMs, heuristicMs, error: 'Recording too short', endLatencyMs: 0, endConfidence: 0, latencySource: 'start-correlation', ...diag });
           return;
         }
 
@@ -102,6 +106,7 @@ export async function runMlsTest(
         const decSr = Math.round(sr / DECIMATE);
 
         const mlsStartInRecording = bufPadding + (clickLen + clickGapLen) * WAKE_CLICKS - clickGapLen + preMlsGap;
+        const expectedEndSample = startFrame + bufPadding + (clickLen + clickGapLen) * WAKE_CLICKS - clickGapLen + preMlsGap + mlsLen;
         const mlsDecPos = Math.round(mlsStartInRecording / DECIMATE);
         const latencyDec = Math.floor((MAX_LATENCY_MS / 1000) * decSr);
 
@@ -110,33 +115,46 @@ export async function runMlsTest(
 
         const { lags, values } = normalizeCrossCorrelation(recDec, refDec, maxShift, minShift);
 
-        if (values.length === 0) {
-          resolve({ success: false, latencyMs: 0, confidence: 0, peakToNoise: 0, outputLatencyMs: outputLatMs, heuristicMs, error: 'Correlation range empty', ...diag });
+        // ─── Start-correlation analysis ───
+        let startLatencyMs = 0, startConfidence = 0, startP2nDb = -Infinity;
+        if (values.length > 0) {
+          let bestIdx = 0;
+          for (let i = 1; i < values.length; i++) {
+            if (values[i] > values[bestIdx]) bestIdx = i;
+          }
+          startLatencyMs = ((lags[bestIdx] - mlsDecPos) / decSr) * 1000;
+          startConfidence = values[bestIdx];
+          const p2nLinear = peakToNoiseRatio(values);
+          startP2nDb = 20 * Math.log10(p2nLinear + 1e-10);
+        }
+
+        // ─── End-detection analysis (trailing edge of noise → silence) ───
+        const actualEndSample = actualStartFrame + (msg.inputSamples as number ?? recorded.length);
+        const endResult = detectTrailingEdge(recorded, sr, expectedEndSample - startFrame, 300);
+        const endLatencyMs = endResult.confidence > 0
+          ? ((endResult.endSample - (expectedEndSample - startFrame)) / sr) * 1000
+          : 0;
+
+        // ─── Pick best result ───
+        const useEnd = endResult.confidence > 0.3 && (startP2nDb < 10 || endResult.confidence > startConfidence);
+        const latencyMs = useEnd ? endLatencyMs : startLatencyMs;
+        const latencySource: MlsResult['latencySource'] = useEnd ? 'end-detection' : 'start-correlation';
+        const confidence = useEnd ? endResult.confidence : startConfidence;
+
+        if (!useEnd && startP2nDb < 18) {
+          resolve({ success: false, latencyMs, confidence, peakToNoise: startP2nDb, outputLatencyMs: outputLatMs, heuristicMs, error: `Low confidence (P2N ${startP2nDb.toFixed(1)}dB, need >18dB)`, endLatencyMs, endConfidence: endResult.confidence, latencySource, ...diag });
           return;
         }
 
-        let bestIdx = 0;
-        for (let i = 1; i < values.length; i++) {
-          if (values[i] > values[bestIdx]) bestIdx = i;
+        if (!useEnd) {
+          const diff = Math.abs(latencyMs - heuristicMs);
+          if (diff > 50) {
+            resolve({ success: true, latencyMs, confidence, peakToNoise: startP2nDb, outputLatencyMs: outputLatMs, heuristicMs, error: `Start-correlation ${latencyMs.toFixed(1)}ms differs from heuristic ${heuristicMs}ms — end-detection: ${endLatencyMs.toFixed(1)}ms (conf: ${endResult.confidence.toFixed(2)})`, endLatencyMs, endConfidence: endResult.confidence, latencySource, ...diag });
+            return;
+          }
         }
 
-        const latencyMs = ((lags[bestIdx] - mlsDecPos) / decSr) * 1000;
-        const confidence = values[bestIdx];
-        const p2nLinear = peakToNoiseRatio(values);
-        const p2nDb = 20 * Math.log10(p2nLinear + 1e-10);
-
-        if (p2nDb < 18) {
-          resolve({ success: false, latencyMs, confidence, peakToNoise: p2nDb, outputLatencyMs: outputLatMs, heuristicMs, error: `Low confidence (P2N ${p2nDb.toFixed(1)}dB, need >18dB)`, ...diag });
-          return;
-        }
-
-        const diff = Math.abs(latencyMs - heuristicMs);
-        if (diff > 50) {
-          resolve({ success: true, latencyMs, confidence, peakToNoise: p2nDb, outputLatencyMs: outputLatMs, heuristicMs, error: `Result ${latencyMs.toFixed(1)}ms differs from heuristic ${heuristicMs}ms by ${diff.toFixed(0)}ms — may be unreliable`, ...diag });
-          return;
-        }
-
-        resolve({ success: true, latencyMs, confidence, peakToNoise: p2nDb, outputLatencyMs: outputLatMs, heuristicMs, ...diag });
+        resolve({ success: true, latencyMs, confidence, peakToNoise: useEnd ? 40 : startP2nDb, outputLatencyMs: outputLatMs, heuristicMs, endLatencyMs, endConfidence: endResult.confidence, latencySource, ...diag });
       }
     };
 

@@ -158,6 +158,49 @@ export function biquadHP(signal: Float32Array, sr: number, f0: number): Float32A
   return out;
 }
 
+export function detectTrailingEdge(
+  signal: Float32Array,
+  sampleRate: number,
+  expectedEndSample: number,
+  searchWindowMs = 300,
+): { endSample: number; confidence: number; envelope: { t: number[]; e: number[] } } {
+  const windowSize = Math.floor(0.005 * sampleRate);
+  const hopSize = Math.floor(0.002 * sampleRate);
+  const envelope: number[] = [];
+  const times: number[] = [];
+  for (let i = 0; i < signal.length - windowSize; i += hopSize) {
+    let sumSq = 0;
+    for (let j = 0; j < windowSize; j++) sumSq += signal[i + j] * signal[i + j];
+    envelope.push(Math.sqrt(sumSq / windowSize));
+    times.push((i + windowSize / 2) / sampleRate);
+  }
+
+  const searchSamples = Math.floor(searchWindowMs / 1000 * sampleRate);
+  const searchStart = Math.max(0, Math.floor((expectedEndSample - searchSamples) / hopSize));
+  const searchEnd = Math.min(envelope.length - 1, Math.ceil((expectedEndSample + searchSamples) / hopSize));
+
+  const searchEnv = envelope.slice(searchStart, searchEnd + 1);
+  const peak = Math.max(...searchEnv);
+  const noiseEst = envelope.slice(0, Math.min(50, envelope.length)).reduce((a, b) => a + b, 0) / Math.min(50, envelope.length);
+  const threshold = Math.max(noiseEst * 4, peak * 0.08);
+
+  // Scan backward from searchEnd: find last index where envelope > threshold
+  let endIdx = searchEnd;
+  while (endIdx >= searchStart && envelope[endIdx] <= threshold) endIdx--;
+  while (endIdx > searchStart && envelope[endIdx - 1] > threshold) endIdx--;
+
+  if (endIdx < searchStart || endIdx >= envelope.length) {
+    return { endSample: expectedEndSample, confidence: 0, envelope: { t: times, e: envelope } };
+  }
+
+  const endSample = Math.round(times[endIdx] * sampleRate);
+  const slope = endIdx > 0 && endIdx < envelope.length - 1
+    ? Math.abs(envelope[endIdx + 1] - envelope[endIdx - 1]) / (2 * (times[endIdx + 1] - times[endIdx - 1]))
+    : 0;
+  const confidence = Math.min(1, slope / (peak * 10));
+  return { endSample, confidence, envelope: { t: times, e: envelope } };
+}
+
 function dot(a: Float32Array, b: Float32Array): number {
   let sum = 0;
   const len = Math.min(a.length, b.length);
