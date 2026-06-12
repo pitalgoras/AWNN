@@ -8,6 +8,7 @@ let micStream: MediaStream | null = null;
 let outputAnalyser: AnalyserNode | null = null;
 let inputAnalyser: AnalyserNode | null = null;
 let isInitialized = false;
+let lastMlsResults: SweepResult[] | undefined;
 let healthPollTimer: ReturnType<typeof setInterval> | null = null;
 let initFailed = false;
 let initRunning = false;
@@ -723,6 +724,7 @@ $('btn-mls').onclick = async () => {
   const uniqueAmps = [...new Set(amplitudes.map(a => Math.round(a * 100) / 100))].sort();
 
   const results = await runMlsWithSweep(ctx, workletNode, uniqueAmps);
+  lastMlsResults = results;
 
   renderSweepTable(results);
   const best = results.reduce((a, b) => a.p2n > b.p2n ? a : b);
@@ -842,6 +844,39 @@ $('btn-download-dump').onclick = () => {
   const dump = buildDiagnosticsDump();
   downloadJSON(dump, `awnn-cal-diagnostics-${Date.now()}.json`);
   log('Diagnostics downloaded', 'ok');
+};
+
+$('btn-upload-dump').onclick = async () => {
+  const btn = $('btn-upload-dump') as HTMLButtonElement;
+  const urlEl = $('upload-url');
+  btn.disabled = true;
+  btn.textContent = 'Uploading...';
+  log('Uploading diagnostics...');
+  try {
+    const dump = buildDiagnosticsDump(lastMlsResults);
+    const res = await fetch('/api/upload-debug-log', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(dump),
+    });
+    const data = await res.json() as { url?: string; error?: string };
+    if (data.url) {
+      urlEl.innerHTML = `<a href="${data.url}" target="_blank" style="color:#86efac">${data.url}</a>`;
+      log(`Diagnostics uploaded: ${data.url}`, 'ok');
+    } else {
+      urlEl.textContent = `Upload failed: ${data.error || 'unknown'}`;
+      urlEl.style.color = '#fca5a5';
+      log(`Upload failed: ${data.error}`, 'err');
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    urlEl.textContent = `Upload error: ${msg}`;
+    urlEl.style.color = '#fca5a5';
+    log(`Upload error: ${msg}`, 'err');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload Diagnostics';
+  }
 };
 
 /* ── Cleanup ──────────────────────────────────────────── */
