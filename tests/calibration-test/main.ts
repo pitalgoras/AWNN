@@ -173,7 +173,7 @@ function stopHealthPoll() {
 /* ── Device Info ──────────────────────────────────────── */
 
 async function enumerateAllDevices() {
-  if (!micStream) return;
+  if (!micStream) { log('No mic stream — init not complete yet', 'err'); return; }
   const track = micStream.getAudioTracks()[0];
   const settings = track?.getSettings();
   const activeId = settings?.deviceId || '';
@@ -340,10 +340,13 @@ async function ensureWorkletReady(): Promise<boolean> {
     log('Created AudioContext');
     readOL('T0: after new AudioContext()');
 
-    $('status').textContent = 'Resuming AudioContext...';
     if (ctx.state === 'suspended') {
+      $('status').textContent = 'Resuming AudioContext...';
       log(`ctx.state=suspended, calling resume()...`);
-      await ctx.resume();
+      await Promise.race([
+        ctx.resume(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('resume timed out after 5s')), 5000)),
+      ]);
       log(`ctx.state=${ctx.state} after resume()`);
     }
     readOL('T1: after resume()');
@@ -502,7 +505,7 @@ function triggerInit() {
   ensureWorkletReady();
 }
 
-const GESTURE_EVENTS = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'click', 'scroll'];
+const GESTURE_EVENTS = ['mousedown', 'keydown', 'touchstart', 'click'];
 GESTURE_EVENTS.forEach(e => window.addEventListener(e, triggerInit, { capture: true, passive: true }));
 
 /* ── PING/PONG ────────────────────────────────────────── */
