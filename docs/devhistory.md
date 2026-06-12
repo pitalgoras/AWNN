@@ -1008,4 +1008,59 @@ The `timeError` retroactively corrects the clip position by measuring how far of
 ### Files Modified
 - `src/audio/recording/RecordingEngine.ts` — added tracking fields; `startRecording()` sends absolute `recordingStartFrame`; `handleAudioWorkletStop()` reconciles clock domains
 - `public/worklets/recorder.worklet.js` — `START_RECORDING` handler stores `recordingStartFrame` directly
-- `docs/RECORDING_LOGIC.md` — terminology and flow updated<｜end▁of▁thinking｜>
+- `docs/RECORDING_LOGIC.md` — terminology and flow updated
+
+---
+
+## 36. Calibration Test Page — MLS Rewrite (June 2026)
+
+### Context
+The calibration test page (`tests/calibration-test/`) was experiencing hangs and false-positive readings. The primary measurement method (MLS cross-correlation) worked well in open air but failed with Bluetooth headsets where noise gates clip silence and the start of the burst.
+
+### Changes
+
+#### a) Single-Phase Init
+**Problem**: Two-phase init (scroll/mousemove prepare → real gesture resume) had a race condition where listeners were removed before the user tapped, leaving the page stuck.
+**Solution**: Single-phase — `resume()` attempted on any gesture, with one-shot click/touchstart fallback if it fails. Init listeners are removed only after completion.
+**Commit**: `8fc99d4`
+
+#### b) MLS Hang Fix — RESET + PING Drain
+**Problem**: When a test's 15s timeout expired while the worklet was still `_recording = true`, the next `START` would reset state but `currentFrame` was already past the new `_startFrame`, so recording never began. Worklet remained stuck in an inactive state.
+**Solution**: Added `RESET` message handler (clears all state). Each `runMlsTest()` now sends `RESET` + `PING` and waits for `PONG` before posting `START`. This drains stale messages and ensures clean worklet state before every measurement.
+**Commits**: `d3a7649`
+
+#### c) Peak-to-Noise Ratio — RMS Not Mean
+**Problem**: `peakToNoiseRatio()` used arithmetic mean for the noise floor. Cross-correlation values are symmetric around zero, so the mean can be arbitrarily small, making P2N explode (138dB with wrong latency).
+**Solution**: RMS gives a stable noise floor of ~`1/sqrt(N)` (~0.013 for our decimated MLS). Spurious peaks correctly score below the 18dB threshold.
+**Commit**: `9b18e7c`
+
+#### d) Geometric Amplitude Ladder + Clustering + History
+**Problem**: Fixed amplitudes `[targetAmp, 0.1, 0.2, 0.4, 0.6]` were unreliable with noise gates. Single-shot P2N could spike at wrong positions. No way to cross-reference measurements.
+**Solution**:
+- Geometric ladder `0.05 → 0.80 ×1.5` (8 levels) — quiet for open air, loud enough for gates
+- No early-stop — all amplitudes run, then latencies clustered by 5ms bins
+- Winning cluster reported as `Xms ±Yms across N amplitudes` — agreement builds confidence
+- localStorage history (last 5 sweeps per device combo) — cross-run consistency check
+- `showGainHint()` neutralized — low noise floor is normal with Bluetooth gates, not a problem
+**Commit**: `8725b71`
+
+#### e) Feedback Toggle (Mute/Unmute)
+**Problem**: The 20Hz activator tone plays continuously to keep the worklet path alive. Audible between tests.
+**Solution**: "Mute Feedback" button sends `TOGGLE_FEEDBACK` to the worklet. When muted, output is silent (activator phase continues internally to avoid pop on re-enable). Tests work independently of feedback state.
+**Commit**: `51fd881`
+
+### Files Created
+- `docs/CALIBRATION_TEST.md` — full architecture and decisions doc
+- `.opencode/calibration-test-context.md` — agent context file
+
+### Files Modified
+- `tests/calibration-test/main.ts` — init, amplitude ladder, clustering, history, feedback toggle, neutral showGainHint
+- `tests/calibration-test/test-mls.ts` — RESET + PING drain before each test
+- `tests/calibration-test/analysis.ts` — RMS-based P2N
+- `tests/calibration-test/index.html` — feedback toggle button
+- `public/worklets/calibration-test.worklet.js` — RESET handler, TOGGLE_FEEDBACK handler, _feedbackEnabled flag
+
+### Open Issues
+- **End-detection latency**: The trailing-edge fallback (noise→silence transition) remains unreliable with noise gates that ramp down gradually. May need an alternative metric.
+- **Extreme amplitudes**: 0.05 may be too quiet for some setups; 0.80 may trigger AGC on some Bluetooth headsets. The clustering approach handles this (extremes won't cluster with the middle).
+- **History across sessions**: localStorage has no expiry — old results from different hardware configurations persist until overwritten. The device combo filter (`userAgent|micDeviceId`) mitigates this but browser updates change userAgent.<｜end▁of▁thinking｜>
