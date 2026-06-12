@@ -970,4 +970,42 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 - `src/lib/lyricsFormat.ts` — new file: tabular/raw converters, expanded tag map, normalize helper
 - `src/components/LyricsBuilder.tsx` — uncontrolled textarea, saveEdit, parser normalization, tab key cleanup
 - `src/App.tsx` — `handleMutePointerUp` fresh store read, metronome mute fresh read
-- `src/components/TrackBar.tsx` — mobile mute onClick fresh store read, landscape mute handler signature<｜end▁of▁thinking｜>
+- `src/components/TrackBar.tsx` — mobile mute onClick fresh store read, landscape mute handler signature
+
+## V. Clip Alignment — Absolute RecordingStartFrame + Clock Domain Reconciliation (2026-06-11)
+
+### Problem
+Recorded clips were placed on the timeline using `punchInUserTime` (user timeline position) alone, ignoring the worklet's actual recording anchor frame. The `frameOffset` sent to the worklet was a relative value computed from an estimated `startupDelay` (150ms), and the worklet applied it as `currentFrame + frameOffset`. Three alignment-breaking issues:
+
+1. **Relative `currentFrame + frameOffset` had two clock readings** — main thread `ctx.currentTime` for `frameOffset` vs worklet `currentFrame` for the addition. These disagree by 0-128 frames (~2.9ms render quantum boundary) because `currentFrame` in the worklet is quantized to the start of the current render quantum.
+
+2. **`startupDelay` (150ms) was an estimate, not a measurement** — the actual playback start time after `onSetIsPlaying(true)` is unknowable from the main thread. If the actual delay was 160ms, the recording anchor was 10ms off.
+
+3. **`handleAudioWorkletStop` ignored the worklet's `anchoredFrame`** — clip position was computed as `punchInUserTime - headLength - latencyComp`, with no reconciliation between the two clock domains. The `clockDomainDelta` was logged but never used.
+
+### Fix
+Three changes across `RecordingEngine.ts` and `recorder.worklet.js`:
+
+**Change 1 — Absolute `recordingStartFrame` instead of relative `frameOffset`:**
+Captures `audioCtxNow` at the same time for later reconciliation. The worklet stores the absolute frame directly — no `currentFrame` arithmetic on the worklet side.
+
+**Change 2 — Worklet stores absolute frame:**
+```js
+this._recordingStartFrame = event.data.recordingStartFrame;
+this._anchoredFrame = this._recordingStartFrame;
+```
+
+**Change 3 — Clock domain reconciliation at stop time:**
+```ts
+const expectedStartAudioTime = this.recordingStartCtxTime + this.recordingStartDelay + this.recordingPreRollOffset;
+const actualStartAudioTime = anchoredFrame / sampleRate;
+const timeError = actualStartAudioTime - expectedStartAudioTime;
+const actualPunchInUserTime = this.punchInUserTime + timeError;
+const startPos = actualPunchInUserTime - this.headLength - latencyCompMs / 1000;
+```
+The `timeError` retroactively corrects the clip position by measuring how far off the worklet's actual recording start was from the estimate.
+
+### Files Modified
+- `src/audio/recording/RecordingEngine.ts` — added tracking fields; `startRecording()` sends absolute `recordingStartFrame`; `handleAudioWorkletStop()` reconciles clock domains
+- `public/worklets/recorder.worklet.js` — `START_RECORDING` handler stores `recordingStartFrame` directly
+- `docs/RECORDING_LOGIC.md` — terminology and flow updated<｜end▁of▁thinking｜>

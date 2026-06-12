@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Minimal AudioWorklet Test</title>
+<style>
+  body { font-family: system-ui, sans-serif; background: #111; color: #e4e4e7; padding: 24px; }
+  .counter { font-size: 48px; font-weight: bold; color: #22c55e; font-family: monospace; }
+  .label { color: #71717a; font-size: 14px; }
+  .msg { font-size: 13px; margin-top: 8px; padding: 6px 10px; border-radius: 4px; }
+  .msg.ok { color: #86efac; }
+  .msg.err { color: #fca5a5; }
+  button { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-size: 14px; cursor: pointer; }
+  button:hover { background: #2563eb; }
+</style>
+</head>
+<body>
+<h1>Minimal AudioWorklet Test</h1>
+<p style="color:#71717a;font-size:12px">No Vite. No React. Just pure AudioWorkletNode + oscillator → destination.</p>
+
+<div class="msg" id="status">⏳ Click button to start</div>
+
+<div style="margin-top:16px">
+  <div class="label">process() calls:</div>
+  <div class="counter" id="processCount">0</div>
+</div>
+
+<div style="margin-top:16px">
+  <div class="label">Worklet messages received (HEARTBEAT+PONG):</div>
+  <div class="counter" id="msgCount" style="color:#fbbf24">0</div>
+</div>
+
+<div style="margin-top:16px">
+  <button id="btn-init">Initialize Audio</button>
+  <button id="btn-ping" style="margin-left:8px;background:#8b5cf6">Send PING</button>
+</div>
+
+<div id="log" style="margin-top:16px;background:#000;border:1px solid #27272a;border-radius:4px;padding:8px;font-size:11px;font-family:monospace;line-height:1.5;max-height:200px;overflow-y:auto;color:#a1a1aa"></div>
+
+<script>
+let ctx = null;
+let workletNode = null;
+
+const $ = id => document.getElementById(id);
+function log(msg) {
+  const el = $('log');
+  const line = document.createElement('div');
+  line.textContent = `[${new Date().toISOString().slice(11, 23)}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+$('btn-init').onclick = async () => {
+  try {
+    $('status').textContent = '⏳ Creating AudioContext...';
+    $('status').className = 'msg';
+    log('Creating AudioContext...');
+    
+    ctx = new AudioContext({ sampleRate: 44100 });
+    log(`ctx created, state=${ctx.state}`);
+    
+    if (ctx.state === 'suspended') {
+      await ctx.resume();
+      log(`ctx resumed, state=${ctx.state}`);
+    }
+    
+    $('status').textContent = '⏳ Loading worklet...';
+    log('Loading worklet...');
+    await ctx.audioWorklet.addModule('/worklets/calibration-test.worklet.js');
+    log('addModule OK');
+    
+    workletNode = new AudioWorkletNode(ctx, 'test-recorder', {
+      numberOfInputs: 1,
+      numberOfOutputs: 1,
+      outputChannelCount: [1],
+    });
+    log('AudioWorkletNode created');
+    
+    // Listen for messages FROM the worklet
+    workletNode.port.addEventListener('message', (e) => {
+      const count = parseInt($('msgCount').textContent) + 1;
+      $('msgCount').textContent = count;
+      log(`msg from worklet: type=${e.data.type} processCount=${e.data.processCount ?? '?'} state=${e.data.state ?? '?'}`);
+    });
+    workletNode.port.start();
+    
+    // Connect oscillator through worklet to destination
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 440;
+    const gain = ctx.createGain();
+    gain.gain.value = 0.01;
+    osc.connect(gain);
+    gain.connect(workletNode);
+    osc.start();
+    log('Oscillator connected to worklet');
+    
+    workletNode.connect(ctx.destination);
+    log('Worklet connected to destination');
+    
+    $('status').textContent = '✅ Audio initialized. Waiting for process() calls...';
+    $('status').className = 'msg ok';
+    
+    // Poll processCount from worklet
+    setInterval(async () => {
+      if (!workletNode) return;
+      workletNode.port.postMessage({ type: 'PING' });
+    }, 2000);
+    
+    // Also poll processCount via repeating PING
+    // And update display on interval using HEARTBEAT
+    // Already done via message listener
+    
+    log('Ready. PING every 2s.');
+  } catch (err) {
+    $('status').textContent = `❌ ${err.message}`;
+    $('status').className = 'msg err';
+    log(`ERROR: ${err.message}`);
+  }
+};
+
+$('btn-ping').onclick = () => {
+  if (!workletNode) { log('No worklet node'); return; }
+  log('Manual PING sent');
+  workletNode.port.postMessage({ type: 'PING' });
+};
+</script>
+</body>
+</html>

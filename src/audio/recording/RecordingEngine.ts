@@ -57,6 +57,9 @@ export class RecordingEngine {
   private recordingStartTransportTime = 0;
   private expectedPreRoll = 0;
   private recordingSessionId = 0;
+  private recordingStartCtxTime = 0; // AudioContext.currentTime when START_RECORDING was sent
+  private recordingStartDelay = 0;   // startupDelay used for this recording
+  private recordingPreRollOffset = 0; // preRollOffset in seconds used for this recording
 
   // Idle timer: releases mic resources after 15s of inactivity
   private stopTimer: ReturnType<typeof setTimeout> | null = null;
@@ -334,9 +337,6 @@ export class RecordingEngine {
     const audioBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
     audioBuffer.getChannelData(0).set(finalAudioData);
     
-    // anchoredFrame is the AudioContext frame number where definitive recording starts
-    // startPosition = UserTime where clip starts = punchInUserTime - headLength
-    // This is direct and avoids drift from AudioContext-time-based anchorFrame
     const beatsPerSecond = (this.config.bpm || 120) / 60;
     const secondsPerBeat = 1 / beatsPerSecond;
     const secondsPerBar = secondsPerBeat * (this.config.timeSignature?.[0] || 4);
@@ -366,7 +366,15 @@ export class RecordingEngine {
       const HW_COMP_MS = defaultHWCompMs(outputLatencyMs);
       latencyCompMs = browserLatencyMs + HW_COMP_MS + (this.config.extraLatencyMs || 0);
     }
-    const startPos = this.punchInUserTime - this.headLength - latencyCompMs / 1000;
+    // Reconcile clock domains: the worklet's anchoredFrame is the actual
+    // AudioContext frame where definitive recording started. Compare it to
+    // the expected start time to correct for startup delay inaccuracy and
+    // quantum boundary skew (0-128 frames ~ 0-2.9ms).
+    const expectedStartAudioTime = this.recordingStartCtxTime + this.recordingStartDelay + this.recordingPreRollOffset;
+    const actualStartAudioTime = anchoredFrame !== undefined ? anchoredFrame / sampleRate : expectedStartAudioTime;
+    const timeError = actualStartAudioTime - expectedStartAudioTime;
+    const actualPunchInUserTime = this.punchInUserTime + timeError;
+    const startPos = actualPunchInUserTime - this.headLength - latencyCompMs / 1000;
 
     // Pre-calculate peaks
     let peaks: number[][] | undefined;
@@ -506,14 +514,18 @@ this.recordingCancelled = false;
         throw new Error('AudioWorklet not initialized. This should not happen.');
       }
 
-      // Send START_RECORDING — worklet uses its own currentFrame as anchor, offset by frameOffset
-      // headLength sent per-recording so the worklet's head window matches the per-clip setting
-      // frameOffset accounts for startupDelay + pre-roll so _anchoredFrame lands at bar 1's AudioContext time
-      const frameOffset = Math.round((startupDelay + Math.max(0, punchInUserTime - recordStartUserTime)) * audioContext.sampleRate);
+      // Send absolute recordingStartFrame instead of relative frameOffset.
+      // Capturing audioCtxNow here enables clock-domain reconciliation at stop time.
+      const audioCtxNow = audioContext.currentTime;
+      const preRollOffset = Math.max(0, punchInUserTime - recordStartUserTime);
+      const recordingStartFrame = Math.round((audioCtxNow + startupDelay + preRollOffset) * audioContext.sampleRate);
+      this.recordingStartCtxTime = audioCtxNow;
+      this.recordingStartDelay = startupDelay;
+      this.recordingPreRollOffset = preRollOffset;
       this.audioWorkletNode.port.postMessage({
         type: 'START_RECORDING',
+        recordingStartFrame,
         headLength: this.headLength,
-        frameOffset,
         sessionId: currentSessionId,
       });
 

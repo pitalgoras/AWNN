@@ -47,11 +47,10 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         });
       } else if (event.data.type === 'START_RECORDING') {
         this._shouldStop = false;
-        const frameOffset = event.data.frameOffset || 0;
         this._sessionId = event.data.sessionId || 0;
-        this._anchoredFrame = currentFrame + frameOffset;
+        this._recordingStartFrame = event.data.recordingStartFrame || Math.round(currentTime * sampleRate);
+        this._anchoredFrame = this._recordingStartFrame;
         this._isRecording = true;
-        this._recordingStartFrame = this._anchoredFrame;
         // headLength sent per-recording from main thread (per-clip, adjustable in SyncTool)
         if (event.data.headLength !== undefined) {
           this._headLength = event.data.headLength;

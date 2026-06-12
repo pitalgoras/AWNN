@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AWNN Latency Calibration Test</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: #111; color: #e4e4e7; padding: 24px; max-width: 600px; margin: 0 auto; }
+  h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; color: #a78bfa; }
+  .subtitle { font-size: 12px; color: #71717a; margin-bottom: 24px; }
+  .card { background: #18181b; border: 1px solid #27272a; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+  .card-header { font-size: 14px; font-weight: 600; margin-bottom: 8px; color: #d4d4d8; }
+  .stat-row { display: flex; gap: 12px; font-size: 13px; margin-bottom: 6px; }
+  .stat-row dt { color: #71717a; min-width: 80px; flex-shrink: 0; }
+  .stat-row dd { color: #e4e4e7; font-family: monospace; font-size: 12px; word-break: break-all; }
+  .stat-row dd.muted { color: #52525b; }
+  button { background: #3b82f6; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; transition: background .15s; }
+  button:hover { background: #2563eb; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .btn-secondary { background: #27272a; color: #e4e4e7; }
+  .btn-secondary:hover { background: #3f3f46; }
+  .btn-clap { background: #8b5cf6; }
+  .btn-clap:hover { background: #7c3aed; }
+  .btn-danger { background: #dc2626; }
+  .btn-danger:hover { background: #b91c1c; }
+  .btn-sm { padding: 4px 12px; font-size: 11px; }
+  .btn-row { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; align-items: center; }
+  .result { font-size: 13px; padding: 8px 12px; border-radius: 4px; margin-top: 8px; }
+  .result.ok { background: #14532d; color: #86efac; }
+  .result.err { background: #450a0a; color: #fca5a5; }
+  .result.info { background: #1e1b4b; color: #a5b4fc; }
+  .msg { font-size: 12px; margin-top: 8px; padding: 6px 10px; border-radius: 4px; }
+  .msg.ok { color: #86efac; }
+  .msg.err { color: #fca5a5; background: #450a0a; }
+  .msg.pending { color: #facc15; }
+  .trace { font-size: 11px; color: #71717a; font-family: monospace; line-height: 1.6; }
+  .trace .settled { color: #86efac; }
+  input, textarea, select { background: #27272a; border: 1px solid #3f3f46; color: #e4e4e7; padding: 6px 10px; border-radius: 4px; font-size: 13px; font-family: monospace; }
+  label { font-size: 12px; color: #71717a; }
+  hr { border: none; border-top: 1px solid #27272a; margin: 16px 0; }
+
+  .device-table { font-size: 11px; font-family: monospace; width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .device-table th { text-align: left; color: #71717a; padding: 2px 6px; font-weight: 400; border-bottom: 1px solid #27272a; }
+  .device-table td { padding: 2px 6px; border-bottom: 1px solid #1c1c1f; color: #a1a1aa; word-break: break-all; }
+  .device-table tr.active { background: #1e293b; }
+  .device-table tr.active td { color: #93c5fd; }
+
+  .vu-container { display: flex; gap: 16px; margin: 8px 0; }
+  .vu-group { flex: 1; }
+  .vu-label { font-size: 11px; color: #71717a; margin-bottom: 2px; }
+  .vu-bar { height: 16px; background: #1c1c1f; border-radius: 3px; overflow: hidden; position: relative; }
+  .vu-fill { height: 100%; border-radius: 3px; transition: width .08s ease; }
+  .vu-fill.out { background: linear-gradient(90deg, #3b82f6, #8b5cf6); }
+  .vu-fill.in { background: linear-gradient(90deg, #22c55e, #eab308, #ef4444); }
+  .vu-value { font-size: 10px; font-family: monospace; color: #71717a; margin-top: 1px; }
+
+  .sweep-table { font-size: 11px; font-family: monospace; width: 100%; border-collapse: collapse; margin-top: 8px; }
+  .sweep-table th { text-align: left; color: #71717a; padding: 2px 6px; font-weight: 400; border-bottom: 1px solid #27272a; font-size: 10px; }
+  .sweep-table td { padding: 2px 6px; border-bottom: 1px solid #1c1c1f; color: #a1a1aa; }
+
+  .detail-toggle { cursor: pointer; font-size: 12px; color: #3b82f6; user-select: none; }
+  .detail-toggle:hover { color: #60a5fa; }
+  .detail-content { display: none; margin-top: 8px; }
+  .detail-content.open { display: block; }
+
+  .gain-hint { font-size: 11px; padding: 6px 8px; background: #1e1b4b; border-radius: 4px; color: #a5b4fc; margin-top: 4px; }
+
+  .fw-mon { font-family: monospace; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>AWNN Latency Calibration Test</h1>
+<p class="subtitle">Isolated test bed for sync calibration algorithms. No recording engine complexity.</p>
+
+<!-- Status Card -->
+<div class="card">
+  <div class="stat-row"><dt>Output latency</dt><dd id="outputLat">—</dd></div>
+  <div class="stat-row"><dt>Base latency</dt><dd id="baseLat">—</dd></div>
+  <div class="stat-row"><dt>Heuristic (1.9×)</dt><dd id="heuristic">—</dd></div>
+  <div class="stat-row"><dt>Input device</dt><dd id="inputDevice" class="muted">—</dd></div>
+  <div class="stat-row"><dt>Output device</dt><dd id="outputDevice" class="muted">—</dd></div>
+  <div class="msg" id="status">⏳ Move mouse or press a key to initialize</div>
+  <div class="btn-row">
+    <button id="btn-refresh" class="btn-secondary btn-sm" disabled>Refresh Latency</button>
+    <button id="btn-init" class="btn-secondary btn-sm">Force Init</button>
+  </div>
+  <div id="settle-trace" class="trace" style="margin-top:8px"></div>
+</div>
+
+<!-- Device Info Card -->
+<div class="card">
+  <div class="card-header">Audio Devices</div>
+  <div id="device-detail" class="detail-content open">
+    <div id="device-list" style="max-height:200px;overflow-y:auto"></div>
+    <div id="device-settings" style="font-size:11px;color:#71717a;margin-top:6px;font-family:monospace"></div>
+  </div>
+  <div class="btn-row" style="margin-top:6px">
+    <button id="btn-refresh-devices" class="btn-secondary btn-sm">Refresh Devices</button>
+  </div>
+</div>
+
+<!-- I/O VU Meter Card -->
+<div class="card">
+  <div class="card-header">I/O Level</div>
+  <div class="vu-container">
+    <div class="vu-group">
+      <div class="vu-label">Output (probe)</div>
+      <div class="vu-bar"><div id="vu-out" class="vu-fill out" style="width:0%"></div></div>
+      <div id="vu-out-val" class="vu-value">—</div>
+    </div>
+    <div class="vu-group">
+      <div class="vu-label">Input (mic)</div>
+      <div class="vu-bar"><div id="vu-in" class="vu-fill in" style="width:0%"></div></div>
+      <div id="vu-in-val" class="vu-value">—</div>
+    </div>
+  </div>
+</div>
+
+<!-- Noise Floor Card -->
+<div class="card">
+  <div class="card-header">Noise Floor</div>
+  <div class="stat-row"><dt>Noise RMS</dt><dd id="nf-rms" class="muted">—</dd></div>
+  <div class="stat-row"><dt>Noise dBFS</dt><dd id="nf-dbfs" class="muted">—</dd></div>
+  <div class="stat-row"><dt>Target ampl.</dt><dd id="nf-target" class="muted">—</dd></div>
+  <div id="gain-hint" class="gain-hint"></div>
+  <div class="btn-row" style="margin-top:6px">
+    <button id="btn-capture-noise" class="btn-secondary btn-sm">Capture Noise Floor</button>
+  </div>
+</div>
+
+<!-- MLS Auto Test Card -->
+<div class="card">
+  <div class="card-header">MLS Auto Test</div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays MLS noise (2-8kHz) through speakers, records via mic, cross-correlates. Requires speaker→mic path.</p>
+  <div class="btn-row">
+    <button id="btn-mls">Run MLS Auto Test</button>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px">
+      <input type="checkbox" id="chk-swap" style="width:auto">
+      Swap channels
+    </label>
+  </div>
+  <div id="sweep-section" style="display:none">
+    <div id="sweep-table-container"></div>
+  </div>
+  <div id="mls-result" class="result"></div>
+</div>
+
+<!-- Clap Test Card -->
+<div class="card">
+  <div class="card-header">Clap Test</div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays irregular rhythm through headphones, you clap it back. No speaker→mic path needed.</p>
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+    <label for="bpm">BPM:</label>
+    <input type="number" id="bpm" value="120" min="40" max="200">
+  </div>
+  <button id="btn-clap" class="btn-clap">Run Clap Test</button>
+  <div id="clap-result" class="result"></div>
+</div>
+
+<!-- User Note Card -->
+<div class="card">
+  <div class="card-header">User Note</div>
+  <p style="font-size:11px;color:#71717a;margin-bottom:4px">Describe what you changed (device, setup, positioning, etc.) — included in diagnostics dump.</p>
+  <input type="text" id="user-note" style="width:100%" placeholder="e.g., switched to bluetooth earbuds, one earbud in other's mic">
+</div>
+
+<!-- Diagnostics Card -->
+<div class="card" style="border-color:#3b3b3b">
+  <div class="card-header" style="color:#facc15">Diagnostics</div>
+
+  <div id="worklet-status" class="msg pending">⏳ Move mouse or press a key to start</div>
+  <div id="heartbeat-status" style="font-size:11px;color:#fbbf24;margin-top:4px">💓 no heartbeat yet</div>
+
+  <div class="btn-row" style="margin-top:8px">
+    <button id="btn-diagnose" class="btn-secondary btn-sm">Run Diagnostics</button>
+    <button id="btn-copy-log" class="btn-secondary btn-sm">Copy Log</button>
+    <button id="btn-download-log" class="btn-secondary btn-sm">Download Log</button>
+    <button id="btn-download-dump" class="btn-secondary btn-sm">Download Diagnostics</button>
+  </div>
+  <div id="diag-result" style="font-size:11px;font-family:monospace;color:#a1a1aa;line-height:1.6;margin-top:4px;white-space:pre-wrap"></div>
+
+  <div style="margin-top:12px">
+    <label style="display:block;margin-bottom:4px;color:#71717a">Event log:</label>
+    <textarea id="log" readonly style="width:100%;height:160px;background:#000;border:1px solid #27272a;border-radius:4px;padding:8px;font-size:11px;font-family:monospace;line-height:1.5;color:#a1a1aa;resize:vertical">— waiting for init —</textarea>
+  </div>
+</div>
+
+<p style="font-size:11px;color:#52525b">
+  Pattern: ♩ ♪ ♪ ♩ ♪ 𝄽 ♩ (irregular — cross-correlation resolves one match)<br>
+  Worklet: START(startFrame+duration) → auto-stop → RESULT(actualStartFrame, frames). No rolling buffer, no head, no config.
+</p>
+
+<script type="module" src="./main.ts"></script>
+</body>
+</html>
