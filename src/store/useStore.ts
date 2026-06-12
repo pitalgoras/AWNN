@@ -2,12 +2,16 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { mutative } from 'zustand-mutative';
 import localforage from 'localforage';
+import { audioBufferToWav } from '../audio/processing/audioBufferToWav';
 import type { VoiceTag } from '../lib/utils';
 
 export interface Phrase {
   id: string;
   url: string;
+  /** Only set for imported files (original File). Recorded phrases do not store blob — regenerated on export from audioBuffer. */
   blob?: Blob;
+  /** Raw interleaved PCM data for IndexedDB persistence. Stored as ArrayBuffer natively (no base64 overhead). */
+  audioData?: { channels: number; sampleRate: number; length: number; buffer: ArrayBuffer };
   audioBuffer?: AudioBuffer;
   peaks?: number[][]; // Pre-calculated peaks for WaveSurfer
   startPosition: number;
@@ -363,6 +367,12 @@ export const useStore = create<AppState>()(
           if (track) Object.assign(track, updates);
         }),
         removeTrack: (id) => set((state) => {
+          const track = state.tracks.find(t => t.id === id);
+          if (track) {
+            track.phrases.forEach(p => {
+              if (p.url?.startsWith('blob:')) URL.revokeObjectURL(p.url);
+            });
+          }
           state.tracks = state.tracks.filter(t => t.id !== id);
         }),
         
@@ -442,6 +452,10 @@ export const useStore = create<AppState>()(
         removePhrase: (trackId, phraseId) => set((state) => {
           const track = state.tracks.find(t => t.id === trackId);
           if (track) {
+            const phrase = track.phrases.find(p => p.id === phraseId);
+            if (phrase?.url?.startsWith('blob:')) {
+              URL.revokeObjectURL(phrase.url);
+            }
             track.phrases = track.phrases.filter(p => p.id !== phraseId);
           }
         }),
@@ -505,8 +519,30 @@ export const useStore = create<AppState>()(
 
         saveProject: async () => {
           const state = get();
+          // Strip non-serializable audioBuffer, persist raw ArrayBuffer for
+          // recorded phrases that lack a blob
+          const persistableTracks = state.tracks.map((t: Track) => ({
+            ...t,
+            phrases: t.phrases.map(p => {
+              let audioData = p.audioData;
+              if (!audioData && p.audioBuffer && !p.blob) {
+                const buf = p.audioBuffer;
+                const channels = buf.numberOfChannels;
+                const length = buf.length;
+                const interleaved = new Float32Array(length * channels);
+                for (let c = 0; c < channels; c++) {
+                  const ch = buf.getChannelData(c);
+                  for (let i = 0; i < length; i++) {
+                    interleaved[i * channels + c] = ch[i];
+                  }
+                }
+                audioData = { channels, sampleRate: buf.sampleRate, length, buffer: interleaved.buffer };
+              }
+              return { ...p, audioBuffer: undefined, audioData };
+            }),
+          }));
           const projectData = {
-            tracks: state.tracks,
+            tracks: persistableTracks,
             cues: state.cues,
             bpm: state.bpm,
             timeSignature: state.timeSignature,
@@ -525,18 +561,33 @@ export const useStore = create<AppState>()(
           try {
             const projectData = await localforage.getItem<ProjectData>('awnn_project');
             if (projectData) {
-              // Recreate object URLs for blobs
+              // Recreate object URLs from blob or raw audioData (ArrayBuffer)
               const tracksWithUrls = projectData.tracks.map((t: Track) => {
                 const updatedPhrases = t.phrases?.map((p, index) => {
+                  let url = p.url || '';
                   if (p.blob) {
-                    return { 
-                      ...p, 
-                      url: URL.createObjectURL(p.blob),
-                      name: p.name || `Take ${index + 1}`
-                    };
+                    url = URL.createObjectURL(p.blob);
+                  }
+                  const ad = p.audioData;
+                  if (!url && ad && typeof AudioContext !== 'undefined') {
+                    try {
+                      const ctx = new AudioContext();
+                      const f32 = new Float32Array(ad.buffer);
+                      const buf = ctx.createBuffer(ad.channels, ad.length, ad.sampleRate);
+                      for (let c = 0; c < ad.channels; c++) {
+                        const ch = buf.getChannelData(c);
+                        for (let i = 0; i < ad.length; i++) {
+                          ch[i] = f32[i * ad.channels + c];
+                        }
+                      }
+                      const wavBlob = audioBufferToWav(buf);
+                      url = URL.createObjectURL(wavBlob);
+                      ctx.close();
+                    } catch { /* ignore */ }
                   }
                   return {
                     ...p,
+                    url,
                     name: p.name || `Take ${index + 1}`
                   };
                 }) || [];

@@ -21,7 +21,7 @@ import { LatencyCalibrationModal } from './components/modals/LatencyCalibrationM
 import { TimelineGrid } from './components/TimelineGrid';
 import { LyricsBuilder } from './components/LyricsBuilder';
 import { TrackBar } from './components/TrackBar';
-import { exportProjectToJSON, importProjectFromJSON } from './audio/project/projectIO';
+import { exportProject, importProject } from './audio/project/projectIO';
 
 import { TransportTimeDisplay } from './components/TransportTimeDisplay';
 import { StatusLogger } from './components/StatusLogger';
@@ -626,7 +626,7 @@ export default function App() {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      const data = await importProjectFromJSON(file);
+      const data = await importProject(file);
       // Restore the store heavily via localforage override or explicit set
       useStore.setState({
         tracks: data.tracks || [],
@@ -918,7 +918,7 @@ export default function App() {
       {/* Logo Menu Modal */}
       <ModalShell show={showLogoMenu} onClose={() => setShowLogoMenu(false)} title="Menu">
         <div className="space-y-1">
-          <button onClick={() => { exportProjectToJSON(useStore.getState()); setShowLogoMenu(false); }}
+          <button onClick={() => { exportProject(useStore.getState()); setShowLogoMenu(false); }}
             className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
             <Save size={16} /> Save Song
           </button>

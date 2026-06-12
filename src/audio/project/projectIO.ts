@@ -1,55 +1,74 @@
-import { Track, Phrase } from '../../store/useStore';
+import JSZip from 'jszip';
+import { audioBufferToWav } from '../processing/audioBufferToWav';
 
-const blobToBase64 = (blob: Blob): Promise<string> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onloadend = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(blob);
-  });
-};
-
-const base64ToBlob = async (base64: string): Promise<Blob> => {
-  const response = await fetch(base64);
-  return response.blob();
-};
-
-export const exportProjectToJSON = async (state: any) => {
+export async function exportProject(state: any): Promise<boolean> {
   try {
-    const serializedTracks = await Promise.all(state.tracks.map(async (track: Track) => {
-      const serializedPhrases = await Promise.all(track.phrases.map(async (phrase: Phrase) => {
-        let base64Blob = null;
-        if (phrase.blob) {
-          base64Blob = await blobToBase64(phrase.blob);
-        }
-        return {
-          ...phrase,
-          blob: base64Blob, // Convert blob to base64
-          audioBuffer: undefined, // Don't serialize heavy buffers
-          url: undefined // Don't serialize temporary URLs
-        };
-      }));
+    const zip = new JSZip();
 
-      return {
-        ...track,
-        phrases: serializedPhrases
-      };
-    }));
-
-    const projectData = {
-      version: 1,
-      tracks: serializedTracks,
-      cues: state.cues,
+    const meta: any = {
+      version: 3,
       bpm: state.bpm,
       timeSignature: state.timeSignature,
       globalLatencyMs: state.globalLatencyMs,
       lyricsText: state.lyricsText,
       lyricsSegments: state.lyricsSegments,
+      cues: state.cues,
+      tracks: [],
     };
 
-    const dataStr = JSON.stringify(projectData);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    const url = URL.createObjectURL(dataBlob);
+    for (const track of state.tracks) {
+      const trackMeta: any = {
+        id: track.id,
+        name: track.name,
+        color: track.color,
+        isMuted: track.isMuted,
+        isSolo: track.isSolo,
+        volume: track.volume,
+        pan: track.pan,
+        offset: track.offset,
+        anchoredFrame: track.anchoredFrame,
+        envelope: track.envelope,
+        phrases: [],
+      };
+
+      for (let i = 0; i < track.phrases.length; i++) {
+        const phrase = track.phrases[i];
+        let wavBlob: Blob;
+        if (phrase.blob) {
+          // Imported file: convert to WAV for consistent format in zip
+          const ctx = new AudioContext();
+          const ab = await phrase.blob.arrayBuffer();
+          const buf = await ctx.decodeAudioData(ab);
+          wavBlob = audioBufferToWav(buf);
+          ctx.close();
+        } else if (phrase.audioBuffer) {
+          wavBlob = audioBufferToWav(phrase.audioBuffer);
+        } else continue;
+
+        const filename = `audio/${track.id}_${i}.wav`;
+        zip.file(filename, wavBlob);
+
+        trackMeta.phrases.push({
+          id: phrase.id,
+          startPosition: phrase.startPosition,
+          originalStartPosition: phrase.originalStartPosition,
+          headLength: phrase.headLength,
+          anchoredFrame: phrase.anchoredFrame,
+          originalAnchoredFrame: phrase.originalAnchoredFrame,
+          duration: phrase.duration,
+          startCue: phrase.startCue,
+          endCue: phrase.endCue,
+          createdAt: phrase.createdAt,
+          name: phrase.name,
+        });
+      }
+
+      meta.tracks.push(trackMeta);
+    }
+
+    zip.file('metadata.json', JSON.stringify(meta));
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    const url = URL.createObjectURL(blob);
 
     const a = document.createElement('a');
     a.href = url;
@@ -58,63 +77,41 @@ export const exportProjectToJSON = async (state: any) => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    
-    // Optional HTTP PUT (As requested for server shared folder logic)
-    try {
-      await fetch('/api/project', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: dataStr
-      });
-      console.log('Project saved to server (if endpoint exists).');
-    } catch {
-      console.log('Server save skipped. (No backend running)');
-    }
-    
+
     return true;
   } catch (err) {
-    console.error("Export Failed: ", err);
+    console.error('Export Failed:', err);
     return false;
   }
-};
+}
 
-export const importProjectFromJSON = async (file: File): Promise<any> => {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = async (e) => {
+export async function importProject(file: File): Promise<any> {
+  const zip = await JSZip.loadAsync(file);
+  const meta = JSON.parse(await zip.file('metadata.json').async('string'));
+
+  const tracks = await Promise.all(meta.tracks.map(async (t: any) => {
+    const phrases = await Promise.all(t.phrases.map(async (p: any, i: number) => {
       try {
-        const text = e.target?.result as string;
-        const data = JSON.parse(text);
-
-        const restoredTracks = await Promise.all((data.tracks as Track[]).map(async (track: Track) => {
-          const restoredPhrases = await Promise.all((track.phrases as (Phrase & { blob?: string })[]).map(async (phrase) => {
-            let blob: Blob | undefined;
-            let url = phrase.url || '';
-            if (phrase.blob) {
-              blob = await base64ToBlob(phrase.blob);
-              url = URL.createObjectURL(blob);
-            }
-            return {
-              ...phrase,
-              blob,
-              url
-            };
-          }));
-          return {
-            ...track,
-            phrases: restoredPhrases
-          };
-        }));
-
-        resolve({
-          ...data,
-          tracks: restoredTracks
-        });
-      } catch (err) {
-        reject(err);
+        const wavBlob = await zip.file(`audio/${t.id}_${i}.wav`).async('blob');
+        return {
+          ...p,
+          blob: wavBlob,
+          url: URL.createObjectURL(wavBlob),
+        };
+      } catch {
+        return { ...p, blob: undefined, url: '' };
       }
-    };
-    reader.onerror = reject;
-    reader.readAsText(file);
-  });
-};
+    }));
+    return { ...t, phrases };
+  }));
+
+  return {
+    tracks,
+    cues: meta.cues || [],
+    bpm: meta.bpm || 120,
+    timeSignature: meta.timeSignature || [4, 4],
+    globalLatencyMs: meta.globalLatencyMs || 0,
+    lyricsText: meta.lyricsText || '',
+    lyricsSegments: meta.lyricsSegments || [],
+  };
+}
