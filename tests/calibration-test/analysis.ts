@@ -81,15 +81,15 @@ export function peakToNoiseRatio(corrValues: number[]): number {
   const peak = Math.max(...corrValues);
   const peakIdx = corrValues.indexOf(peak);
   const excluded = new Set([peakIdx - 3, peakIdx - 2, peakIdx - 1, peakIdx, peakIdx + 1, peakIdx + 2, peakIdx + 3]);
-  let sum = 0;
+  let sumSq = 0;
   let count = 0;
   for (let i = 0; i < corrValues.length; i++) {
     if (!excluded.has(i)) {
-      sum += corrValues[i];
+      sumSq += corrValues[i] * corrValues[i];
       count++;
     }
   }
-  const noiseFloor = count > 0 ? sum / count : 1e-10;
+  const noiseFloor = count > 0 ? Math.sqrt(sumSq / count) : 1e-10;
   return noiseFloor > 1e-10 ? peak / noiseFloor : 0;
 }
 
