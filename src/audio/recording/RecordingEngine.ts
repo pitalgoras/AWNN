@@ -66,7 +66,7 @@ export class RecordingEngine {
 
   // Rolling buffer head length from config (defaults to 1s)
   private get headLength(): number {
-    return this.config.headLength || 0.5;
+    return this.config.headLength ?? 0.5;
   }
 
   // AudioWorklet recording (shared clock with playback)

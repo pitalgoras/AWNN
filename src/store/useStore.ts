@@ -123,7 +123,6 @@ interface AppState {
   deviceLatencyCache: Record<string, DeviceLatencyProfile>; // deviceFingerprint → cached calibration profile
   startupDelayMs: number; // Estimated ms between onSetIsPlaying and actual playback start (dangerous)
   bufferSafetyMs: number; // Extra ms wait before START_RECORDING to ensure buffer is populated (dangerous)
-  minProjectDurationMs: number; // Minimum project duration in ms (playback won't stop before this)
   metronomeEnabled: boolean; // Master metronome toggle (default true)
   barLinesEnabled: 'none' | 'bars-beats' | 'bars-only'; // Show vertical bar/beat lines (default bars-beats)
   metronomeTrackVisible: boolean; // Show metronome waveform strip (default true)
@@ -176,7 +175,6 @@ interface AppState {
   setHeadLength: (length: number) => void;
   setStartupDelayMs: (ms: number) => void;
   setBufferSafetyMs: (ms: number) => void;
-  setMinProjectDurationMs: (ms: number) => void;
   setMetronomeEnabled: (v: boolean) => void;
   setBarLinesEnabled: (v: 'none' | 'bars-beats' | 'bars-only') => void;
   cycleBarLines: () => void;
@@ -234,7 +232,6 @@ const defaultSettings = {
   headLength: 0.5, // Default 500ms rolling buffer head
   startupDelayMs: 150, // Default 150ms estimated startup latency (dangerous setting)
   bufferSafetyMs: 100, // Default 100ms buffer safety margin (dangerous setting)
-  minProjectDurationMs: 600000, // Default 600s minimum project duration (dangerous setting)
   metronomeEnabled: true,
   barLinesEnabled: 'bars-beats' as const,
   metronomeTrackVisible: true,
@@ -262,6 +259,45 @@ const defaultSettings = {
   deviceLatencyCache: {},
   deviceChangeNotif: null,
   // Configurable button sizes (CSS pixels)
+  smallBtnSize: 36,
+  mediumBtnSize: 44,
+  largeBtnSize: 52,
+};
+
+// Subset of defaultSettings excluding runtime-only values (sampleRate, latency, isReady, etc.)
+// Used by resetSettings so it doesn't clobber AudioContext-calibrated state.
+const userDefaultSettings = {
+  bpm: 120,
+  timeSignature: [4, 4] as [number, number],
+  zoom: 10,
+  globalLatencyMs: 0,
+  extraLatencyMs: 0,
+  moveLocked: true,
+  envelopeLocked: true,
+  rawRecordingMode: true,
+  headLength: 0.5,
+  startupDelayMs: 150,
+  bufferSafetyMs: 100,
+  metronomeEnabled: true,
+  barLinesEnabled: 'bars-beats' as const,
+  metronomeTrackVisible: true,
+  preRollMode: 'always' as const,
+  waveformQuality: 'low' as const,
+  trackHeight: 80,
+  metronomeHeight: 60,
+  sidebarWidth: 300,
+  toolbarProposal: 1 as const,
+  toolbarVisibleLabels: true,
+  appMode: 'mixer' as const,
+  lyricsText: '',
+  lyricsSegments: [] as VoicingSegment[],
+  lyricsViewMode: 'fixed' as const,
+  activeTagId: '[ALL]',
+  tagPreviewMode: 'chip' as const,
+  isSpreeMode: false,
+  customTags: [],
+  comboTagSeparator: '+' as const,
+  sectionTags: ['Intro', 'Verse', 'Chorus', 'Bridge', 'Outro'],
   smallBtnSize: 36,
   mediumBtnSize: 44,
   largeBtnSize: 52,
@@ -327,7 +363,6 @@ export const useStore = create<AppState>()(
         setHeadLength: (length) => set({ headLength: Math.max(0, Math.min(1, length)) }),
         setStartupDelayMs: (ms) => set({ startupDelayMs: Math.max(0, Math.min(1000, ms)) }),
         setBufferSafetyMs: (ms) => set({ bufferSafetyMs: Math.max(0, Math.min(500, ms)) }),
-        setMinProjectDurationMs: (ms) => set({ minProjectDurationMs: Math.max(10000, Math.min(3600000, ms)) }),
         setMetronomeEnabled: (v) => set((state) => {
           state.metronomeEnabled = v;
           if (v) {
@@ -374,7 +409,7 @@ export const useStore = create<AppState>()(
           const [removed] = state.tracks.splice(startIndex, 1);
           state.tracks.splice(endIndex, 0, removed);
         }),
-        resetSettings: () => set({ ...defaultSettings }),
+        resetSettings: () => set({ ...userDefaultSettings }),
         
         addTrack: (track) => set((state) => {
           state.tracks.push({ ...track, id: Math.random().toString(36).substr(2, 9) });
@@ -662,6 +697,19 @@ export const useStore = create<AppState>()(
         toolbarProposal: state.toolbarProposal,
         toolbarVisibleLabels: state.toolbarVisibleLabels,
         deviceLatencyCache: state.deviceLatencyCache,
+        headLength: state.headLength,
+        startupDelayMs: state.startupDelayMs,
+        bufferSafetyMs: state.bufferSafetyMs,
+        metronomeEnabled: state.metronomeEnabled,
+        barLinesEnabled: state.barLinesEnabled,
+        metronomeTrackVisible: state.metronomeTrackVisible,
+        extraLatencyMs: state.extraLatencyMs,
+        smallBtnSize: state.smallBtnSize,
+        mediumBtnSize: state.mediumBtnSize,
+        largeBtnSize: state.largeBtnSize,
+        trackHeight: state.trackHeight,
+        metronomeHeight: state.metronomeHeight,
+        sidebarWidth: state.sidebarWidth,
       }),
     }
   )

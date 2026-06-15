@@ -686,15 +686,6 @@ const {
             lastTimeUpdateRef.current = now;
           }
           
-          // Stop playback if we reached the end of the project duration
-          const effectiveDuration = Math.max(useStore.getState().minProjectDurationMs / 1000, state.duration);
-          if (state.isPlaying && userTime >= effectiveDuration && effectiveDuration > 0 && !state.isRecording) {
-            state.setIsPlaying(false);
-            if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
-              multitrackRef.current.pause();
-            }
-          }
-          
           // Apply envelope automation
           const currentTracks = state.tracks || [];
           const anySolo = currentTracks.some(t => t.isSolo);

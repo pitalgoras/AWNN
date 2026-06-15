@@ -1168,23 +1168,19 @@ export default function App() {
               className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
             />
           </div>
-          <div className="flex items-center justify-between p-3 bg-zinc-800/30 rounded border border-red-900/30 mt-2">
-            <div className="pr-4">
-              <div className="text-sm font-bold text-zinc-100">Min Project Duration</div>
-              <div className="text-[10px] text-zinc-500 mt-1 leading-tight">Minimum timeline length (seconds). Playback won't stop before this. Also controls metronome buffer size.</div>
-            </div>
-            <input 
-              type="number" 
-              min="10" max="3600" step="10"
-              value={Math.round(useStore.getState().minProjectDurationMs / 1000)}
-              onChange={(e) => {
-                const val = parseInt(e.target.value);
-                if (!isNaN(val)) useStore.getState().setMinProjectDurationMs(val * 1000);
-              }}
-              className="w-16 bg-zinc-800 border border-red-900/50 rounded px-2 py-1 text-xs text-zinc-100 text-right"
-            />
-          </div>
         </div>
+
+        {/* Reset to Defaults */}
+        <button
+          onClick={() => {
+            if (window.confirm('Reset all settings to defaults? This will not affect your tracks, recordings, or calibration data.')) {
+              useStore.getState().resetSettings();
+            }
+          }}
+          className="w-full py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 hover:text-red-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all border border-red-900/30 mt-4"
+        >
+          Reset to Defaults
+        </button>
       </ModalShell>
 
       {/* Device Change Notification */}
