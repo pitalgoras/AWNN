@@ -84,6 +84,7 @@
 - Single rolling buffer for both head and definitive recording (no separate `_audioData`)
 - Trimming stops at `_recordingStartFrame` — preserves head window + recording in one buffer
 - `_flush()`: iterates buffer, extracts last `headLength` seconds before `_recordingStartFrame` as head, then includes data from `_recordingStartFrame` onward as definitive recording
+- **Accumulator buffer**: Pre-allocated `Float32Array(4096)` in constructor. Input from each `process()` call copies into the accumulator; `_pushAccumulator()` batches to `_rollingBuffer` only when full (~93ms). Reduces per-call allocations from ~344/s to ~11/s with zero architectural change.
 
 ### WebAudioPlayer (webaudio.ts)
 - Stores `_anchoredFrame` and `_headLength` as metadata

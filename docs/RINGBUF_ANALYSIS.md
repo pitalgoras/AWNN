@@ -15,7 +15,7 @@ All three avoid `postMessage` entirely for the data path — instead, threads sh
 
 ## How It Would Replace Our Current Approach
 
-### Current: `recorder.worklet.js`
+### OLD (pre-accumulator): `recorder.worklet.js`
 
 ```
 process() every 128 samples:
@@ -30,6 +30,30 @@ STOP_RECORDING:
     .set() each chunk into result
     _rollingBuffer = []
   postMessage({audioData, ...})    ← transfer result (zero-copy)
+```
+
+### Current (with accumulator buffer): `recorder.worklet.js`
+
+```
+constructor():
+  _accBuffer = new Float32Array(4096)   ← ONE allocation, reused forever
+  _accPos = 0
+  _accStartFrame = 0
+
+process() every 128 samples:
+  _accBuffer.set(channelData, _accPos)  ← copy into accumulator (no allocation)
+  _accPos += 128
+  if _accPos >= 4096:                    ← every ~93ms
+    _pushAccumulator():                  ← only ~11 pushes/s
+      _rollingBuffer.push({data: _accBuffer.slice(0, _accPos), frame: _accStartFrame})
+      _accPos = 0
+
+STOP_RECORDING:
+  _pushAccumulator()                     ← flush remaining partial chunk
+  _flush():
+    iterate chunks from _rollingBuffer   ← same as before, but ~11 chunks instead of ~344
+    new Float32Array(totalLength)        ← still one concatenation at stop
+  postMessage({audioData, ...})
 ```
 
 ### With ringbuf.js

@@ -26,6 +26,7 @@ To prevent accidental destructive edits during playback and mixing, the applicat
     *   **WaveSurfer plays entire buffer** from position 0 → head audio is audible, followed by definitive recording
     *   **`headLength`** is per-clip metadata (editable in SyncTool) — changing it adjusts visual boundaries without affecting sync
     *   **`startupDelayMs`** (default 150ms) and **`bufferSafetyMs`** (default 100ms) are editable in Dangerous Settings within the Advanced Settings modal. `startupDelayMs` estimates the time between `onSetIsPlaying(true)` and actual AudioContext playback start. `bufferSafetyMs` adds extra wait margin to ensure the rolling buffer is populated before START_RECORDING is sent.
+*   **Accumulator Buffer (June 2026):** The AudioWorklet pre-allocates a single `Float32Array(4096)` in the constructor. All 128-sample `process()` calls copy input into this fixed buffer. Only when full (~93ms) is the accumulator `.slice()`-ed into `_rollingBuffer` via `_pushAccumulator()`. This reduces allocations from ~344/s to ~11/s — 97% reduction in GC pressure on the audio thread, without SharedArrayBuffer.
 *   **Tempo Control (BpmInput):**
     *   **Interaction:** Supports direct typing (3-digit), vertical scrubbing (drag-to-change), and arrow keys (Up/Down).
     *   **Responsiveness:** The UI prioritizes input responsiveness. Metronome regeneration is debounced (500ms) to prevent audio processing from interrupting the user's input flow.

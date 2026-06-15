@@ -39,3 +39,27 @@ To ensure microsecond-precise timing and 60fps visual synchronization, the appli
 *   [x] **Canvas Efficiency:** WaveSurfer uses pre-calculated peaks and optimized `minPxPerSec`.
 *   [x] **Worker Offloading:** Heavy audio math is offloaded from the immediate UI render path.
 *   [x] **Performance Path:** High-frequency visual updates bypass React reconciliation.
+
+## 6. AudioWorklet Allocation Reduction
+
+### Problem
+Each `process()` call in `recorder.worklet.js` (every 128 samples, ~344 times/s) previously allocated a new `Float32Array(128)` and pushed individual chunks to the rolling buffer. This caused ~344 allocations/s on the audio thread, generating GC pressure that could introduce jitter in recording timing.
+
+### Solution (June 2026)
+- Pre-allocate a single `Float32Array(4096)` accumulator in the AudioWorklet constructor
+- All `process()` calls copy input into this fixed buffer (zero allocations)
+- Every ~93ms (when accumulator is full), `_pushAccumulator()` `.slice()`-s the buffer and pushes to `_rollingBuffer`
+- On stop, `_pushAccumulator()` flushes the remaining partial chunk before `_flush()`
+
+### Impact
+| Metric | Before | After |
+|--------|--------|-------|
+| Allocations/s in process() | ~344 | ~11 |
+| Push operations/s | ~344 | ~11 |
+| Architectural change | None (transparent to caller) |
+| Ringbuf.js needed? | No — 97% reduction already mitigates GC concern |
+
+### Trade-offs
+- **~93ms additional stop latency**: The accumulator holds up to 4095 unwritten samples. `_pushAccumulator()` flushes synchronously before `_flush()` — negligible on the audio thread (~1 process call of work).
+- **Rolling buffer extends ~93ms beyond 2s limit**: During pre-roll, untrimmed data in accumulator can exceed the nominal rolling buffer duration. Head margin (max 1s) absorbs this easily.
+- **Two bugs fixed post-implementation**: Write index was `0` instead of `this._accPos` (always overwrote position 0); `_accPos` increment used `=` instead of `+=` (never grew past 128). Both fixed in commits `e170b8a`/`3cf1c99`. See `docs/devhistory.md` section 38 for details.
