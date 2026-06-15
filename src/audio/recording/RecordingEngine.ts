@@ -268,6 +268,7 @@ export class RecordingEngine {
         if (data.type === 'RECORDING_STARTED') {
           this.audioWorkletStartTime = data.startTime;
         } else if (data.type === 'RECORDING_STOPPED') {
+          console.warn('[ENGINE] RECORDING_STOPPED received', { sessionId: data.sessionId, curSession: this.recordingSessionId, cancelled: this.recordingCancelled, audioLen: data.audioData?.length });
           // Session ID check — discard stale messages from previous recordings
           if (data.sessionId !== undefined && data.sessionId !== this.recordingSessionId) {
             console.log('RECORDING_STOPPED: stale session', data.sessionId, '!== current', this.recordingSessionId, '— discarded');
@@ -310,20 +311,28 @@ export class RecordingEngine {
 
   // Handle AudioWorklet recording stop (shared clock with playback)
   private async handleAudioWorkletStop(audioData?: Float32Array, anchoredFrame?: number): Promise<void> {
+    const cleanup = () => {
+      this.activeTrackId = null;
+      this.callbacks.onSetIsRecording(false);
+    };
+
     if (!audioData || audioData.length === 0) {
-      console.warn('handleAudioWorkletStop: no data received');
+      console.warn('[ENGINE] handleAudioWorkletStop: no data received — cleaning up');
+      cleanup();
       return;
     }
 
     const trackId = this.activeTrackId;
     if (!trackId) {
-      console.warn('handleAudioWorkletStop: no trackId');
+      console.warn('[ENGINE] handleAudioWorkletStop: no trackId — cleaning up');
+      cleanup();
       return;
     }
 
     const audioContext = this.config.audioContextRef?.current;
     if (!audioContext) {
-      console.error('handleAudioWorkletStop: AudioContext not available');
+      console.warn('[ENGINE] handleAudioWorkletStop: AudioContext not available — cleaning up');
+      cleanup();
       return;
     }
 
@@ -421,8 +430,8 @@ export class RecordingEngine {
 
     perfLogger.log(25, this.recordingSessionId, 0);
 
-    this.activeTrackId = null;
-    this.callbacks.onSetIsRecording(false);
+    console.warn('[ENGINE] handleAudioWorkletStop finalizing — calling onSetIsRecording(false)');
+    cleanup();
     this.scheduleStopPlayback();
   }
 
