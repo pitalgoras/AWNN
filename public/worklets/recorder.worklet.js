@@ -106,7 +106,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
           this._accStartFrame = currentFrame + srcOffset;
         }
         const tailLen = channelData.length - srcOffset;
-        this._accBuffer.set(channelData.subarray(srcOffset), 0);
+        this._accBuffer.set(channelData.subarray(srcOffset), this._accPos);
         this._accPos = tailLen;
         if (this._accPos >= 4096) {
           this._pushAccumulator();
