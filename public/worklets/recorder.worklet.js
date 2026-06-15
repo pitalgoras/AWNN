@@ -38,6 +38,12 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
     this._rollingBuffer = []; // Single buffer: head + recording
     this._sessionId = 0;
 
+    // Accumulator: pre-allocated 4096-sample buffer to cut allocations
+    // from ~344/s (one Float32Array per process() call) to ~11/s.
+    this._accBuffer = new Float32Array(4096);
+    this._accPos = 0;
+    this._accStartFrame = 0;
+
     this.port.onmessage = (event) => {
       if (event.data.type === 'STOP_RECORDING') {
         this._shouldStop = true;
@@ -71,38 +77,38 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
   process(inputs, outputs, parameters) {
     this._processCount++;
 
-    // Handle stop flag from messages
-    if (this._shouldStop) {
-      this._shouldStop = false;
-      if (this._isRecording) {
-        this._isRecording = false;
-        const flushed = this._flush();
-        this.port.postMessage({
-          type: 'RECORDING_STOPPED',
-          audioData: flushed[0],
-          anchoredFrame: flushed[1],
-          rollingOffset: flushed[2],
-          sessionId: this._sessionId,
-        });
-      }
-    }
-
-    // Add audio input to the single rolling buffer
+    // Accumulate audio input into pre-allocated buffer (avoids ~344 allocs/s)
     if (inputs && inputs[0] && inputs[0][0]) {
       const channelData = inputs[0][0];
-      const copy = new Float32Array(channelData.length);
-      copy.set(channelData);
 
-      this._rollingBuffer.push({
-        data: copy,
-        frame: currentFrame,
-      });
+      if (this._accPos === 0) {
+        this._accStartFrame = currentFrame;
+      }
+
+      const remaining = this._accBuffer.length - this._accPos;
+      let srcOffset = 0;
+      if (channelData.length > remaining) {
+        // Fill current accumulator chunk and push
+        this._accBuffer.set(channelData.subarray(0, remaining), this._accPos);
+        this._accPos = this._accBuffer.length;
+        this._pushAccumulator();
+        srcOffset = remaining;
+      }
+
+      // Copy the rest (if any) into a fresh accumulator slot
+      if (srcOffset < channelData.length) {
+        if (this._accPos === 0) {
+          this._accStartFrame = currentFrame + srcOffset;
+        }
+        const tailLen = channelData.length - srcOffset;
+        this._accBuffer.set(channelData.subarray(srcOffset), 0);
+        this._accPos = tailLen;
+        if (this._accPos >= 4096) {
+          this._pushAccumulator();
+        }
+      }
 
       // Trim old data only before recording starts
-      // Once _recordingStartFrame is reached, stop trimming so the
-      // full head-window + definitive recording is preserved in one buffer.
-      // The head window (last headLength seconds before recordingStartFrame)
-      // is extracted in _flush().
       if (!this._isRecording || currentFrame < this._recordingStartFrame) {
         const maxFrames = this._rollingBufferDuration * sampleRate;
         while (this._rollingBuffer.length > 0) {
@@ -115,7 +121,30 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       }
     }
 
+    // Handle stop flag — run after input so the last samples are captured
+    if (this._shouldStop) {
+      this._shouldStop = false;
+      if (this._isRecording) {
+        this._isRecording = false;
+        this._pushAccumulator();
+        const flushed = this._flush();
+        this.port.postMessage({
+          type: 'RECORDING_STOPPED',
+          audioData: flushed[0],
+          anchoredFrame: flushed[1],
+          rollingOffset: flushed[2],
+          sessionId: this._sessionId,
+        });
+      }
+    }
+
     return true;
+  }
+
+  _pushAccumulator() {
+    if (this._accPos === 0) return;
+    this._rollingBuffer.push({ data: this._accBuffer.slice(0, this._accPos), frame: this._accStartFrame });
+    this._accPos = 0;
   }
 
   _flush() {
