@@ -1063,4 +1063,37 @@ The calibration test page (`tests/calibration-test/`) was experiencing hangs and
 ### Open Issues
 - **End-detection latency**: The trailing-edge fallback (noise→silence transition) remains unreliable with noise gates that ramp down gradually. May need an alternative metric.
 - **Extreme amplitudes**: 0.05 may be too quiet for some setups; 0.80 may trigger AGC on some Bluetooth headsets. The clustering approach handles this (extremes won't cluster with the middle).
-- **History across sessions**: localStorage has no expiry — old results from different hardware configurations persist until overwritten. The device combo filter (`userAgent|micDeviceId`) mitigates this but browser updates change userAgent.<｜end▁of▁thinking｜>
+- **History across sessions**: localStorage has no expiry — old results from different hardware configurations persist until overwritten. The device combo filter (`userAgent|micDeviceId`) mitigates this but browser updates change userAgent.
+
+---
+
+## 37. Recorder Worklet — Accumulator Buffer for Allocation Reduction (June 2026)
+
+### Problem
+`recorder.worklet.js` allocated a new `Float32Array(128)` every `process()` call (~344/s at 44100Hz). Each allocation was immediately filled via `.set()` and pushed to `_rollingBuffer`. Over a 30s recording, this produced ~10,000 small allocations — GC pressure on the real-time audio thread.
+
+### Diagnosis
+The root cause was per-call allocation of the transfer buffer. Each 128-sample block was independently allocated, filled, and pushed. The GC pauses, while short, introduced unpredictable jitter in the audio thread's timing.
+
+### Solution
+Pre-allocate a single `Float32Array(4096)` accumulator in the constructor. Input samples accumulate into this fixed buffer across successive `process()` calls. Only when the accumulator is full (every ~93ms) is it `.slice()`-ed and pushed to `_rollingBuffer`.
+
+This cuts allocation rate from ~344/s to ~11/s — a 97% reduction.
+
+### Additional improvements
+- Input handling moved **before** the stop check in `process()`, so the last render quantum of audio is always included in the recording (previous behavior silently dropped the last 128 samples).
+- `_pushAccumulator()` helper added to flush the partial chunk on stop, ensuring no samples are lost between the last full push and the stop signal.
+
+### Tradeoffs
+- **Slightly larger per-push allocations**: `.slice()` creates `Float32Array(4096)` instead of `Float32Array(128)`, but 32× fewer of them. Net allocation volume is similar (~4KB/push × 11/s ≈ 44KB/s vs ~0.5KB/push × 344/s ≈ 172KB/s — actually **less** total volume).
+- **~93ms additional latency on stop**: The accumulator holds up to 4095 unwritten samples when stop arrives. `_pushAccumulator()` synchronously flushes them before `_flush()` — this delay is on the audio thread but negligible (~1 process() call worth of work).
+- **Rolling buffer trimming**: During pre-roll, the accumulator can hold up to 93ms of untrimmable data (it hasn't been pushed yet). This means the effective rolling buffer can extend ~93ms beyond the nominal 2s limit. The headLength margin (max 1s) absorbs this easily — no practical impact.
+
+### Commit
+`6192893`
+
+### Files Modified
+- `public/worklets/recorder.worklet.js` — added `_accBuffer`, `_accPos`, `_accStartFrame`, `_pushAccumulator()`; reordered input handling before stop check
+
+### Ring Buffer Consideration (ringbuf.js)
+During this change, `ringbuf.js` (Paul Adenot's wait-free SPSC ring buffer using `SharedArrayBuffer`) was evaluated as an alternative. It would eliminate all allocations (not just reduce them) by sharing a pre-allocated memory region between the worklet and main thread. However, the added deployment complexity (COOP/COEP headers, Safari support flag, cross-origin resource policies) was deemed not worth it for the current app. See `docs/RINGBUF_ANALYSIS.md` for the full evaluation.<｜end▁of▁thinking｜>
