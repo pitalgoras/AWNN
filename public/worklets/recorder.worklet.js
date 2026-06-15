@@ -37,6 +37,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
 
     this._rollingBuffer = []; // Single buffer: head + recording
     this._sessionId = 0;
+    this._sessionProcessCount = 0;
+    this._sessionPushCount = 0;
 
     // Accumulator: pre-allocated 4096-sample buffer to cut allocations
     // from ~344/s (one Float32Array per process() call) to ~11/s.
@@ -57,6 +59,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         this._recordingStartFrame = event.data.recordingStartFrame || Math.round(currentTime * sampleRate);
         this._anchoredFrame = this._recordingStartFrame;
         this._isRecording = true;
+        this._sessionProcessCount = 0;
+        this._sessionPushCount = 0;
         // headLength sent per-recording from main thread (per-clip, adjustable in SyncTool)
         if (event.data.headLength !== undefined) {
           this._headLength = event.data.headLength;
@@ -76,6 +80,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
 
   process(inputs, outputs, parameters) {
     this._processCount++;
+    if (this._isRecording) this._sessionProcessCount++;
 
     // Accumulate audio input into pre-allocated buffer (avoids ~344 allocs/s)
     if (inputs && inputs[0] && inputs[0][0]) {
@@ -143,6 +148,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
 
   _pushAccumulator() {
     if (this._accPos === 0) return;
+    this._sessionPushCount++;
     this._rollingBuffer.push({ data: this._accBuffer.slice(0, this._accPos), frame: this._accStartFrame });
     this._accPos = 0;
   }
@@ -201,6 +207,8 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
       rollingOffset: rollingOffset,
       totalLength: result.length,
       sampleRate: sampleRate,
+      sessionProcessCount: this._sessionProcessCount,
+      sessionPushCount: this._sessionPushCount,
     });
     this._rollingBuffer = [];
     return [result, returnAnchorFrame, rollingOffset];
