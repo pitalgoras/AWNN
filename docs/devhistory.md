@@ -1096,4 +1096,63 @@ This cuts allocation rate from ~344/s to ~11/s — a 97% reduction.
 - `public/worklets/recorder.worklet.js` — added `_accBuffer`, `_accPos`, `_accStartFrame`, `_pushAccumulator()`; reordered input handling before stop check
 
 ### Ring Buffer Consideration (ringbuf.js)
-During this change, `ringbuf.js` (Paul Adenot's wait-free SPSC ring buffer using `SharedArrayBuffer`) was evaluated as an alternative. It would eliminate all allocations (not just reduce them) by sharing a pre-allocated memory region between the worklet and main thread. However, the added deployment complexity (COOP/COEP headers, Safari support flag, cross-origin resource policies) was deemed not worth it for the current app. See `docs/RINGBUF_ANALYSIS.md` for the full evaluation.<｜end▁of▁thinking｜>
+During this change, `ringbuf.js` (Paul Adenot's wait-free SPSC ring buffer using `SharedArrayBuffer`) was evaluated as an alternative. It would eliminate all allocations (not just reduce them) by sharing a pre-allocated memory region between the worklet and main thread. However, the added deployment complexity (COOP/COEP headers, Safari support flag, cross-origin resource policies) was deemed not worth it for the current app. See `docs/RINGBUF_ANALYSIS.md` for the full evaluation.
+
+## 38. Recorder Accumulator Bugs + MultiTrack Resume-on-Seek (June 2026)
+
+### Problem: Recording Produced Empty Clips
+After the accumulator optimization (section 37), **all recordings produced zero-length clips**. `totalLength: 0` appeared in every worklet debug message regardless of recording duration. Normal playback was unaffected; only new recordings were empty.
+
+### Root Cause: Two Bugs in Accumulator Logic (commit `6192893`)
+The 4096-sample accumulator introduced in section 37 had two independent bugs that together prevented any data from reaching the rolling buffer:
+
+**Bug 1 — Write position always `0` instead of `_accPos`** (`e170b8a`):
+```js
+// Before (wrong — always overwrites position 0):
+this._accBuffer.set(channelData.subarray(srcOffset), 0);
+// After (correct — writes at current accumulation position):
+this._accBuffer.set(channelData.subarray(srcOffset), this._accPos);
+```
+Every `process()` call wrote 128 samples at buffer index 0, overwriting the previous call's data. Only the most recent 128 samples were ever retained.
+
+**Bug 2 — `_accPos = tailLen` instead of `_accPos += tailLen`** (`3cf1c99`):
+```js
+// Before (wrong — resets to 128 on every call):
+this._accPos = tailLen;
+// After (correct — grows position by samples written):
+this._accPos += tailLen;
+```
+Even after fixing the write position, `_accPos` was replaced with `tailLen` (always 128) instead of incremented. The buffer never accumulated beyond 256 total samples (128 at byte 0 from call 1, 128 at byte 128 from call 2+, with every call after call 2 overwriting call 2's data).
+
+**Net effect:** The `_accPos >= 4096` auto-push condition never fired. `sessionPushCount` was always `1` (the final stop-time push). The single pushed 128-sample chunk had a stale `_accStartFrame` from the first-ever `process()` call (set during constructor init), which `_flush()` correctly dropped because `chunkEndFrame` was before `headCutoffFrame`.
+
+### Safety-Net: RecordingEngine cleanup() (`71878c6`)
+`handleAudioWorkletStop()` in `RecordingEngine.ts` had three early-return paths (empty data, no trackId, no AudioContext) that could leave `isRecording` stuck `true`. Added a `cleanup()` closure that calls `onSetIsRecording(false)` on ALL early-return paths, preventing state corruption when recordings silently fail.
+
+### Problem: Clips with Head Don't Play After Rewind
+After recording clips with pre-roll (head), pressing rewind during playback caused clips whose audio starts before userTime 0 to go silent. Normal play-initial was fine — the bug appeared only after a seek.
+
+### Root Cause: MultiTrack updatePosition() Doesn't Resume Paused Audio
+In `MultiTrack.updatePosition()` (`src/lib/multitrack/multitrack.ts:462-464`):
+1. During playback, the rAF sync loop calls `updatePosition()` periodically
+2. When a clip plays to its end (`newTime > duration`), the code pauses the individual audio element: `audio.pause()`
+3. User presses rewind — `seekTo()` calls `setTime(realTime)` → `updatePosition(time)` with `time = secondsPerBar` (realTime at userTime 0)
+4. For the clip: `newTime = time - realStartPosition` is now within bounds (`>= 0`, `<= duration`)
+5. The code enters the `else if` branch and sets `audio.currentTime = newTime`
+6. **`WebAudioPlayer.currentTime` setter** (`webaudio.ts:210-222`): checks `this.paused` — it's `true` (paused in step 2), so it only sets `this.playedDuration = newTime` but **never calls `this.play()`** to resume the audio
+7. Clip remains silent despite playhead being within its bounds
+
+### Solution: Resume Audio After Seek If Within Bounds
+Added a resume check at the end of the position update loop in `MultiTrack.updatePosition()` (`multitrack.ts:470-473`):
+```js
+if (!isPaused && audio.paused && newTime >= 0 && newTime <= duration) {
+    audio.play()
+}
+```
+This ensures individual audio elements paused due to end-of-clip are properly resumed when seek brings the playhead back within their range.
+
+### Commits
+- `71878c6` — safety-net cleanup() in RecordingEngine
+- `08634f0` — session diagnosis counters in worklet
+- `e170b8a` — fix accumulator write position `0` → `_accPos`
+- `3cf1c99` — fix accumulator `= tailLen` → `+= tailLen`<｜end▁of▁thinking｜>

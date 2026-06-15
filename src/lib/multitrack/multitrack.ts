@@ -467,6 +467,12 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
       // Unmute if cue is reached
       const isMuted = newTime < (track.startCue || 0) || newTime > (track.endCue || Infinity)
       if (isMuted != audio.muted) audio.muted = isMuted
+
+      // Resume audio if multitrack is playing but individual audio was paused
+      // (e.g., reached its end) and seek now puts the playhead within bounds
+      if (!isPaused && audio.paused && newTime >= 0 && newTime <= duration) {
+        audio.play()
+      }
     })
   }
 
