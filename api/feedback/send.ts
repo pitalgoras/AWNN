@@ -64,6 +64,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     await put(BLOB_PATH, JSON.stringify(messages), {
       contentType: 'application/json',
       access: 'public',
+      allowOverwrite: true,
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
