@@ -25,10 +25,15 @@ import { TransportTimeDisplay } from './components/TransportTimeDisplay';
 import { DeviceChangeBanner } from './components/DeviceChangeBanner';
 import { VisualCalibrationModal } from './components/modals/VisualCalibrationModal';
 import { perfLogger } from './utils/PerformanceLogger';
+import { FeedbackAdmin } from './components/admin/FeedbackAdmin';
+import { FeedbackChatPanel, SidebarPanel, useFeedbackActivation } from './feedback';
 
 import { formatBarBeat } from './audio/time/timeFormat';
 
 export default function App() {
+  if (typeof window !== 'undefined' && (window.location.pathname.startsWith('/admin/feedback') || window.location.search.includes('admin'))) {
+    return <FeedbackAdmin />;
+  }
   const tracks = useStore(s => s.tracks);
   const cues = useStore(s => s.cues);
   const isPlaying = useStore(s => s.isPlaying);
@@ -138,7 +143,9 @@ export default function App() {
   } = useAudioEngine();
 
   // secondsPerBar is not used in App.tsx, so removed.
-  
+
+  const { showFeedback, setShowFeedback, feedbackActivators, handleCuesClick } = useFeedbackActivation();
+
   const [showSettings, setShowSettings] = useState(false);
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [showTracksModal, setShowTracksModal] = useState(false);
@@ -215,6 +222,7 @@ export default function App() {
         setShowSettings(false);
         setShowTracksModal(false);
         setShowMetronomeSettings(false);
+        setShowFeedback(false);
         setEditingTrackId(null);
         setSelectedPhraseId(null);
        } else if (e.key === ' ' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || (e.target instanceof HTMLElement && e.target.isContentEditable))) {
@@ -738,7 +746,14 @@ export default function App() {
   );
 
   const renderCuesBtn = () => (
-    <button onClick={() => setShowCues(!showCues)} className={cn(toolbarBtn(true), showCues ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")} title="Toggle Cues">
+    <button
+      onClick={() => { if (handleCuesClick()) return; setShowCues(v => !v); }}
+      onPointerDown={feedbackActivators.onPointerDown}
+      onPointerUp={feedbackActivators.onPointerUp}
+      onPointerLeave={feedbackActivators.onPointerLeave}
+      className={cn(toolbarBtn(true), (showCues || showFeedback) ? "bg-zinc-800 text-zinc-100" : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-800")}
+      title="Toggle Cues"
+    >
       <ListMusic size={headerIconSize} />
     </button>
   );
@@ -986,53 +1001,47 @@ export default function App() {
               {isReady && <EnvelopeEditor />}
             </section>
             
-            {/* Right Sidebar - Cues List */}
-            {showCues && (
-              <aside className="w-64 border-l border-zinc-800 bg-zinc-900/30 flex flex-col shrink-0 animate-in slide-in-from-right duration-200">
-                
-                {/* Cues List */}
-                <div className="p-3 border-b border-zinc-800 sticky top-0 bg-zinc-900/90 backdrop-blur-sm z-10 flex justify-between items-center">
-                  <span className="text-xs font-semibold uppercase tracking-widest text-zinc-500">Cues</span>
-                  <button 
-                    onClick={() => addCue({ time: useStore.getState().currentTime, label: `Cue ${cues.length + 1}` })}
-                    className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-100 transition-colors"
-                    title="Add Cue"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-                <div className="flex-1 overflow-y-auto p-2 space-y-1">
-                  {cues.length === 0 ? (
-                    <div className="text-center p-4 text-xs text-zinc-600">No cues added yet.</div>
-                  ) : (
-                    cues.map((cue, index) => (
-                      <div 
-                        key={cue.id}
-                        className="flex items-center justify-between p-2 rounded hover:bg-zinc-800/50 cursor-pointer group text-sm"
-                      >
-                        <div className="flex items-center gap-3 flex-1" onClick={() => seekTo(cue.time)}>
-                          <span className="text-zinc-600 font-mono text-xs w-4">{index + 1}</span>
-                          <span className="text-zinc-300">{cue.label}</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-zinc-500 font-mono text-xs">{formatBarBeat(cue.time, bpm, timeSignature)}</span>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeCue(cue.id);
-                            }}
-                            className="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
+            {/* Right Sidebar - Feedback Panel or Cues List */}
+            <FeedbackChatPanel show={showFeedback} onClose={() => setShowFeedback(false)} />
+            <SidebarPanel show={!showFeedback && showCues} title="Cues" headerRight={
+              <button 
+                onClick={() => addCue({ time: useStore.getState().currentTime, label: `Cue ${cues.length + 1}` })}
+                className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-zinc-100 transition-colors"
+                title="Add Cue"
+              >
+                <Plus className="w-3.5 h-3.5" />
+              </button>
+            }>
+              <div className="flex-1 overflow-y-auto p-2 space-y-1">
+                {cues.length === 0 ? (
+                  <div className="text-center p-4 text-xs text-zinc-600">No cues added yet.</div>
+                ) : (
+                  cues.map((cue, index) => (
+                    <div 
+                      key={cue.id}
+                      className="flex items-center justify-between p-2 rounded hover:bg-zinc-800/50 cursor-pointer group text-sm"
+                    >
+                      <div className="flex items-center gap-3 flex-1" onClick={() => seekTo(cue.time)}>
+                        <span className="text-zinc-600 font-mono text-xs w-4">{index + 1}</span>
+                        <span className="text-zinc-300">{cue.label}</span>
                       </div>
-                    ))
-                  )}
-                </div>
-
-              </aside>
-            )}
+                      <div className="flex items-center gap-2">
+                        <span className="text-zinc-500 font-mono text-xs">{formatBarBeat(cue.time, bpm, timeSignature)}</span>
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            removeCue(cue.id);
+                          }}
+                          className="p-1 text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </SidebarPanel>
           </div>
 
           {/* Lyrics — absolutely positioned over waveforms */}
@@ -1315,6 +1324,7 @@ export default function App() {
           </button>
         </div>
       </ModalShell>
+
     </div>
   );
 }
