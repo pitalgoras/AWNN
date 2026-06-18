@@ -103,8 +103,8 @@ export function FeedbackAdmin() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text: replyText.trim(), userId: selectedUserId }),
       });
-      if (!res.ok) throw new Error('Failed to send reply');
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
       const reply: FeedbackMessage = {
         id: data.id,
         userId: selectedUserId,
