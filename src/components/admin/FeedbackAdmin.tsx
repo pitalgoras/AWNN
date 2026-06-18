@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, Loader2, ArrowLeft, MessageCircle, Trash2 } from 'lucide-react';
+import { Send, Loader2, ArrowLeft, MessageCircle } from 'lucide-react';
 
 interface FeedbackMessage {
   id: string;
@@ -43,9 +43,7 @@ export function FeedbackAdmin() {
   const [replyText, setReplyText] = useState('');
   const [sending, setSending] = useState(false);
   const [loadingThreads, setLoadingThreads] = useState(true);
-  const [loadingMessages, setLoadingMessages] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const initialLoadRef = useRef(true);
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -60,19 +58,21 @@ export function FeedbackAdmin() {
   }, []);
 
   const fetchMessages = useCallback(async (userId: string) => {
-    if (initialLoadRef.current) setLoadingMessages(true);
     try {
       const res = await fetch(`/api/feedback/messages?userId=${encodeURIComponent(userId)}`);
       const data = await res.json();
       const msgs = (data.messages || []).sort(
         (a: FeedbackMessage, b: FeedbackMessage) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
       );
-      setMessages(msgs);
+      setMessages(prev => {
+        const serverIds = new Set(msgs.map(m => m.id));
+        const local = prev.filter(m => !serverIds.has(m.id));
+        return [...msgs, ...local].sort(
+          (a: FeedbackMessage, b: FeedbackMessage) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
+        );
+      });
     } catch (err) {
       console.error('Failed to fetch messages:', err);
-    } finally {
-      setLoadingMessages(false);
-      initialLoadRef.current = false;
     }
   }, []);
 
@@ -99,28 +99,36 @@ export function FeedbackAdmin() {
   const handleSendReply = async () => {
     if (!replyText.trim() || !selectedUserId || sending) return;
     setSending(true);
+    const text = replyText.trim();
+    setReplyText('');
+
+    const optimistic: FeedbackMessage = {
+      id: crypto.randomUUID(),
+      userId: selectedUserId,
+      text,
+      ts: new Date().toISOString(),
+      isDev: true,
+    };
+
+    setMessages(prev => [...prev, optimistic]);
+    setThreads(prev => prev.map(t =>
+      t.userId === selectedUserId ? { ...t, lastMessage: text, lastTs: optimistic.ts, messageCount: t.messageCount + 1, unread: 0 } : t
+    ));
+
     try {
       const res = await fetch('/api/feedback/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: replyText.trim(), userId: selectedUserId }),
+        body: JSON.stringify({ text, userId: selectedUserId }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
-      const reply: FeedbackMessage = {
-        id: data.id,
-        userId: selectedUserId,
-        text: replyText.trim(),
-        ts: data.ts,
-        isDev: true,
-      };
-      setMessages(prev => [...prev, reply]);
-      setReplyText('');
-      setThreads(prev => prev.map(t =>
-        t.userId === selectedUserId ? { ...t, lastMessage: reply.text, lastTs: reply.ts, messageCount: t.messageCount + 1 } : t
-      ));
+      setMessages(prev =>
+        prev.map(m => (m.id === optimistic.id ? { ...m, id: data.id, ts: data.ts } : m))
+      );
     } catch (err) {
       console.error('Failed to send reply:', err);
+      setMessages(prev => prev.filter(m => m.id !== optimistic.id));
     } finally {
       setSending(false);
     }
@@ -171,11 +179,7 @@ export function FeedbackAdmin() {
           /* Conversation view */
           <div className="flex-1 flex flex-col">
             <div ref={listRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
-              {loadingMessages ? (
-                <div className="flex items-center justify-center h-full">
-                  <Loader2 size={20} className="animate-spin text-zinc-500" />
-                </div>
-              ) : messages.length === 0 ? (
+              {messages.length === 0 ? (
                 <div className="flex items-center justify-center h-full text-zinc-500 text-sm">
                   No messages
                 </div>
