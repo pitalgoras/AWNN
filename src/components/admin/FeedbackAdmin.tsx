@@ -45,6 +45,7 @@ export function FeedbackAdmin() {
   const [loadingThreads, setLoadingThreads] = useState(true);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const initialLoadRef = useRef(true);
 
   const fetchThreads = useCallback(async () => {
     try {
@@ -59,7 +60,7 @@ export function FeedbackAdmin() {
   }, []);
 
   const fetchMessages = useCallback(async (userId: string) => {
-    setLoadingMessages(true);
+    if (initialLoadRef.current) setLoadingMessages(true);
     try {
       const res = await fetch(`/api/feedback/messages?userId=${encodeURIComponent(userId)}`);
       const data = await res.json();
@@ -71,6 +72,7 @@ export function FeedbackAdmin() {
       console.error('Failed to fetch messages:', err);
     } finally {
       setLoadingMessages(false);
+      initialLoadRef.current = false;
     }
   }, []);
 
