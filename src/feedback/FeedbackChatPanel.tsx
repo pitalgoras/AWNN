@@ -80,6 +80,7 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
       } else {
         const res = await fetch(`/api/feedback/messages?userId=${encodeURIComponent(userId.current)}`);
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
         msgs = data.messages || [];
       }
       msgs.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
@@ -125,8 +126,8 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text, userId: userId.current }),
         });
-        if (!res.ok) throw new Error('Failed to send');
         const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
         setMessages(prev =>
           prev.map(m => (m.id === optimistic.id ? { ...m, id: data.id, ts: data.ts } : m))
         );
