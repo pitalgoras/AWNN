@@ -218,6 +218,64 @@ export function mulberry32(seed: number): () => number {
   };
 }
 
+export function findBestShift(
+  detectedEdges: number[],
+  expectedEdges: number[],
+  sr: number,
+  maxShiftSamples: number,
+  toleranceSamples: number,
+): {
+  shift: number;
+  matchedDetected: number[];
+  matchedExpected: number[];
+  matchScore: number;
+} {
+  let bestShift = 0;
+  let bestScore = -Infinity;
+  let bestDetected: number[] = [];
+  let bestExpected: number[] = [];
+
+  for (let start = 0; start < expectedEdges.length; start++) {
+    const remaining = expectedEdges.slice(start);
+
+    for (let di = 0; di < detectedEdges.length; di++) {
+      const shift = detectedEdges[di] - expectedEdges[start];
+      if (shift < 0 || shift > maxShiftSamples) continue;
+
+      const used = new Set<number>([di]);
+      const matchedDetected = [detectedEdges[di]];
+      const matchedExpected = [expectedEdges[start]];
+      let score = 1;
+
+      for (let ri = 1; ri < remaining.length; ri++) {
+        const target = remaining[ri] + shift;
+        let bestDist = Infinity;
+        let bestIdx = -1;
+        for (let j = 0; j < detectedEdges.length; j++) {
+          if (used.has(j)) continue;
+          const dist = Math.abs(detectedEdges[j] - target);
+          if (dist < bestDist) { bestDist = dist; bestIdx = j; }
+        }
+        if (bestIdx >= 0 && bestDist < toleranceSamples) {
+          score += 1 - bestDist / toleranceSamples;
+          matchedDetected.push(detectedEdges[bestIdx]);
+          matchedExpected.push(remaining[ri]);
+          used.add(bestIdx);
+        }
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestShift = shift;
+        bestDetected = matchedDetected;
+        bestExpected = matchedExpected;
+      }
+    }
+  }
+
+  return { shift: bestShift, matchedDetected: bestDetected, matchedExpected: bestExpected, matchScore: bestScore };
+}
+
 export function generateNoise(seed: number, length: number, amplitude = 0.3): Float32Array {
   const rng = mulberry32(seed);
   const buf = new Float32Array(length);

@@ -1,6 +1,52 @@
-import { runMlsTest } from './test-mls';
+import { runMlsTest, SAFE_AMPLITUDES, LOUD_AMPLITUDES, DEFAULT_GAPS_MS } from './test-mls';
+import type { MlsResult } from './test-mls';
 import { runClapTest } from './test-clap';
+import { runBeepTest } from './test-beeps';
+import type { BeepResult } from './test-beeps';
+import { runBeepFreqTest } from './test-beepfreq';
+import type { BeepFreqResult } from './test-beepfreq';
 import { computeRMS } from './analysis';
+
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+interface HistoryEntry {
+  amplitude: number;
+  latencyMs: number;
+  stdDev: number;
+  matchedBursts: number;
+  totalBursts: number;
+  extra?: string;
+}
+
+const beepHistory: HistoryEntry[] = [];
+const beepfreqHistory: HistoryEntry[] = [];
+const mlsHistory: HistoryEntry[] = [];
+const clapHistory: HistoryEntry[] = [];
+
+function addToHistory(arr: HistoryEntry[], entry: HistoryEntry) {
+  arr.unshift(entry);
+  if (arr.length > 3) arr.length = 3;
+}
+
+function renderHistoryTable(entries: HistoryEntry[], extraLabel?: string): string {
+  if (entries.length === 0) return '';
+  let html = '<table class="sweep-table"><tr><th>#</th><th>Amp</th><th>Lat(ms)</th><th>σ(ms)</th><th>Match</th>';
+  if (extraLabel) html += `<th>${extraLabel}</th>`;
+  html += '</tr>';
+  for (let i = 0; i < entries.length; i++) {
+    const e = entries[i];
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td>${e.amplitude.toFixed(2)}</td>
+      <td>${e.latencyMs.toFixed(1)}</td>
+      <td>${e.stdDev.toFixed(1)}</td>
+      <td style="color:${e.matchedBursts >= 3 ? '#86efac' : '#fca5a5'}">${e.matchedBursts}/${e.totalBursts}</td>`;
+    if (extraLabel) html += `<td style="color:#71717a;font-size:10px">${e.extra ?? ''}</td>`;
+    html += '</tr>';
+  }
+  html += '</table>';
+  return html;
+}
 
 let ctx: AudioContext | null = null;
 let workletNode: AudioWorkletNode | null = null;
@@ -55,7 +101,7 @@ function readOL(label: string) {
 function setButtonsLoading() {
   $('status').textContent = 'Initializing audio...';
   $('status').className = 'msg pending';
-  for (const id of ['btn-mls', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = true;
   }
@@ -63,7 +109,7 @@ function setButtonsLoading() {
 }
 
 function setButtonsReady() {
-  for (const id of ['btn-mls', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = false;
   }
@@ -75,7 +121,7 @@ function setButtonsFailed(msg: string) {
   initRunning = false;
   $('status').textContent = `✗ ${msg}`;
   $('status').className = 'msg err';
-  for (const id of ['btn-mls', 'btn-clap', 'btn-diagnose']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = true;
     b.title = `Init failed: ${msg}`;
@@ -276,11 +322,14 @@ function showGainHint(_noiseFloorDb: number) {
 /* ── Amplitude Ladder ──────────────────────────────────── */
 
 function generateAmplitudes(): number[] {
-  const amps: number[] = [];
-  for (let a = 0.05; a <= 0.80; a *= 1.5) {
-    amps.push(Math.round(a * 1000) / 1000);
-  }
-  return amps;
+  const loudMode = ($('mls-loud-mode') as HTMLInputElement).checked;
+  return loudMode ? [...LOUD_AMPLITUDES] : [...SAFE_AMPLITUDES];
+}
+
+function readMlsGaps(): number[] {
+  const raw = ($('mls-gaps') as HTMLInputElement).value;
+  const gaps = raw.split(',').map(s => parseInt(s.trim())).filter(n => !isNaN(n) && n > 0);
+  return gaps.length >= 4 ? gaps.slice(0, 4) : [...DEFAULT_GAPS_MS];
 }
 
 /* ── Latency Clustering ────────────────────────────────── */
@@ -293,7 +342,7 @@ interface LatencyCluster {
 }
 
 function findLatencyCluster(results: SweepResult[]): LatencyCluster | null {
-  const good = results.filter(r => r.p2n >= 18 && !r.error);
+  const good = results.filter(r => r.matchedBursts >= 3 && !r.error);
   if (good.length < 2) return null;
 
   const bins = new Map<number, SweepResult[]>();
@@ -353,33 +402,41 @@ interface SweepResult {
   p2n: number;
   latencyMs: number;
   confidence: number;
+  stdDev: number;
+  matchedBursts: number;
+  totalBursts: number;
   error?: string;
   recordedSamples: number;
   inputRms: number;
   inputPeak: number;
-  endLatencyMs: number;
-  endConfidence: number;
-  latencySource: 'start-correlation' | 'end-detection' | 'average';
+  matchedExpectedSamples: number[];
+  matchedDetectedSamples: number[];
+  xcorrLatencyMs: number;
+  xcorrConfidence: number;
 }
 
-async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitudes: number[]): Promise<SweepResult[]> {
+async function runMlsWithSweep(ctx: AudioContext, wn: AudioWorkletNode, amplitudes: number[], gapMs: number[], bandpass: boolean): Promise<SweepResult[]> {
   wn.port.postMessage({ type: 'RESET' });
   const results: SweepResult[] = [];
   for (const amp of amplitudes) {
     log(`MLS sweep: amplitude=${amp.toFixed(2)}`);
-    const r = await runMlsTest(ctx, wn, { amplitude: amp });
+    const r = await runMlsTest(ctx, wn, { amplitude: amp, gapMs, bandpass });
     results.push({
       amplitude: amp,
-      p2n: r.peakToNoise,
+      p2n: r.p2n,
       latencyMs: r.latencyMs,
       confidence: r.confidence,
+      stdDev: r.stdDev,
+      matchedBursts: r.matchedBursts,
+      totalBursts: r.totalBursts,
       error: r.error,
       recordedSamples: r.recordedSamples,
       inputRms: r.inputRms,
       inputPeak: r.inputPeak,
-      endLatencyMs: r.endLatencyMs,
-      endConfidence: r.endConfidence,
-      latencySource: r.latencySource,
+      matchedExpectedSamples: r.matchedExpectedSamples,
+      matchedDetectedSamples: r.matchedDetectedSamples,
+      xcorrLatencyMs: r.xcorrLatencyMs,
+      xcorrConfidence: r.xcorrConfidence,
     });
   }
   return results;
@@ -389,18 +446,18 @@ function renderSweepTable(results: SweepResult[], cluster?: LatencyCluster | nul
   const el = $('sweep-section');
   if (results.length === 0) { el.style.display = 'none'; return; }
   el.style.display = 'block';
-  const best = results.reduce((a, b) => a.p2n > b.p2n ? a : b);
-  let html = '<table class="sweep-table"><tr><th>Amp</th><th>P2N(dB)</th><th>Lat(ms)</th><th>End(ms)</th><th>Src</th><th>RMS</th><th>Status</th></tr>';
+  const best = results.reduce((a, b) => a.matchedBursts > b.matchedBursts ? a : b);
+  let html = '<table class="sweep-table"><tr><th>Amp</th><th>Edge#</th><th>Lat(ms)</th><th>σ(ms)</th><th>P2N(dB)</th><th>RMS</th><th>Status</th></tr>';
   for (const r of results) {
     const isBest = r === best;
     const inCluster = cluster && cluster.amplitudes.includes(r.amplitude);
-    const srcLabel = r.latencySource === 'end-detection' ? 'END' : 'START';
+    const edgeRatio = r.totalBursts > 0 ? `${r.matchedBursts}/${r.totalBursts}` : '—';
     html += `<tr style="${inCluster ? 'background:#1e293b' : isBest ? 'background:#18181b' : ''}">
       <td>${r.amplitude.toFixed(2)}</td>
-      <td style="color:${r.p2n >= 18 ? '#86efac' : '#fca5a5'}">${r.p2n.toFixed(1)}</td>
+      <td style="color:${r.matchedBursts >= 3 ? '#86efac' : '#fca5a5'}">${edgeRatio}</td>
       <td>${r.latencyMs.toFixed(1)}${inCluster ? ' ←' : ''}</td>
-      <td style="color:${r.endConfidence > 0.3 ? '#86efac' : '#71717a'}">${r.endLatencyMs.toFixed(1)}</td>
-      <td style="font-size:10px;color:${r.latencySource === 'end-detection' ? '#fbbf24' : '#71717a'}">${srcLabel}</td>
+      <td style="color:${r.stdDev < 30 ? '#86efac' : '#fca5a5'}">${r.stdDev.toFixed(1)}</td>
+      <td style="color:#71717a;font-size:10px">${r.p2n > 0 ? r.p2n.toFixed(1) : '—'}</td>
       <td>${r.inputRms.toFixed(5)}</td>
       <td>${r.error ? '✗' : '✓'}</td>
     </tr>`;
@@ -794,54 +851,78 @@ $('btn-mls').onclick = async () => {
   log(`MLS: worklet alive (frame=${health.currentFrame}, processCount=${health.processCount})`, 'ok');
 
   const btn = $('btn-mls') as HTMLButtonElement;
+  const loopCb = $('mls-loop') as HTMLInputElement;
   btn.disabled = true;
-  btn.textContent = 'Running...';
-  $('mls-result').textContent = '';
 
-  const amplitudes = generateAmplitudes();
-  const results = await runMlsWithSweep(ctx, workletNode, amplitudes);
-  lastMlsResults = results;
+  do {
+    btn.textContent = loopCb.checked ? 'Looping...' : 'Running...';
+    $('mls-result').textContent = '';
 
-  const cluster = findLatencyCluster(results);
-  renderSweepTable(results, cluster);
+    const gapMs = readMlsGaps();
+    const amplitudes = generateAmplitudes();
+    const mlsBP = ($('mls-bp') as HTMLInputElement).checked;
+    log(`MLS sweep: gaps=[${gapMs.join(',')}]ms, loudMode=${($('mls-loud-mode') as HTMLInputElement).checked}, bp=${mlsBP}`, 'ok');
+    const results = await runMlsWithSweep(ctx, workletNode, amplitudes, gapMs, mlsBP);
+    lastMlsResults = results;
 
-  const track = micStream?.getAudioTracks()[0];
-  const micDeviceId = track?.getSettings()?.deviceId || '';
-  const history = getSweepHistory(micDeviceId);
+    const cluster = findLatencyCluster(results);
+    renderSweepTable(results, cluster);
 
-  const el = $('mls-result');
-  if (cluster) {
-    el.className = 'result ok';
-    storeSweep({ timestamp: new Date().toISOString(), userAgent: navigator.userAgent, micDeviceId, latencyMs: cluster.latencyMs, stddev: cluster.stddev, amplitudeCount: cluster.count });
+    const track = micStream?.getAudioTracks()[0];
+    const micDeviceId = track?.getSettings()?.deviceId || '';
+    const localHistory = getSweepHistory(micDeviceId);
 
-    let historyHtml = '';
-    if (history.length > 0) {
-      const histMean = history.reduce((a, b) => a + b.latencyMs, 0) / history.length;
-      const histDev = history.length > 1 ? Math.sqrt(history.reduce((a, b) => a + (b.latencyMs - histMean) ** 2, 0) / history.length) : 0;
-      const allHist = [...history, { latencyMs: cluster.latencyMs }];
-      const totalMean = allHist.reduce((a, b) => a + b.latencyMs, 0) / allHist.length;
-      historyHtml = `<div style="font-size:10px;margin-top:4px;color:#6ee7b7">Consistent with ${history.length} previous sweeps (avg ${histMean.toFixed(1)}ms ±${histDev.toFixed(1)}ms) — all-time avg ${totalMean.toFixed(1)}ms</div>`;
-    }
+    const el = $('mls-result');
+    if (cluster) {
+      el.className = 'result ok';
+      storeSweep({ timestamp: new Date().toISOString(), userAgent: navigator.userAgent, micDeviceId, latencyMs: cluster.latencyMs, stddev: cluster.stddev, amplitudeCount: cluster.count });
 
-    el.innerHTML = `
-      <div>Latency <strong>${cluster.latencyMs.toFixed(1)}ms</strong> ±${cluster.stddev.toFixed(1)}ms · ${cluster.count} amplitudes agree</div>
-      <div style="font-size:10px;margin-top:4px;color:#a5b4fc">Amplitudes: ${cluster.amplitudes.map(a => a.toFixed(2)).join(', ')}</div>
-      ${historyHtml}`;
-    log(`MLS: cluster ${cluster.latencyMs.toFixed(1)}ms ±${cluster.stddev.toFixed(1)}ms across ${cluster.count} amplitudes`, 'ok');
-  } else {
-    const p2nCount = results.filter(r => r.p2n >= 18).length;
-    if (p2nCount > 0) {
-      el.className = 'result err';
-      el.innerHTML = `<div>No cluster — ${p2nCount} amplitude(s) passed P2N but disagree on latency</div>
-        <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, ${p2nCount} with P2N≥18dB</div>`;
-      log(`MLS: no cluster — ${p2nCount}/${results.length} amplitudes with P2N≥18dB but no agreement`, 'err');
+      let historyHtml = '';
+      if (localHistory.length > 0) {
+        const histMean = localHistory.reduce((a, b) => a + b.latencyMs, 0) / localHistory.length;
+        const histDev = localHistory.length > 1 ? Math.sqrt(localHistory.reduce((a, b) => a + (b.latencyMs - histMean) ** 2, 0) / localHistory.length) : 0;
+        const allHist = [...localHistory, { latencyMs: cluster.latencyMs }];
+        const totalMean = allHist.reduce((a, b) => a + b.latencyMs, 0) / allHist.length;
+        historyHtml = `<div style="font-size:10px;margin-top:4px;color:#6ee7b7">Consistent with ${localHistory.length} previous sweeps (avg ${histMean.toFixed(1)}ms ±${histDev.toFixed(1)}ms) — all-time avg ${totalMean.toFixed(1)}ms</div>`;
+      }
+
+      const best = results.reduce((a, b) => a.matchedBursts > b.matchedBursts ? a : b);
+      const edgeHtml = best.matchedExpectedSamples.length > 0 ? renderMlsEdgeTable(best) : '';
+
+      el.innerHTML = `
+        <div>Latency <strong>${cluster.latencyMs.toFixed(1)}ms</strong> ±${cluster.stddev.toFixed(1)}ms · ${cluster.count} amplitudes agree</div>
+        <div style="font-size:10px;margin-top:4px;color:#a5b4fc">Amplitudes: ${cluster.amplitudes.map(a => a.toFixed(2)).join(', ')}</div>
+        ${historyHtml}
+        ${edgeHtml}`;
+      log(`MLS: cluster ${cluster.latencyMs.toFixed(1)}ms ±${cluster.stddev.toFixed(1)}ms across ${cluster.count} amplitudes`, 'ok');
+
+      addToHistory(mlsHistory, {
+        amplitude: cluster.amplitudes[0] ?? 0,
+        latencyMs: cluster.latencyMs,
+        stdDev: cluster.stddev,
+        matchedBursts: cluster.count,
+        totalBursts: amplitudes.length,
+        extra: `${cluster.amplitudes.length}amps`,
+      });
     } else {
-      el.className = 'result err';
-      el.innerHTML = `<div>No valid measurements — 0 amplitudes passed P2N≥18dB threshold</div>
-        <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, check mic→speaker path</div>`;
-      log(`MLS: no valid measurements — ${results.length} amplitudes all below P2N threshold`, 'err');
+      const edgeCount = results.filter(r => r.matchedBursts >= 3).length;
+      if (edgeCount > 0) {
+        el.className = 'result err';
+        el.innerHTML = `<div>No cluster — ${edgeCount} amplitude(s) matched edges but disagree on latency</div>
+          <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, ${edgeCount} with ≥3 edge matches</div>`;
+        log(`MLS: no cluster — ${edgeCount}/${results.length} amplitudes with ≥3 edges but no agreement`, 'err');
+      } else {
+        el.className = 'result err';
+        el.innerHTML = `<div>No valid measurements — 0 amplitudes matched ≥3 edges</div>
+          <div style="font-size:10px;margin-top:4px;color:#fca5a5">${results.length} amplitudes tested, try louder amplitudes or shorter gaps</div>`;
+        log(`MLS: no valid measurements — ${results.length} amplitudes all below edge threshold`, 'err');
+      }
     }
-  }
+    $('mls-history').innerHTML = renderHistoryTable(mlsHistory, 'Info');
+
+    if (!loopCb.checked) break;
+    await sleep(1500);
+  } while (true);
 
   btn.disabled = false;
   btn.textContent = 'Run MLS Auto Test';
@@ -863,35 +944,262 @@ $('btn-clap').onclick = async () => {
   log(`Clap: worklet alive (frame=${health.currentFrame})`, 'ok');
 
   const btn = $('btn-clap') as HTMLButtonElement;
+  const loopCb = $('clap-loop') as HTMLInputElement;
   btn.disabled = true;
-  btn.textContent = 'Running...';
-  $('clap-result').textContent = '';
 
-  const bpmInput = $('bpm') as HTMLInputElement;
-  const bpm = parseInt(bpmInput.value) || 120;
-  const result = await runClapTest(ctx, workletNode, bpm);
+  do {
+    btn.textContent = loopCb.checked ? 'Looping...' : 'Running...';
+    $('clap-result').textContent = '';
 
-  const el = $('clap-result');
-  if (result.success) {
-    el.className = 'result ok';
-    el.innerHTML = `
-      Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong><br>
-      Claps matched: ${result.clapCount}<br>
-      StdDev: ${result.stdDev.toFixed(1)}ms<br>
-      Confidence: ${(result.confidence * 100).toFixed(1)}%
-    `;
-    log(`Clap: latency=${result.latencyMs.toFixed(1)}ms matched=${result.clapCount}`, 'ok');
-  } else {
-    el.className = 'result err';
-    el.innerHTML = `Failed: ${result.error}<br>
-      ${result.latencyMs > 0 ? `(best guess: ${result.latencyMs.toFixed(1)}ms, ${result.clapCount} claps)` : ''}
-    `;
-    log(`Clap: failed — ${result.error}`, 'err');
-  }
+    const bpmInput = $('bpm') as HTMLInputElement;
+    const bpm = parseInt(bpmInput.value) || 120;
+    const result = await runClapTest(ctx, workletNode, bpm);
+
+    const el = $('clap-result');
+    if (result.success) {
+      el.className = 'result ok';
+      el.innerHTML = `
+        Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong><br>
+        Claps matched: ${result.clapCount}<br>
+        StdDev: ${result.stdDev.toFixed(1)}ms<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%
+      `;
+      log(`Clap: latency=${result.latencyMs.toFixed(1)}ms matched=${result.clapCount}`, 'ok');
+    } else {
+      el.className = 'result err';
+      el.innerHTML = `Failed: ${result.error}<br>
+        ${result.latencyMs > 0 ? `(best guess: ${result.latencyMs.toFixed(1)}ms, ${result.clapCount} claps)` : ''}
+      `;
+      log(`Clap: failed — ${result.error}`, 'err');
+    }
+
+    addToHistory(clapHistory, {
+      amplitude: 0,
+      latencyMs: result.latencyMs,
+      stdDev: result.stdDev,
+      matchedBursts: result.clapCount,
+      totalBursts: result.clapCount || 1,
+    });
+    $('clap-history').innerHTML = renderHistoryTable(clapHistory);
+
+    if (!loopCb.checked) break;
+    await sleep(1500);
+  } while (true);
 
   btn.disabled = false;
   btn.textContent = 'Run Clap Test';
 };
+
+$('btn-beepfreq').onclick = async () => {
+  if (!isInitialized) { if (!initFailed) await ensureWorkletReady(); return; }
+  if (!ctx || !workletNode) return;
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  const health = await pingWorklet(workletNode);
+  if (!health.ok) {
+    log(`BeepFreq: worklet not responding (${health.error})`, 'err');
+    $('beepfreq-result').className = 'err';
+    $('beepfreq-result').innerHTML = `Worklet not responding (${health.error})`;
+    return;
+  }
+  log(`BeepFreq: worklet alive (frame=${health.currentFrame})`, 'ok');
+
+  const btn = $('btn-beepfreq') as HTMLButtonElement;
+  const loopCb = $('beepfreq-loop') as HTMLInputElement;
+  btn.disabled = true;
+
+  do {
+    btn.textContent = loopCb.checked ? 'Looping...' : 'Running...';
+    $('beepfreq-result').textContent = '';
+
+    const freqHz = parseInt(($('beepfreq-freq') as HTMLInputElement).value) || 4000;
+    const beepFreqAmp = parseFloat(($('beepfreq-amp') as HTMLInputElement).value) || 0.5;
+    const useBP = ($('beepfreq-bp') as HTMLInputElement).checked;
+    const result = await runBeepFreqTest(ctx, workletNode, { frequencyHz: freqHz, amplitude: beepFreqAmp, bandpass: useBP });
+
+    const el = $('beepfreq-result');
+    if (result.success) {
+      el.className = 'result ok';
+      el.innerHTML = `
+        Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong> ±${result.stdDev.toFixed(1)}ms<br>
+        Trailing edges matched: ${result.matchedBursts}/${result.totalBursts} @ ${result.frequencyHz}Hz ${useBP ? '(filtered)' : '(raw)'}<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%<br>
+        <div style="font-size:10px;margin-top:4px;color:#6ee7b7">
+          Heuristic: ${Math.round(2 * (ctx!.outputLatency || 0) * 1000)}ms · Noise floor: ${(20 * Math.log10(result.noiseFloorRms + 1e-10)).toFixed(1)}dBFS · Peak: ${(20 * Math.log10(result.peakRms + 1e-10)).toFixed(1)}dBFS
+        </div>
+        ${renderBeepFreqEdgeTable(result)}`;
+      log(`BeepFreq: latency=${result.latencyMs.toFixed(1)}ms ±${result.stdDev.toFixed(1)}ms matched=${result.matchedBursts}/${result.totalBursts} @ ${result.frequencyHz}Hz`, 'ok');
+    } else {
+      el.className = 'result err';
+      el.innerHTML = `Failed: ${result.error}<br>
+        ${result.matchedBursts > 0 ? `<span style="font-size:11px">Best match: ${result.latencyMs.toFixed(1)}ms, ${result.matchedBursts}/${result.totalBursts} bursts @ ${result.frequencyHz}Hz</span>` : ''}
+        <div style="font-size:10px;margin-top:4px;color:#a1a1aa">Noise floor: ${(20 * Math.log10(result.noiseFloorRms + 1e-10)).toFixed(1)}dBFS · Detected edges: ${result.detectedEdges.length}</div>
+        ${result.matchedBursts > 0 ? renderBeepFreqEdgeTable(result) : ''}`;
+      log(`BeepFreq: failed — ${result.error}`, 'err');
+    }
+
+    addToHistory(beepfreqHistory, {
+      amplitude: beepFreqAmp,
+      latencyMs: result.latencyMs,
+      stdDev: result.stdDev,
+      matchedBursts: result.matchedBursts,
+      totalBursts: result.totalBursts,
+      extra: `${result.frequencyHz}Hz${useBP ? ' BP' : ' raw'}`,
+    });
+    $('beepfreq-history').innerHTML = renderHistoryTable(beepfreqHistory, 'Freq');
+
+    if (!loopCb.checked) break;
+    await sleep(1500);
+  } while (true);
+
+  btn.disabled = false;
+  btn.textContent = 'Run Beep Freq Test';
+};
+
+function renderBeepFreqEdgeTable(result: BeepFreqResult): string {
+  if (result.matchedDetectedSamples.length === 0 && result.detectedEdges.length === 0) return '';
+  const sr = ctx?.sampleRate || 44100;
+  let html = '<table class="sweep-table" style="margin-top:6px"><tr><th>#</th><th>Expected (smp)</th><th>Detected (smp)</th><th>Offset (ms)</th></tr>';
+  for (let i = 0; i < result.matchedDetectedSamples.length; i++) {
+    const offsetMs = ((result.matchedDetectedSamples[i] - result.matchedExpectedSamples[i]) / sr) * 1000;
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td>${result.matchedExpectedSamples[i]}</td>
+      <td>${result.matchedDetectedSamples[i]}</td>
+      <td style="color:${Math.abs(offsetMs - result.latencyMs) < result.stdDev * 1.5 ? '#86efac' : '#fca5a5'}">${offsetMs.toFixed(1)}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
+$('btn-beep').onclick = async () => {
+  if (!isInitialized) { if (!initFailed) await ensureWorkletReady(); return; }
+  if (!ctx || !workletNode) return;
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  const health = await pingWorklet(workletNode);
+  if (!health.ok) {
+    log(`Beep: worklet not responding (${health.error})`, 'err');
+    $('beep-result').className = 'err';
+    $('beep-result').innerHTML = `Worklet not responding (${health.error})`;
+    return;
+  }
+  log(`Beep: worklet alive (frame=${health.currentFrame})`, 'ok');
+
+  const btn = $('btn-beep') as HTMLButtonElement;
+  const loopCb = $('beep-loop') as HTMLInputElement;
+  btn.disabled = true;
+
+  do {
+    btn.textContent = loopCb.checked ? 'Looping...' : 'Running...';
+    $('beep-result').textContent = '';
+
+    const beepAmp = parseFloat(($('beep-amp') as HTMLInputElement).value) || 0.3;
+    const result = await runBeepTest(ctx, workletNode, beepAmp);
+
+    const el = $('beep-result');
+    if (result.success) {
+      el.className = 'result ok';
+      el.innerHTML = `
+        Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong> ±${result.stdDev.toFixed(1)}ms<br>
+        Trailing edges matched: ${result.matchedBursts}/${result.totalBursts}<br>
+        Confidence: ${(result.confidence * 100).toFixed(1)}%<br>
+        <div style="font-size:10px;margin-top:4px;color:#6ee7b7">
+          Heuristic: ${Math.round(2 * (ctx!.outputLatency || 0) * 1000)}ms · Noise floor: ${(20 * Math.log10(result.noiseFloorRms + 1e-10)).toFixed(1)}dBFS · Peak: ${(20 * Math.log10(result.peakRms + 1e-10)).toFixed(1)}dBFS
+        </div>
+        ${renderBeepEdgeTable(result)}`;
+      log(`Beep: latency=${result.latencyMs.toFixed(1)}ms ±${result.stdDev.toFixed(1)}ms matched=${result.matchedBursts}/${result.totalBursts}`, 'ok');
+    } else {
+      el.className = 'result err';
+      el.innerHTML = `Failed: ${result.error}<br>
+        ${result.matchedBursts > 0 ? `<span style="font-size:11px">Best match: ${result.latencyMs.toFixed(1)}ms, ${result.matchedBursts}/${result.totalBursts} bursts</span>` : ''}
+        <div style="font-size:10px;margin-top:4px;color:#a1a1aa">Noise floor: ${(20 * Math.log10(result.noiseFloorRms + 1e-10)).toFixed(1)}dBFS · Detected edges: ${result.detectedEdges.length}</div>
+        ${result.matchedBursts > 0 ? renderBeepEdgeTable(result) : ''}`;
+      log(`Beep: failed — ${result.error}`, 'err');
+    }
+
+    addToHistory(beepHistory, {
+      amplitude: beepAmp,
+      latencyMs: result.latencyMs,
+      stdDev: result.stdDev,
+      matchedBursts: result.matchedBursts,
+      totalBursts: result.totalBursts,
+    });
+    $('beep-history').innerHTML = renderHistoryTable(beepHistory);
+
+    if (!loopCb.checked) break;
+    await sleep(1500);
+  } while (true);
+
+  btn.disabled = false;
+  btn.textContent = 'Run Beep Test';
+};
+
+// Beep amplitude slider live value display
+const beepAmpSlider = $('beep-amp') as HTMLInputElement;
+const beepAmpVal = $('beep-amp-val');
+if (beepAmpSlider && beepAmpVal) {
+  beepAmpSlider.addEventListener('input', () => {
+    beepAmpVal.textContent = parseFloat(beepAmpSlider.value).toFixed(2);
+  });
+}
+
+// BeepFreq frequency slider live value display
+const beepFreqSlider = $('beepfreq-freq') as HTMLInputElement;
+const beepFreqVal = $('beepfreq-freq-val');
+if (beepFreqSlider && beepFreqVal) {
+  beepFreqSlider.addEventListener('input', () => {
+    beepFreqVal.textContent = beepFreqSlider.value;
+  });
+}
+
+// BeepFreq amplitude slider live value display
+const beepFreqAmpSlider = $('beepfreq-amp') as HTMLInputElement;
+const beepFreqAmpVal = $('beepfreq-amp-val');
+if (beepFreqAmpSlider && beepFreqAmpVal) {
+  beepFreqAmpSlider.addEventListener('input', () => {
+    beepFreqAmpVal.textContent = parseFloat(beepFreqAmpSlider.value).toFixed(2);
+  });
+}
+
+function renderBeepEdgeTable(result: BeepResult): string {
+  if (result.matchedDetectedSamples.length === 0 && result.detectedEdges.length === 0) return '';
+  let html = '<table class="sweep-table" style="margin-top:6px"><tr><th>#</th><th>Expected (smp)</th><th>Detected (smp)</th><th>Offset (ms)</th></tr>';
+  for (let i = 0; i < result.matchedDetectedSamples.length; i++) {
+    const offsetMs = ((result.matchedDetectedSamples[i] - result.matchedExpectedSamples[i]) / 44100) * 1000;
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td>${result.matchedExpectedSamples[i]}</td>
+      <td>${result.matchedDetectedSamples[i]}</td>
+      <td style="color:${Math.abs(offsetMs - result.latencyMs) < result.stdDev * 1.5 ? '#86efac' : '#fca5a5'}">${offsetMs.toFixed(1)}</td>
+    </tr>`;
+  }
+  html += '</table>';
+  return html;
+}
+
+function renderMlsEdgeTable(result: SweepResult): string {
+  if (result.matchedDetectedSamples.length === 0) return '';
+  const sr = ctx?.sampleRate || 44100;
+  let html = '<table class="sweep-table" style="margin-top:6px"><tr><th>#</th><th>Expected (smp)</th><th>Detected (smp)</th><th>Offset (ms)</th></tr>';
+  for (let i = 0; i < result.matchedDetectedSamples.length; i++) {
+    const offsetMs = ((result.matchedDetectedSamples[i] - result.matchedExpectedSamples[i]) / sr) * 1000;
+    html += `<tr>
+      <td>${i + 1}</td>
+      <td>${result.matchedExpectedSamples[i]}</td>
+      <td>${result.matchedDetectedSamples[i]}</td>
+      <td style="color:${Math.abs(offsetMs - result.latencyMs) < result.stdDev * 1.5 || result.stdDev === 0 ? '#86efac' : '#fca5a5'}">${offsetMs.toFixed(1)}</td>
+    </tr>`;
+  }
+  if (result.p2n > 0) {
+    html += `<tr style="background:#1e1b4b"><td colspan="4" style="padding:4px;color:#a5b4fc;font-size:10px">
+      Cross-correlation: ${result.xcorrLatencyMs.toFixed(1)}ms · P2N ${result.p2n.toFixed(1)}dB · conf ${result.xcorrConfidence.toFixed(3)}
+    </td></tr>`;
+  }
+  html += '</table>';
+  return html;
+}
 
 $('btn-refresh').onclick = async () => {
   if (!ctx) return;

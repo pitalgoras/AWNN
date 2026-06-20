@@ -67,6 +67,10 @@
   .gain-hint { font-size: 11px; padding: 6px 8px; background: #1e1b4b; border-radius: 4px; color: #a5b4fc; margin-top: 4px; }
 
   .fw-mon { font-family: monospace; font-size: 12px; }
+
+  .history-wrap { margin-top: 8px; }
+  .history-wrap summary { font-size: 11px; color: #71717a; cursor: pointer; user-select: none; }
+  .history-wrap summary:hover { color: #a1a1aa; }
 </style>
 </head>
 <body>
@@ -136,18 +140,93 @@
 <!-- MLS Auto Test Card -->
 <div class="card">
   <div class="card-header">MLS Auto Test</div>
-  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays MLS noise (2-8kHz) through speakers, records via mic, cross-correlates. Requires speaker→mic path.</p>
-  <div class="btn-row">
-    <button id="btn-mls">Run MLS Auto Test</button>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays MLS noise (4kHz bandpass) split into segments with silence gaps. Uses trailing-edge detection — robust against Bluetooth noise gates.</p>
+  <div style="margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <label style="font-size:11px;color:#71717a">
+      Gaps (ms):
+      <input type="text" id="mls-gaps" value="120,250,350,180" style="width:180px" title="Comma-separated gap durations between MLS segments (ms)">
+    </label>
     <label style="display:flex;align-items:center;gap:4px;font-size:12px">
       <input type="checkbox" id="chk-swap" style="width:auto">
       Swap channels
+    </label>
+  </div>
+  <div class="btn-row">
+    <button id="btn-mls">Run MLS Auto Test</button>
+  </div>
+  <div style="margin-bottom:8px;font-size:12px">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+      <input type="checkbox" id="mls-loud-mode" style="width:auto">
+      <span style="color:#fbbf24;font-weight:500">⚠ Headphone mode</span>
+      <span style="color:#71717a;font-size:11px">— amplitudes 0.5 / 0.75 / 1.0 (safe: 0.25 / 0.375 / 0.5).</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-top:4px">
+      <input type="checkbox" id="mls-bp" style="width:auto" checked>
+      BP Filter
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-top:4px">
+      <input type="checkbox" id="mls-loop" style="width:auto">
+      Loop
     </label>
   </div>
   <div id="sweep-section" style="display:none">
     <div id="sweep-table-container"></div>
   </div>
   <div id="mls-result" class="result"></div>
+  <div id="mls-history" class="history-wrap"></div>
+</div>
+
+<!-- Beep Test Card -->
+<div class="card">
+  <div class="card-header">Beep Test <span style="font-size:10px;color:#22c55e;font-weight:400">New — trailing-edge</span></div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays 5 irregular noise bursts (4kHz) through speakers, records via mic. Uses <strong>trailing edge</strong> (sound→silence) detection — robust against Bluetooth noise gate onset truncation.</p>
+  <div style="margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <label style="font-size:11px;color:#71717a;display:flex;align-items:center;gap:6px">
+      Amplitude:
+      <input type="range" id="beep-amp" min="0.24" max="1.0" step="0.01" value="0.3" style="width:120px">
+      <span id="beep-amp-val" class="fw-mon" style="color:#e4e4e7">0.30</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px">
+      <input type="checkbox" id="beep-loop" style="width:auto">
+      Loop
+    </label>
+  </div>
+  <div class="btn-row">
+    <button id="btn-beep" class="btn-clap" style="background:#059669">Run Beep Test</button>
+  </div>
+  <div id="beep-result" class="result"></div>
+  <div id="beep-history" class="history-wrap"></div>
+</div>
+
+<!-- Beep Freq Test Card -->
+<div class="card">
+  <div class="card-header">Beep Freq Test <span style="font-size:10px;color:#22c55e;font-weight:400">New — tunable tone</span></div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays 5 tone bursts at configurable frequency (1–10kHz) with irregular gaps. Same trailing-edge detection as Beep Test.</p>
+  <div style="margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <label style="font-size:11px;color:#71717a;display:flex;align-items:center;gap:6px">
+      Freq (Hz):
+      <input type="range" id="beepfreq-freq" min="1000" max="10000" step="100" value="4000" style="width:140px">
+      <span id="beepfreq-freq-val" class="fw-mon" style="color:#e4e4e7;min-width:50px">4000</span>
+    </label>
+    <label style="font-size:11px;color:#71717a;display:flex;align-items:center;gap:6px">
+      Amplitude:
+      <input type="range" id="beepfreq-amp" min="0.24" max="1.0" step="0.01" value="0.5" style="width:120px">
+      <span id="beepfreq-amp-val" class="fw-mon" style="color:#e4e4e7">0.50</span>
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px">
+      <input type="checkbox" id="beepfreq-bp" style="width:auto" checked>
+      BP Filter
+    </label>
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px">
+      <input type="checkbox" id="beepfreq-loop" style="width:auto">
+      Loop
+    </label>
+  </div>
+  <div class="btn-row">
+    <button id="btn-beepfreq" style="background:#0891b2">Run Beep Freq Test</button>
+  </div>
+  <div id="beepfreq-result" class="result"></div>
+  <div id="beepfreq-history" class="history-wrap"></div>
 </div>
 
 <!-- Clap Test Card -->
@@ -157,9 +236,14 @@
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
     <label for="bpm">BPM:</label>
     <input type="number" id="bpm" value="120" min="40" max="200">
+    <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-left:auto">
+      <input type="checkbox" id="clap-loop" style="width:auto">
+      Loop
+    </label>
   </div>
   <button id="btn-clap" class="btn-clap">Run Clap Test</button>
   <div id="clap-result" class="result"></div>
+  <div id="clap-history" class="history-wrap"></div>
 </div>
 
 <!-- User Note Card -->
