@@ -142,6 +142,27 @@ This document tracks the features discussed, planned, implemented, and discarded
   - **headLength changes in Advanced Settings don't take effect until page reload** — `headLength`, `startupDelayMs`, `bufferSafetyMs` missing from engine init effect dep array.
   - **Pre-roll recording doesn't show negative timeline during count-in** — `!state.isRecording` guard blocks `setRecordingMode(true)` in play/pause sync effect, preventing the scroll container from unlocking to show the PRE bar.
 
+- [x] **Calibration Test Harness (2026-06):**
+  - Isolated test bed at `tests/calibration-test/` with 6 latency tests
+  - **Beep Test**: 5× noise bursts (4kHz), trailing-edge detection, pattern matching
+  - **BeepFreq Test**: 5× tunable square wave bursts (1–10kHz), optional bandpass filter
+  - **MLS Auto Test**: 5 segments with configurable gaps, trailing-edge + cross-correlation, geometric amplitude ladder, latency clustering
+  - **Clap Test v2**: Looping rhythmic pulse, overlapping 2-worklet chunks, silence gaps for AEC de-adaptation, Start/Stop toggle
+  - **Early-AEC Beep**: Shorter variant optimized for AEC pre-convergence window, auto-runs on mic re-acquire
+  - **Meta-Freq Scan**: 26 log-spaced frequencies (127Hz–10kHz), amplitude measurement, canvas graph
+  - 2-worklet-node architecture for overlapping recording chunks
+  - Per-test history (last 3 results), loop mode, amplitude/BP filter controls
+  - Slider live value displays, noise floor capture, VU meters
+  - AEC state display with platform-aware constraint handling
+  - Device enumeration with auto-reacquire on device change
+  - Health poll (PING/PONG), diagnostics dump with Vercel Blob upload
+  - Full Restart button (teardown + re-init), Re-acquire Mic button
+- [x] **Feedback Chat System (2026-06):**
+  - Long-press feedback chat with SidebarPanel shared shell
+  - Silent polling (no loading spinner on refresh), message merge on poll
+  - Cookie persistence + optimistic admin reply
+  - Server error surfacing on send/reply failure
+  - `allowOverwrite: true` on blob PUT to fix 409 conflicts
 - [x] **UI Tidy — Responsive Portrait Toolbar (2026-05-29):**
   - Centralized `toolbarBtn()` helper replacing all scattered `getBtnClass` patterns.
   - Portrait 3-column layout: left (Menu+AppMode, Pre-Roll, Metronome+BPM/Sig), center (transport + TimeDisplay), right (Cues+FS, Locks). Padding reduced (`px-4→px-1`, `gap-2→gap-1`).

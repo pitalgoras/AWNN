@@ -44,7 +44,12 @@
 4. Worklet sets `_anchoredFrame = currentFrame + frameOffset`, `_recordingStartFrame = _anchoredFrame`. Rolling buffer **stops trimming** at this frame.
 5. Audio continues flowing into the single buffer until STOP_RECORDING.
 6. `_flush()` extracts: [head: last `headLength` seconds before `_recordingStartFrame`] + [definitive recording from `_recordingStartFrame` onward].
-7. `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs = store.outputLatencyMs + store.baseLatencyMs + HW_COMP_MS + extraLatencyMs` (all read synchronously from store at stop time)
+7. `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs` is computed in one of three paths:
+   - **New-style cached profile** (preferred): `browserLatencyMs + (cachedProfile.totalRoundtripMs − captureBrowserMs) + extraLatencyMs` — preserves the calibrated hardware delta while using a fresh `browserLatencyMs` from the current AudioContext state
+   - **Legacy cached profile**: `cachedProfile.totalRoundtripMs + extraLatencyMs` — uses the profile's total roundtrip directly, ignores browser latency
+   - **No cache (fallback)**: `browserLatencyMs + HW_COMP_MS + extraLatencyMs` — heuristic when no calibration profile exists
+   
+   `browserLatencyMs = outputLatencyMs + baseLatencyMs`, where both values are read **directly from the AudioContext at stop time** via `(audioContext.outputLatency || 0) * 1000` and `(audioContext.baseLatency || 0) * 1000`. This bypasses the store to avoid capturing Chrome's stale initial 0-8ms `outputLatency` report (before audio flows), which caused the first recording in a session to use ~38ms less compensation than subsequent recordings. Audio flows during recording so `outputLatency` is settled by stop time. The store values (`config.outputLatencyMs`/`baseLatencyMs`) initialized at AudioContext creation are **not used** during latency compensation — they are only retained for diagnostics display.
 
 ### Playback Flow
 1. WaveSurfer reaches `startPosition` (which includes the head before the definitive audio)
@@ -78,7 +83,7 @@
 - Calculate `punchInUserTime` when Record pressed (UserTime). When `isCurrentlyPlaying`, use `storeState.currentTime` (multitrack playhead position), NOT `audioCtx.currentTime` (fixes clip-in-future bug)
 - Send `START_RECORDING { headLength, frameOffset }` to AudioWorklet — `frameOffset = startupDelay + max(0, punchInUserTime − recordStartUserTime)`
 - Worklet computes `_anchoredFrame = currentFrame + frameOffset`
-- `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs` reads `outputLatencyMs`/`baseLatencyMs` from `useStore.getState()` synchronously
+- `startPosition = punchInUserTime − headLength − latencyCompMs / 1000`, where `latencyCompMs` reads `outputLatencyMs`/`baseLatencyMs` **directly from `audioContext.outputLatency`/`audioContext.baseLatency` at stop time** (store values are not used)
 
 ### RecorderWorklet (worklet)
 - Single rolling buffer for both head and definitive recording (no separate `_audioData`)
@@ -106,7 +111,7 @@
 - Tracks `startupDelayMs` (default 150ms) and `bufferSafetyMs` (default 100ms) for recording timing — editable in Dangerous Settings
 - `updatePhrasePosition` recalculates `anchoredFrame` when clip is moved
 - `headLength` per-clip metadata (0–1s, default 0.5s)
-- `outputLatencyMs` and `baseLatencyMs` — set once when AudioContext is created, read synchronously by `RecordingEngine.handleAudioWorkletStop()`
+- `outputLatencyMs` and `baseLatencyMs` — set once when AudioContext is created (for display/diagnostics only), but `RecordingEngine.handleAudioWorkletStop()` reads **directly from the AudioContext** at stop time, not from the store
 
 ---
 

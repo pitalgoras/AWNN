@@ -4,6 +4,23 @@
 
 The AudioWorklet metronome is now implemented. See `docs/devhistory.md` §25 for details and `src/hooks/useAudioEngine.ts` for integration.
 
+## ✅ Implemented: Calibration Test Harness (June 2026)
+
+6 latency tests in an isolated test bed at `tests/calibration-test/`. See `docs/CALIBRATION_TEST.md` for full architecture.
+
+## ✅ Implemented: Feedback Chat System (June 2026)
+
+Long-press feedback chat with SidebarPanel shell, silent polling, cookie persistence, admin reply.
+
+## Still Future: Calibration Production Integration
+
+The test-bed algorithms need to be converted into a unified calibration flow within the production app:
+- **Per-device latency profiles** — Store calibration results per device ID in `deviceLatencyCache` (already in `useStore.ts`)
+- **Platform-aware test selection** — Clap v2 as primary for Firefox (AEC-proof), MLS/beep for Chrome
+- **Auto-run on device change** — Auto-calibrate when a new audio device is detected
+- **Visual calibration fallback** — Manual alignment overlay for impossible cases (Bluetooth with aggressive AEC)
+- **Confidence scoring** — Combine results from multiple tests into a single confidence-weighted latency estimate
+
 ## Still Future: Metronome Enhancements
 
 ### 1. Custom click sounds

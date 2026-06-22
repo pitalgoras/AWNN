@@ -40,6 +40,24 @@ A web-based multitrack audio recorder and editor designed for seamless playback,
 3. **Track Controls:** Volume sliders, Mute, Solo (via long-press on Mute), Record (per-track), and active track selection.
 4. **Audio Recording:** Ability to record audio from the user's microphone directly into a track via its dedicated record button. **Unified Pre-roll Behavior:** Every recording session includes an optional 1-bar pre-roll for buffer and UI stabilization. The pre-roll mode can be set to "Always", "Recording Only", or "None". Recording actually begins 1 bar before the intended punch-in point (if pre-roll is enabled), and this pre-roll portion is "hard trimmed" upon stopping. If the application is already playing when recording is initiated, recording starts immediately at the current playhead position without any count-in, regardless of the pre-roll mode setting. This applies to all recordings, whether starting at Bar 1 or punching in at Bar 2 and beyond. This reduces synchronization issues to a single "track syncing" problem relative to the rendered metronome.
 5. **Latency Compensation:** Includes a Settings UI with a manual input field for the latency value and an "Auto-Calibrate" tool that plays a single 500ms triangular-envelope burst (1kHz, 4% peak amplitude) through speakers and detects the energy peak on the mic input via 1ms sliding-window energy analysis in a dedicated AudioWorklet (`calibration.worklet.js`). Chrome uses `{ exact: false }` constraints + `goog*` WebRTC flags for raw audio; Firefox uses all three constraints (`echoCancellation: false`, `noiseSuppression: false`, `autoGainControl: false`) with matching `sampleRate`. See `docs/FIREFOX_RAW_AUDIO_RESEARCH.md` for details. Level guards warn if the signal is too quiet or the mic is clipping. The visual playhead position is also compensated by the browser's `outputLatency` to ensure it matches the audible sound. Each track also supports a manual `offset` for fine-grained timing adjustments.
+
+   **Calibration Test Harness (`tests/calibration-test/`):** An isolated test bed for measuring round-trip audio latency using 6 algorithms, independent from the production `LatencyCalibrator`. Designed for real-world conditions (Bluetooth headsets, noise gates, browser AEC). See `docs/CALIBRATION_TEST.md` for complete architecture and decisions.
+
+   **Tests:**
+   - **Beep Test**: 5 noise bursts (4kHz bandpass), trailing-edge detection, pattern matching via `findBestShift`
+   - **BeepFreq Test**: 5 square wave bursts at configurable frequency (1–10kHz), optional bandpass filter
+   - **MLS Auto Test**: 5 MLS segments with configurable gaps, trailing-edge + cross-correlation, geometric amplitude ladder, latency clustering
+   - **Clap Test v2**: Looping rhythmic pulse, overlapping 2-worklet chunks, silence gaps for AEC de-adaptation
+   - **Early-AEC Beep Test**: Shorter variant optimized for pre-convergence AEC window
+   - **Meta-Freq Scan**: 26 log-spaced frequencies (127Hz–10kHz) with amplitude graph
+
+   **Key design decisions:**
+   - 2-worklet-node architecture for overlapping recording chunks
+   - Trailing-edge over onset-edge detection (Bluetooth gates clip onsets)
+   - AEC-proof strategy: claps are novel sounds (not echo), silence gaps de-adapt AEC filter
+   - Platform-aware constraints: Chrome `{ exact: false }`, Firefox ideal false + sampleRate
+   - Geometry amplitude sweep (×1.5) instead of linear or fixed amplitudes
+   - Latency clustering (5ms bins) instead of single-shot best P2N
 6. **Zooming:** Adjustable waveform zoom levels (synchronized across waveforms and envelope editor). Includes mouse scroll-wheel zoom control and an improved zoom slider with "click-to-jump" functionality.
 7. **Web Audio API Integration:** Uses a shared `AudioContext` for reliable playback and to prevent "fetching aborted" errors on underpowered devices.
 8. **Envelope Automation:** Multi-node volume automation per track with linear interpolation.

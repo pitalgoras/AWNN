@@ -819,12 +819,10 @@ Two changes in `useAudioEngine.ts` `seekTo()`:
 
 The metronome now uses a consistent timebase across initial play start and seek re-sync.
 
-## P. Remaining: OutputLatency Read at Recording Stop
+## P. OutputLatency Read at Recording Stop
 
 ### Status
-**Not yet applied** — saved for next session.
-
-See section M for the detailed plan. The change is in `RecordingEngine.ts:handleAudioWorkletStop()` — replace store read with direct AudioContext read of `outputLatency`/`baseLatency`.
+**Applied.** `RecordingEngine.handleAudioWorkletStop()` (`src/audio/recording/RecordingEngine.ts:352-355`) reads `outputLatency`/`baseLatency` directly from the AudioContext at stop time, bypassing the stale store value. The store-based approach captured Chrome's initial 8ms report (before audio flows) — direct read always gets the settled hardware latency (~46ms after first playback).
 
 ## Q. UI Tidy — Portrait/Responsive Toolbar (2026-05-29)
 
@@ -1155,4 +1153,176 @@ This ensures individual audio elements paused due to end-of-clip are properly re
 - `71878c6` — safety-net cleanup() in RecordingEngine
 - `08634f0` — session diagnosis counters in worklet
 - `e170b8a` — fix accumulator write position `0` → `_accPos`
-- `3cf1c99` — fix accumulator `= tailLen` → `+= tailLen`<｜end▁of▁thinking｜>
+- `3cf1c99` — fix accumulator `= tailLen` → `+= tailLen`
+
+## 39. Calibration Test Expansion: Beep, BeepFreq, MLS Redesign, Clap v2, Early-AEC, Meta-Freq (June 2026)
+
+### Strategic Shift
+The previous calibration approach (MLS-only with cross-correlation) was reliable for open air but faced fundamental limitations with Bluetooth headsets (noise gates clipping onsets) and Firefox (AEC can't be disabled). Strategy shifted from "disable AEC" to "design AEC-proof tests."
+
+### New Tests Added
+
+**Beep Test (`test-beeps.ts`):**
+- 5 noise bursts (4kHz bandpass, 50ms) with irregular gaps
+- Trailing-edge detection resists noise gate onset truncation
+- Pattern matching via `findBestShift`
+
+**BeepFreq Test (`test-beepfreq.ts`):**
+- 5 square wave bursts at tunable frequency (1–10kHz)
+- Configurable bandpass filter on recording analysis
+- Find the speaker-mic frequency sweet spot
+
+**MLS Redesign (`test-mls.ts`):**
+- Split into 5 segments with configurable gaps (was single burst)
+- Added trailing-edge detection as primary + cross-correlation as secondary
+- Geometric amplitude ladder (0.05→0.80, ×1.5, 8 levels) instead of fixed amplitudes
+- Latency clustering (5ms bins) — agreement across amplitudes builds confidence
+- Cross-run localStorage history (last 5 sweeps per device combo)
+
+**Clap v2 (`test-clap.ts`):**
+- Looping rhythmic pulse with half-beat-early anchor — user claps along
+- Novel sound (clap) is not echo — AEC doesn't suppress it
+- **Two-worklet overlapping chunks**: staggered `AudioWorkletNode` instances
+- Configurable chunk size (1–5s) and silence gap (50–500ms) for AEC de-adaptation
+- Start/Stop via AbortController, per-chunk live progress, cross-chunk consistency
+
+**Early-AEC Beep Test (`test-beep-early.ts`):**
+- Shorter gaps [80, 120, 180, 100]ms optimized for pre-convergence AEC window (~2–5s)
+- Higher default amplitude (0.4 vs 0.3)
+- Auto-runs after mic re-acquire to exploit fresh AEC filter
+
+**Meta-Freq Scan (`test-metafreq.ts`):**
+- 26 log-spaced frequencies (127Hz–10kHz, 4/octave)
+- Per-frequency amplitude measurement with canvas graph
+- One-per-device diagnostic (~60s)
+
+### Infrastructure
+
+**Two worklet nodes** — `workletNodeB` created alongside `workletNode` in `ensureWorkletReady()`, connected to both output graph and mic input. Alternating use for clap test overlapping chunks.
+
+**Worklet additions (`calibration-test.worklet.js`):**
+- `POLL` → `SNAPSHOT` handler: copies buffer on poll for non-destructive inspection (future vocal calibration use)
+- `validatePeriodicity()` in `analysis.ts`: gap-pattern edge rejection
+
+**UI additions:**
+- Slider live value displays (clap BPM/chunk/gap, beep/beepfreq/early amplitude)
+- Per-chunk progress in clap test (`clap-chunks-container`)
+- Canvas graph for Meta-Freq scan
+- AEC state display from `getSettings()`
+- Device enumeration with active device highlighting
+- Noise floor capture (0.5s silent recording, RMS + dBFS)
+- Full Restart button (teardown + re-init)
+- Re-acquire Mic button (stops stream, re-requests, auto-runs Early-AEC)
+- Device change auto-reacquire via `devicechange` listener
+
+**AEC state handling:**
+- Platform-aware constraints: Chrome `{ exact: false }`, Firefox ideal false + sampleRate
+- `getSettings()` confirmation displayed in status card
+- Firefox raw audio limitation documented as spec-level constraint
+
+### Key Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| Clap v2 replaces clap v1 | Novel sound defeats AEC where tone-based tests fail |
+| 2-worklet architecture | Overlapping chunks without gap in analysis pipeline |
+| Trailing-edge over onset-edge | Bluetooth gates clip onsets, not trailing edges |
+| Geometric amplitude sweep | Dense at quiet levels, sparse at stable loud levels |
+| Latency clustering | Agreement across amplitudes builds confidence |
+
+### Files Created
+- `tests/calibration-test/test-beep-early.ts`
+- `tests/calibration-test/test-metafreq.ts`
+
+### Files Modified
+- `tests/calibration-test/main.ts` — wiring for all 6 tests, workletNodeB, slider bindings, restart handlers, AEC state, device change
+- `tests/calibration-test/index.html` — card markup for clap v2, early beep, meta-freq, restart/reacquire buttons
+- `tests/calibration-test/test-clap.ts` — full rewrite: looping, 2-worklet, configurable chunks
+- `tests/calibration-test/analysis.ts` — added `validatePeriodicity()`
+- `public/worklets/calibration-test.worklet.js` — added POLL/SNAPSHOT handler
+- `docs/CALIBRATION_TEST.md` — full architecture rewrite
+
+## 40. Feedback Chat System (June 2026)
+
+### Feature
+Long-press feedback chat with SidebarPanel shared shell. Users can send feedback messages from the app, admins can reply, stored persistently via Vercel Blob.
+
+### Implementation
+
+**API endpoints:**
+- `api/feedback/send.ts` — POST new feedback message, stores to Vercel Blob
+- `api/feedback/messages.ts` — GET messages, returns sorted by timestamp
+- `api/feedback/reply.ts` — POST admin reply
+- `api/feedback/admin/threads.ts` — GET admin threads view
+
+**UI (`FeedbackChatPanel.tsx`):**
+- SidebarPanel shell with message list + input field
+- Silent polling (no loading spinner on refresh)
+- Merge messages on poll (no disappear on refresh)
+- Cookie persistence for user identity
+- Optimistic admin reply display
+- Surface server error messages on send/reply failure
+
+**Fixes:**
+- `allowOverwrite: true` on blob PUT to fix 409 conflicts
+- Cookie persistence + optimistic admin reply
+- Error surfacing on send/reply failure
+
+### Files Created
+- `api/feedback/send.ts`
+- `api/feedback/messages.ts`
+- `api/feedback/reply.ts`
+- `api/feedback/admin/threads.ts`
+- `src/feedback/FeedbackChatPanel.tsx`
+- `src/components/admin/FeedbackAdmin.tsx`
+
+## 41. Calibration Test: Complete Wiring + Full Restart (June 2026)
+
+### Problem
+The calibration test page had all test modules implemented (`test-clap.ts`, `test-beep-early.ts`, `test-metafreq.ts`, etc.) and card markup in `index.html`, but `main.ts` was still using the old single-worklet architecture and missing handlers for the new tests.
+
+### What Was Wired
+
+1. **Button state arrays** — `setButtonsLoading/Ready/Failed` updated to include `btn-early`, `btn-metafreq`, `btn-reacquire-mic`, `btn-full-restart`. Failed state enables recovery buttons.
+
+2. **`workletNodeB` creation** — Second `AudioWorkletNode` created alongside `workletNode` in `ensureWorkletReady()`, connected to output graph and mic input. Supports overlapping-chunk clap test.
+
+3. **Clap button rewrite** — Start/Stop toggle via `AbortController`. Reads `clap-bpm`, `clap-chunk`, `clap-gap` sliders. Passes `[workletNode, workletNodeB]` array to `runClapTest()`. Shows per-chunk live progress. Displays partial results on early stop.
+
+4. **Early beep button** — Calls `runEarlyBeepTest()` with slider amplitude, displays in `early-result`.
+
+5. **Meta-Freq button** — Calls `runMetaFreqTest()` with progress callback, renders canvas graph, highlights best frequency.
+
+6. **Re-acquire Mic** — Wires existing `reacquireMic()` function to `btn-reacquire-mic`.
+
+7. **Full Restart** — Tears down everything (stops polls, aborts clap, stops mic, closes AudioContext, resets state), re-initializes.
+
+8. **Slider live values** — `input` event listeners for `clap-bpm`, `clap-chunk`, `clap-gap`, `early-amp`.
+
+### Verification
+- `tsc && vite build` passes with zero errors.
+- All 6 test cards fully functional in the calibration test page.
+
+### Files Modified
+- `tests/calibration-test/main.ts` — all wiring changes
+
+## 42. Firefox AEC Limitation — Platform Research (June 2026)
+
+### Finding
+Firefox on Linux cannot disable AEC via Web API. This is a spec-level limitation, not a code bug:
+- `{ exact: false }` for `echoCancellation` is not supported — throws `OverconstrainedError`
+- `echoCancellation: false` is a non-binding target constraint per MDN spec
+- PulseAudio may apply system-level AEC regardless of browser settings
+- Only `about:config` flags can force-disable on Firefox
+
+### Strategic Impact
+This finding shaped the entire calibration test strategy:
+1. Clap v2 became the primary test for Firefox (novel sound defeats AEC)
+2. Early-AEC beep exploits the pre-convergence window when AEC filter is weak
+3. Silence gaps between clap chunks partially de-adapt the AEC filter
+4. Chrome/Chromium remain the reliable platform for tone-based tests
+
+### Documentation
+- `docs/FIREFOX_RAW_AUDIO_RESEARCH.md` — Detailed research findings
+- `docs/CALIBRATION_TEST.md` — AEC strategy section
+- `tests/calibration-test/main.ts` — Platform-aware constraints in `getUserMedia` calls<｜end▁of▁thinking｜>

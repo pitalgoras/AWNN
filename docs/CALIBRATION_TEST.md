@@ -2,137 +2,152 @@
 
 ## Purpose
 
-Isolated test bed at `tests/calibration-test/` for measuring round-trip audio latency via **Maximum Length Sequence (MLS)** cross-correlation and a manual **clap test**. Independent from the production `LatencyCalibrator` — focused on raw measurement accuracy under real-world conditions (Bluetooth headsets, noise gates, browser quirks).
+Isolated test bed at `tests/calibration-test/` for measuring round-trip audio latency using 6 algorithms. Independent from the production `LatencyCalibrator` — focused on raw measurement accuracy under real-world conditions (Bluetooth headsets, noise gates, browser quirks, AEC).
+
+**Key constraint:** Firefox cannot disable AEC via Web API (`{ exact: false }` not supported, `echoCancellation: false` is non-binding target). All tests must work with AEC present or be designed to defeat it.
 
 ---
 
-## How It Works
+## The 6 Tests
 
-### Signal Chain
-```
-MLS (2–8kHz noise, 0.5s burst)
-  → wake clicks (3× 1kHz, 50ms exponential decay)
-  → speaker
-  → air / headset
-  → mic
-  → AudioWorklet recording
-  → 4kHz bandpass filter (biquad)
-  → normalizeCrossCorrelation(recorded, MLSref)
-  → latency = argmax(peak) - expected_position
-```
+### 1. Beep Test (`test-beeps.ts`)
+- 5 noise bursts (4kHz bandpass, 50ms each) with irregular gaps
+- Trailing-edge detection (sound→silence) resists noise gate onset truncation
+- Pattern matching via `findBestShift` — sliding window matches the 5-edges pattern
+- Configurable amplitude (0.24–1.0 slider)
 
-### MLS Signal
-- Generated via 15-bit LFSR (`generateMLS` in `analysis.ts`, seed=42)
-- Bandpass filtered at 4kHz, Q=0.707 (removes 20Hz activator, rejects noise)
-- Duration: 0.5s at sample rate (~22050 samples at 44100Hz)
-- Preceded by 3 wake clicks (1kHz, exponential decay, 250ms apart) to open noise gates
+### 2. BeepFreq Test (`test-beepfreq.ts`)
+- 5 square wave bursts at tunable frequency (1kHz–10kHz)
+- Same trailing-edge detection as Beep test
+- Optional 4kHz bandpass filter on recording analysis (checkbox)
+- Frequency slider + amplitude slider — find the speaker-mic sweet spot
 
-### Wake Clicks
-Bluetooth noise gates clip silence below a threshold. The 3 wake clicks (50ms each, 1kHz) precede the MLS burst to trigger the gate open before the measurement signal arrives. Without wake clicks, low-amplitude MLS bursts may be partially clipped by the gate, shifting the correlation peak.
+### 3. MLS Auto Test (`test-mls.ts`)
+- 5 MLS (Maximum Length Sequence) noise segments with configurable gaps
+- Bandpass at 4kHz, Q=0.707
+- Primary: trailing-edge detection per segment
+- Secondary: cross-correlation against reference MLS signal for sample-accurate peak
+- Sweeps across geometric amplitude ladder (0.05→0.80 ×1.5, 8 levels)
+- Latency clustering: results binned by 5ms — the largest bin wins (agreement across amplitudes builds confidence)
+- Cross-run localStorage history: last 5 sweeps per device combo
+
+### 4. Clap Test v2 (`test-clap.ts`) — AEC-Proof Design
+- Plays a looping rhythmic pulse (1kHz click, exponential decay)
+- Half-beat-early anchor on last beat of each loop for unambiguous timing
+- User claps along — claps are novel sounds, not echo, so AEC won't suppress them
+- **2-worklet overlapping chunks**: Two staggered `AudioWorkletNode` instances record alternating windows. While one records, the other is idle (AEC filter partially de-adapts)
+- Configurable chunk size (1–5s), gap between chunks (50–500ms), BPM (60–180)
+- Silences during gaps encourage AEC filter de-adaptation
+- Start/Stop toggle via `AbortController` — runs indefinitely until stopped
+- Per-chunk live progress display showing latency, stddev, matched clap count
+- Cross-chunk consistency: final result is mean of all valid chunks
+
+### 5. Early-AEC Beep Test (`test-beep-early.ts`)
+- Shorter beep variant with gaps [80, 120, 180, 100]ms — optimized for the AEC pre-convergence window (~2-5s after stream start)
+- Higher default amplitude (0.4 vs 0.3 for standard beep)
+- Auto-runs after mic re-acquire to exploit fresh AEC filter
+- Same trailing-edge detection + `findBestShift` pattern matching
+
+### 6. Meta-Freq Scan (`test-metafreq.ts`)
+- 26 log-spaced frequencies (127Hz–10kHz, 4/octave)
+- Square wave bursts, 50ms each
+- Per-frequency amplitude measurement via bandpass filter at each frequency
+- Canvas graph with log-frequency X axis, amplitude in dB Y axis
+- Highlights peak frequency
+- One-per-device diagnostic (~60s full scan)
 
 ---
 
-## Recent Changes
+## Infrastructure
 
-### 1. Single-Phase Init with Click Fallback
-**Commit**: `8fc99d4`
-
-**Problem**: Two-phase init (scroll/mousemove to prepare, then real gesture to resume AudioContext + get mic) had a race condition where scroll/mousemove removed the click listener before the user tapped, leaving the page stuck on "Tap to activate".
-
-**Solution**: Single-phase init:
-- `resume()` attempted directly on any gesture (scroll, mousemove, click, touchstart)
-- If `resume()` fails on a non-real gesture (scroll/mousemove can't resume AudioContext on many browsers), register one-shot `click`/`touchstart` listeners
-- Once init completes, remove all gesture listeners to prevent re-entry
-- No pre/post phases — just try, and if failed, let a real click finish
-
-**Files**: `tests/calibration-test/main.ts`
-
-### 2. MLS Hang Fix — RESET Message + PING Drain
-**Commit**: `d3a7649`
-
-**Problem**: A single MLS test records ~1.8s. If the 15s timeout expired while the worklet was still in `_recording = true` (e.g., due to sync drift), the next test's `START` message reset `_pending`/`_recording` to false, but `currentFrame` was already past the new `_startFrame`. This meant `if (this._pending && currentFrame >= this._startFrame)` was never entered (`_pending` became false in the `START` handler, and `currentFrame` would never match again), so recording never started → hang.
-
-**Solution**:
-- Added `RESET` message handler in worklet: clears `_buffer`, `_recording`, `_pending`, `_inputCount`
-- Before each test in `runMlsTest()`: send `RESET` + `PING`, wait for `PONG` to drain any stale messages from the port
-- Before sweep loop in `runMlsWithSweep()`: send `RESET` for extra safety
-
-**Files**: `public/worklets/calibration-test.worklet.js`, `tests/calibration-test/test-mls.ts`, `tests/calibration-test/main.ts`
-
-### 3. Peak-to-Noise Ratio — RMS Not Mean
-**Commit**: `9b18e7c`
-
-**Problem**: `peakToNoiseRatio()` used `sum / count` (arithmetic mean) for the noise floor. Cross-correlation values are centered around zero — their mean can be arbitrarily small, making `peak / noiseFloor` explode. This caused spurious P2N values of 100+ dB with completely wrong latency (e.g., -472ms).
-
-**Solution**: Use RMS instead of mean:
-```js
-// Before:
-const noiseFloor = sum / count;
-
-// After:
-const noiseFloor = Math.sqrt(sumSq / count);
+### Audio Graph
 ```
-RMS of normalized cross-correlation values is approximately `1/sqrt(N)` where N is the reference length (~0.013 for our decimated MLS). A spurious peak of 0.04 correctly yields ~9.5dB (below the 18dB threshold), while a real peak of 0.3 yields ~27dB.
+Output chain:
+  extActivator (20Hz) → mixer → workletNode → outputAnalyser → destination
+                                         → workletNodeB ┘
 
-**Files**: `tests/calibration-test/analysis.ts`
-
-### 4. Geometric Amplitude Ladder + Latency Clustering + History
-**Commit**: `8725b71`
-
-**Problem**: Fixed amplitudes `[noiseFloorTargetAmp, 0.1, 0.2, 0.4, 0.6]` were unreliable:
-- Noise-floor-derived amplitude was misleading with Bluetooth gates (gate clips silence → low RMS → low target amp → MLS too quiet to open gate)
-- Single-shot P2N can spike at wrong position (lucky noise correlation)
-- No way to see if the same latency appears across different playback levels
-
-**Solution**:
-
-**Amplitude ladder** — geometric from 0.05 to 0.80, ×1.5 factor:
+Input chain:
+  mic → inputAnalyser → mixerNode → workletNode
+                       → mixerNodeB → workletNodeB
 ```
-[0.05, 0.075, 0.113, 0.169, 0.254, 0.38, 0.57, 0.8]
-```
-Quiet enough to measure open-air latency, loud enough to punch through any noise gate. No early-stop — all 8 amplitudes run every time.
 
-**Latency clustering** — instead of picking the single best P2N, collect all results with P2N ≥ 18dB, bin by latency (nearest 5ms), find the largest bin. The winning cluster's mean latency and stddev are reported. A single lucky correlation at the wrong position is ignored because it won't match other amplitudes.
+- **Two worklet nodes** (`workletNode`, `workletNodeB`) — identical `AudioWorkletNode` instances using `test-recorder` processor
+- Alternating use for clap test overlapping chunks
+- Single `outputAnalyser` for both output VU meter and health polling
 
-**Cross-run history** — last 5 sweeps stored in localStorage, keyed by `userAgent|micDeviceId`. Display shows "Consistent with N previous sweeps (avg Xms ±Yms)". Every new sweep builds on previous data for the same device combo.
+### Worklet (`calibration-test.worklet.js`)
+- **START** message: `{ startFrame, duration }` — records `duration` samples starting at `startFrame`
+- **RESET** message: clears `_buffer`, `_recording`, `_pending`, `_inputCount` — prevents stale-state hangs
+- **RESULT** message: returns recorded `Float32Array` (transferable, zero-copy)
+- **PING/PONG**: health polling — returns `currentFrame`, `processCount`, `state`
+- **POLL/SNAPSHOT** (added for future progressive analysis): copies buffer on poll for non-destructive inspection
+- **TOGGLE_FEEDBACK**: mutes/unmutes the 20Hz activator pass-through
 
-**`showGainHint` neutralized** — removed the "Mic level seems very low → increase gain" warning. Low noise floor is normal with Bluetooth gating, not a problem.
+### Signal Processing (`analysis.ts`)
+- `findBestShift` — sliding window pattern matching with configurable tolerance
+- `computeRMS` — root-mean-square for energy estimation
+- `biquadBP` / `biquadHP` — biquad bandpass/highpass filters
+- `generateNoise` — LFSR-based white noise (seed=42, deterministic)
+- `crossCorrelate` — normalized cross-correlation for MLS peak detection
+- `trailingEdgeDetection` — sliding RMS envelope, threshold crossing (sound→silence)
+- `validatePeriodicity` — rejects false edge detections by checking gap pattern consistency
 
-**Files**: `tests/calibration-test/main.ts`
+### UI Components
+- **Status card**: output/base/heuristic latency, input/output device names, AEC state, settle trace
+- **Device info**: enumerated audio devices with active device highlighting
+- **I/O VU meters**: real-time RMS + peak level for both output and input
+- **Noise floor capture**: 0.5s silent recording, RMS and dBFS displayed, target amplitude derived
+- **Per-test cards**: controls (sliders, checkboxes) + result + history (last 3 runs)
+- **Diagnostics**: health poll, PING roundtrip timing, full state dump, upload to Vercel Blob
+- **AEC state display**: `echoCancellation`, `noiseSuppression`, `autoGainControl` from `getSettings()`
 
-### 5. Feedback Toggle (Mute/Unmute)
-**Commit**: `51fd881`
+### Button Infrastructure
+- **Re-acquire Mic**: stops current stream, re-requests `getUserMedia`, reconnects to both worklet nodes, auto-runs Early-AEC beep
+- **Full Restart**: stops polls, closes AudioContext, resets all state, re-initializes from scratch
+- **Force Init**: bypasses gesture-based init, directly calls `ensureWorkletReady()`
+- **Device change handler**: auto-reacquires mic when device changes (e.g., plugging in headphones)
 
-**Problem**: The 20Hz activator tone plays continuously through the speaker to keep the audio worklet path alive. This is audible and can be annoying during setup or between tests.
+---
 
-**Solution**: "Mute Feedback" button in the I/O Level card. When clicked:
-- Sends `TOGGLE_FEEDBACK` message to worklet, toggling `_feedbackEnabled`
-- When muted, worklet outputs silence (activator phase continues internally to avoid pop on re-enable)
-- When unmuted, restores 20Hz activator + mic pass-through
-- Tests still work when muted — the MLS BufferSource plays independently
+## AEC Strategy
 
-**Files**: `public/worklets/calibration-test.worklet.js`, `tests/calibration-test/main.ts`, `tests/calibration-test/index.html`
+### The Problem
+Firefox on Linux cannot disable AEC via Web API. `{ exact: false }` throws `OverconstrainedError`. `echoCancellation: false` is a non-binding target — PulseAudio may apply system-level AEC regardless. Chrome can disable AEC with `{ exact: false }` constraints + `goog*` WebRTC flags.
+
+### Mitigations (Tests)
+1. **Clap v2** — Novel sound (user clap) is not echo, so AEC doesn't suppress it. The primary strategy.
+2. **Early-AEC beep** — Runs immediately after mic re-acquire, during the AEC filter's ~2-5s pre-convergence window when suppression is weakest.
+3. **Silence gaps between clap chunks** — Brief silences partially de-adapt the AEC filter, giving each new chunk a short pre-convergence advantage.
+4. **Platform-aware constraints**:
+   - Chrome: `{ exact: false }` for all three processing flags + `goog*` WebRTC flags
+   - Firefox: all three ideal constraints set to false + matching `sampleRate`
+
+### Platform Comparison (Diagnosed via getSettings() logging)
+
+| Browser | Constraints | AEC | Notes |
+|---------|------------|-----|-------|
+| Chrome | `{ exact: false }` | Disabled reliably | OverconstrainedError if AEC can't be disabled |
+| Firefox | `echoCancellation: false` ideal | May still process | PulseAudio system-level AEC may apply |
+| Both | UA check + platform-specific constraints | Per-browser | `getSettings()` confirms actual state |
 
 ---
 
 ## Key Design Decisions
 
-### Why MLS over white noise / sine sweeps?
-- MLS has perfect autocorrelation (δ-function peak) → precise latency measurement
-- Deterministic (LFSR seed=42) → repeatable across runs
-- Bandpass filtering at 4kHz removes the 20Hz activator and rejects environmental noise
+### Why two worklet nodes for clap test?
+A single worklet node alternates between recording and idle. During recording, it captures a contiguous window. During the silence gap, the AEC filter begins to de-adapt. Two nodes allow the next chunk to start recording immediately while the previous node's data is being analyzed — no gap between chunk end and next chunk start from the analysis perspective.
 
-### Why end-detection as secondary method?
-Trailing-edge detection (noise → silence at end of burst) resists Bluetooth noise gate clipping of the burst's attack. Start-correlation is more precise when the gate is open, but end-detection is a fallback when the gate clips the beginning. Both are reported; the higher-confidence result wins.
+### Why trailing-edge over onset-edge?
+Bluetooth noise gates clip the beginning of sound (onset). By the time the sound stops (trailing edge), the gate is already open. Trailing-edge detection is more reliable with gated audio paths.
 
-### Why geometric amplitude sweep?
-Linear sweeps waste steps at the quiet end (where the gate is closed) and skip the loud end. Geometric (×1.5) gives dense coverage at quiet levels where behavior changes fast, and sparse coverage at loud levels where the gate is fully open and behavior is stable.
+### Why geometric amplitude sweep (MLS)?
+Linear sweeps waste steps at quiet levels (gate closed) and skip loud levels (gate fully open). Geometric (×1.5) gives dense coverage where behavior changes fast and sparse coverage where it's stable.
 
-### Why 8 amplitudes × 1.8s ≈ 14s per run?
-Each MLS test takes ~1.8s (wake clicks + MLS + settle). 8 amplitudes = ~14-15s. No early-stop means every level runs — the tradeoff is measurement reliability over speed. The 15s per-test timeout (not per-sweep) ensures individual hangs don't stall the entire page indefinitely.
+### Why latency clustering?
+Agreement across amplitudes is stronger evidence than any single high-P2N reading. A spurious correlation at the wrong position won't match other amplitudes. True latency appears across multiple levels.
 
-### Why latency clustering instead of single-shot best P2N?
-Agreement across amplitudes is stronger evidence than any single high-P2N reading. A correlation peak of 0.04 at the wrong position (P2N=9.5dB with RMS fix) won't match other amplitudes, so it disappears in the cluster. The true latency appears at 0.1, 0.2, 0.4, 0.6, 0.8 → 5 agreeing amplitudes → high confidence.
+### Why not use cross-correlation for all tests?
+Cross-correlation requires a deterministic reference signal (like MLS). Tests using beeps or claps use pattern matching instead (`findBestShift`), which works with any signal shape.
 
 ---
 
@@ -140,22 +155,80 @@ Agreement across amplitudes is stronger evidence than any single high-P2N readin
 
 ```
 tests/calibration-test/
-  index.html           — Test page UI (cards, buttons, meters, log)
-  main.ts              — Init, health polls, VU meters, MLS sweep orchestrator, history
-  test-mls.ts          — runMlsTest(): plays MLS + wake clicks, records, cross-correlates
-  test-clap.ts         — runClapTest(): plays rhythm, detects claps via energy envelope
-  analysis.ts          — MLS generation, DSP (biquad, correlation, RMS, peaks, trailing edge)
-  minimal-test.html    — Standalone worklet test (no Vite)
+  index.html              — Test page UI (cards, buttons, meters, log, canvas)
+  main.ts                 — Init, health polls, VU meters, all test orchestrators, button wiring
+  test-beeps.ts           — runBeepTest(): noise bursts, trailing-edge, pattern match
+  test-beepfreq.ts        — runBeepFreqTest(): tunable tone bursts
+  test-mls.ts             — runMlsTest(): MLS segments with RESET + PING drain
+  test-clap.ts            — runClapTest(): looping pulse, 2-worklet overlapping chunks
+  test-beep-early.ts      — runEarlyBeepTest(): shorter gaps, pre-convergence optimization
+  test-metafreq.ts        — runMetaFreqTest(): 26-frequency log scan
+  analysis.ts             — DSP: biquad, RMS, cross-correlation, edge detection, validatePeriodicity
+  minimal-test.html       — Standalone worklet test (no Vite)
 
 public/worklets/
-  calibration-test.worklet.js — AudioWorkletProcessor: PING/PONG, START/STOP recording, RESET, TOGGLE_FEEDBACK
+  calibration-test.worklet.js — AudioWorkletProcessor: PING/PONG, START/STOP/RESET, POLL/SNAPSHOT,
+                                TOGGLE_FEEDBACK, transferable RESULT
 ```
 
-### Data Flow
-1. **Init**: gesture → AudioContext → addModule → workletNode → output graph → resume → getUserMedia → mic connected → settle → ready
-2. **MLS test**: PING (health check) → RESET + PING/PONG (drain) → `runMlsTest()` for each amplitude → POST START to worklet → play BufferSource → worklet records → RESULT returned → correlation analysis
-3. **Sweep**: geometric amplitudes → run all → cluster latencies → check history → display
-4. **Clap test**: PING → play metronome → user claps → mic records → detect peaks → compare to expected → latency = median offset
+### Data Flows
+
+**Beep / BeepFreq / Early tests:**
+```
+PING (health) → RESET + PING/PONG (drain) → POST START to worklet → play BufferSource →
+worklet records → RESULT returned → detect trailing edges → findBestShift match → latency
+```
+
+**MLS Sweep:**
+```
+PING → RESET + PING/PONG → for each amplitude:
+  runMlsTest() → RESET + PING/PONG → START → play MLS → RESULT → correlate
+→ cluster all amplitude results → display cluster mean ± stddev
+```
+
+**Clap v2:**
+```
+PING → AbortController → LOOP:
+  chunk on workletNode A: START → record → RESULT → analyze
+  silence gap (AEC de-adapt)
+  chunk on workletNode B: START → record → RESULT → analyze
+  silence gap
+  swap back to A
+  until Stopped
+→ aggregate all chunks → display mean ± stddev across valid chunks
+```
+
+**Meta-Freq:**
+```
+for each of 26 frequencies:
+  generate frequency beep → START → play → RESULT → measure amplitude at frequency
+→ render canvas graph → highlight peak
+```
+
+---
+
+## Recent Changes
+
+### POLL/SNAPSHOT Handler (worklet)
+Added for future progressive analysis use (e.g., vocal calibration). On `POLL`, worklet copies the current buffer content and sends it as `SNAPSHOT`. Currently unused by any test — the chunked clap test uses independent START→RESULT cycles.
+
+### validatePeriodicity() (analysis.ts)
+Helper for gap-pattern edge rejection. After trailing-edge detection, checks that detected edges match the expected gap pattern within tolerance. Rejects false positives from echoes or ambient noise.
+
+### Clap v2 Rewrite
+Complete rewrite: looping steady pulse with half-gap anchor, overlapping 2-worklet chunks, configurable chunk size/gap duration, progressive per-chunk analysis, cross-chunk consistency. Old clap test (single-worklet, fixed pattern) replaced.
+
+### Early-AEC Beep Test
+Shorter beep variant with gaps optimized for pre-convergence AEC window. Auto-runs after mic re-acquire. Separate test card with dedicated amplitude slider.
+
+### Meta-Freq Scan
+26-frequency log scan with canvas graph. Measures which frequencies pass through headphone-mic path best. One-per-device diagnostic (~60s).
+
+### Full Engine Restart
+New button that fully tears down AudioContext, stops all polls, resets all state variables, and re-initializes from scratch. Useful for recovery after edge cases.
+
+### Device Change Auto-Reacquire
+`devicechange` listener auto-runs `reacquireMic()` on device change. Shows AEC state, enumerates devices, auto-runs Early-AEC beep.
 
 ---
 
@@ -163,9 +236,24 @@ public/worklets/
 
 | Symptom | Likely Cause | Fix |
 |---------|-------------|-----|
-| No amplitude passes P2N threshold | MLS too quiet to trigger gate, or gate clips burst | Check wake clicks are audible; increase minimum amplitude in `generateAmplitudes()` |
-| P2N ≥ 18dB but latency wrong (e.g., -400ms) | Wake clicks or activator harmonics correlating with 4kHz BP | RMS P2N fix should prevent this; check that bandpass is centered at 4kHz |
-| Worklet stuck "recording" | Stale `_recording` from previous test | Our `RESET` + PING drain should fix; verify in health poll |
-| "MLS: failed — no recording" | Worklet not responding or timeout | Check PING/PONG in health poll; check worklet is loaded (`addModule`) |
-| AudioContext won't resume on scroll | Firefox/Chrome require user gesture | Single-phase init + click fallback handles this |
-| History shows wrong device | Device combo hash changed | Clear localStorage manually |
+| No amplitude passes edge threshold | Signal too quiet for noise gate | Increase amplitude; check wake clicks are audible |
+| Latency wrong (e.g., -400ms) | Noise gate clipping onset | Clustering rejects these; trailing-edge helps |
+| Worklet stuck "recording" | Stale state from previous test | RESET + PING drain should fix; try Full Restart |
+| Clap test no chunks collected | Chunk too short or gap too small | Increase chunk size; ensure claps fall within chunk window |
+| AEC shows "may process" on Firefox | Platform limitation | Use clap test (novel sound defeats AEC) or Early-AEC (pre-convergence) |
+| AudioContext won't resume | Requires user gesture | Single-phase init + click fallback handles this |
+| Canvas graph not rendering | No data or missing canvas | Run Meta-Freq test first — canvas appears on completion |
+
+---
+
+## Future Work
+
+### Production Integration
+1. Convert test-bed algorithms into a unified calibration flow within the app
+2. Per-device latency profiles stored in `deviceLatencyCache` (already in `useStore.ts`)
+3. Platform-aware test selection: clap v2 as primary for Firefox, MLS/beep for Chrome
+4. Auto-run calibration on first use or when new device detected
+5. Visual calibration overlay as fallback for impossible cases
+
+### Vocal Calibration
+The POLL/SNAPSHOT handler and chunked approach in clap v2 were designed with future vocal calibration in mind. The same overlapping-chunk architecture could record a user singing a reference and align it to expected timing.

@@ -24,9 +24,9 @@ Initial assumption: Firefox enters a "passthrough mode" in its libwebrtc module 
 
 **Commit:** `a4ec9c2`
 
-**Constraints that work:**
+**Constraints:**
 ```js
-// Firefox (Phase 2 — correct)
+// Firefox (Phase 2)
 {
   echoCancellation: false,
   noiseSuppression: false,
@@ -36,6 +36,28 @@ Initial assumption: Firefox enters a "passthrough mode" in its libwebrtc module 
 ```
 
 All three ideal constraints set to `false`, plus `sampleRate` matching the `AudioContext` to avoid resampling.
+
+### Phase 3: AEC Cannot Be Disabled on Firefox (calibration test harness, June 2026)
+
+**Finding:** Even with all three ideal constraints, Firefox on Linux applies system-level AEC via PulseAudio. The constraints are non-binding target hints — `getSettings()` may show `echoCancellation: false` but PulseAudio still processes the stream.
+
+**Key facts:**
+- `{ exact: false }` is not supported by Firefox — throws `OverconstrainedError`
+- `echoCancellation: false` is a non-binding target constraint per MDN spec
+- Only `about:config` flags can force-disable AEC on Firefox
+- This is a spec-level limitation, not a code bug
+
+**Strategic impact:**
+This finding reshaped the calibration test strategy. Instead of trying to disable AEC on Firefox, tests were redesigned to work with AEC present:
+- **Clap v2**: Novel sound (user clap) is not echo, so AEC doesn't suppress it
+- **Early-AEC beep**: Runs during AEC filter pre-convergence window (~2–5s) when suppression is weakest
+- **Silence gaps**: Between clap chunks, brief silences partially de-adapt the AEC filter
+- Chrome/Chromium remain the reliable platform for tone-based tests
+
+**Calibration test call sites:**
+- `tests/calibration-test/main.ts` — `ensureWorkletReady()` and `reacquireMic()` use same platform-aware pattern
+
+**See also:** `docs/CALIBRATION_TEST.md` (AEC Strategy section) for the full picture.
 
 ## Root Causes
 
@@ -81,13 +103,15 @@ const isChrome = /Chrome/.test(navigator.userAgent);
 
 This detects Chrome (including Chromium-based browsers). Firefox, Safari, and others take the non-Chrome path.
 
-**Important:** This check should be used at every `getUserMedia` call site. All three call sites in AWNN use the same pattern:
+**Important:** This check should be used at every `getUserMedia` call site. All call sites in AWNN use the same pattern:
 
 | Call Site | File |
 |-----------|------|
 | `RecordingEngine.initializeForPlayback()` | `src/audio/recording/RecordingEngine.ts` |
 | `RecordingEngine.initStream()` | `src/audio/recording/RecordingEngine.ts` |
 | `LatencyCalibrator.runCalibration()` | `src/lib/audio/LatencyCalibrator.ts` |
+| `ensureWorkletReady()` | `tests/calibration-test/main.ts` |
+| `reacquireMic()` | `tests/calibration-test/main.ts` |
 
 ## Diagnostic Tool: `getSettings()`
 
@@ -150,3 +174,4 @@ If any of these show `true`, the raw audio path is broken.
 | `f524e7c` | Remove `channelCountMode: explicit` from calibrator worklet |
 | `a4ec9c2` | **Correct fix:** restore all three constraints + `sampleRate` |
 | `5fa147b` | Add `getSettings()` logging for diagnostics |
+| `351cfaf` | Calibration tests: clap v2 wiring, early beep, meta-freq, full restart + docs |
