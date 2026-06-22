@@ -33,6 +33,12 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
           onmessageCount: this._onmessageCount,
           feedbackEnabled: this._feedbackEnabled,
         });
+      } else if (e.data.type === 'POLL') {
+        const snapshot = new Float32Array(this._buffer);
+        this.port.postMessage(
+          { type: 'SNAPSHOT', frames: snapshot, frameCount: this._buffer.length },
+          [snapshot.buffer],
+        );
       } else if (e.data.type === 'RESET') {
         this._buffer = [];
         this._recording = false;

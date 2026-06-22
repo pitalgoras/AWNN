@@ -1,10 +1,15 @@
 import { runMlsTest, SAFE_AMPLITUDES, LOUD_AMPLITUDES, DEFAULT_GAPS_MS } from './test-mls';
 import type { MlsResult } from './test-mls';
 import { runClapTest } from './test-clap';
+import type { ClapTestResult } from './test-clap';
 import { runBeepTest } from './test-beeps';
 import type { BeepResult } from './test-beeps';
 import { runBeepFreqTest } from './test-beepfreq';
 import type { BeepFreqResult } from './test-beepfreq';
+import { runEarlyBeepTest } from './test-beep-early';
+import type { EarlyBeepResult } from './test-beep-early';
+import { runMetaFreqTest } from './test-metafreq';
+import type { MetaFreqResult, MetaFreqPoint } from './test-metafreq';
 import { computeRMS } from './analysis';
 
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
@@ -50,6 +55,7 @@ function renderHistoryTable(entries: HistoryEntry[], extraLabel?: string): strin
 
 let ctx: AudioContext | null = null;
 let workletNode: AudioWorkletNode | null = null;
+let workletNodeB: AudioWorkletNode | null = null;
 let micStream: MediaStream | null = null;
 let outputAnalyser: AnalyserNode | null = null;
 let inputAnalyser: AnalyserNode | null = null;
@@ -64,7 +70,13 @@ let noiseFloorTargetAmp = 0.2;
 let feedbackEnabled = true;
 let inputVuElement: HTMLDivElement;
 let inputVuVal: HTMLSpanElement;
+let clapAbortController: AbortController | null = null;
+let isClapRunning = false;
+let isEarlyRunning = false;
+let isMetaFreqRunning = false;
+let isReacquiring = false;
 const logBuffer: string[] = [];
+let deviceChangeHandler: (() => void) | null = null;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -101,7 +113,7 @@ function readOL(label: string) {
 function setButtonsLoading() {
   $('status').textContent = 'Initializing audio...';
   $('status').className = 'msg pending';
-  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise', 'btn-early', 'btn-metafreq', 'btn-reacquire-mic', 'btn-full-restart']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = true;
   }
@@ -109,7 +121,7 @@ function setButtonsLoading() {
 }
 
 function setButtonsReady() {
-  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-refresh', 'btn-capture-noise', 'btn-early', 'btn-metafreq', 'btn-reacquire-mic', 'btn-full-restart']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = false;
   }
@@ -121,12 +133,14 @@ function setButtonsFailed(msg: string) {
   initRunning = false;
   $('status').textContent = `✗ ${msg}`;
   $('status').className = 'msg err';
-  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose']) {
+  for (const id of ['btn-mls', 'btn-beep', 'btn-beepfreq', 'btn-clap', 'btn-diagnose', 'btn-early', 'btn-metafreq']) {
     const b = $(id) as HTMLButtonElement;
     b.disabled = true;
     b.title = `Init failed: ${msg}`;
   }
   ($('btn-refresh') as HTMLButtonElement).disabled = false;
+  ($('btn-reacquire-mic') as HTMLButtonElement).disabled = false;
+  ($('btn-full-restart') as HTMLButtonElement).disabled = false;
   log(`❌ ${msg}`, 'err');
 }
 
@@ -264,6 +278,263 @@ async function enumerateAllDevices() {
     }
   }
   $('device-settings').textContent = settingLines.length ? `Active track: ${settingLines.join(', ')}` : '';
+}
+
+/* ── AEC State ──────────────────────────────────────────── */
+
+function showAecState() {
+  if (!micStream) { $('aec-state').textContent = '—'; return; }
+  const track = micStream.getAudioTracks()[0];
+  const settings = track?.getSettings();
+  if (!settings) { $('aec-state').textContent = 'unknown'; return; }
+  const ec = settings.echoCancellation;
+  const ns = settings.noiseSuppression;
+  const agc = settings.autoGainControl;
+  const parts: string[] = [];
+  if (ec !== undefined) parts.push(`AEC=${ec}`);
+  if (ns !== undefined) parts.push(`NS=${ns}`);
+  if (agc !== undefined) parts.push(`AGC=${agc}`);
+  const el = $('aec-state');
+  if (ec === false && ns === false && agc === false) {
+    el.textContent = `${parts.join(', ')} ✓ raw`;
+    el.style.color = '#86efac';
+  } else {
+    el.textContent = `${parts.join(', ')} ⚠ may process`;
+    el.style.color = '#facc15';
+  }
+}
+
+/* ── Device Change Auto-Reacquire ──────────────────────── */
+
+function registerDeviceChangeHandler() {
+  if (deviceChangeHandler) {
+    navigator.mediaDevices.removeEventListener('devicechange', deviceChangeHandler);
+  }
+  deviceChangeHandler = () => {
+    log('Device change detected — auto re-acquiring mic', 'ok');
+    reacquireMic();
+  };
+  navigator.mediaDevices.addEventListener('devicechange', deviceChangeHandler);
+}
+
+/* ── Mic Re-acquire (resets AEC filter) ────────────────── */
+
+async function reacquireMic() {
+  if (!ctx || isReacquiring) return;
+  isReacquiring = true;
+  try {
+    log('Re-acquiring mic...', 'ok');
+    // Stop existing mic
+    if (micStream) {
+      micStream.getTracks().forEach(t => t.stop());
+      micStream = null;
+    }
+    // Re-request
+    const isChrome = /Chrome/.test(navigator.userAgent) && !/Edg/.test(navigator.userAgent);
+    const audioConstraints = isChrome
+      ? { echoCancellation: { exact: false }, noiseSuppression: { exact: false }, autoGainControl: { exact: false } }
+      : { echoCancellation: false, noiseSuppression: false, autoGainControl: false, sampleRate: ctx.sampleRate };
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints as MediaStreamConstraints });
+    log('getUserMedia OK after re-acquire');
+
+    // Reconnect to worklet nodes
+    const micSrc = ctx.createMediaStreamSource(micStream);
+    const mixerNode = ctx.createGain();
+    mixerNode.gain.value = 1;
+    micSrc.connect(inputAnalyser!);
+    micSrc.connect(mixerNode);
+    mixerNode.connect(workletNode!);
+    if (workletNodeB) {
+      const mixerB = ctx.createGain();
+      mixerB.gain.value = 1;
+      micSrc.connect(mixerB);
+      mixerB.connect(workletNodeB);
+    }
+    log('Mic reconnected to worklet nodes');
+
+    showAecState();
+    enumerateAllDevices();
+
+    // Auto-run early beep test
+    log('Auto-running Early AEC Beep test after re-acquire...');
+    if (ctx && workletNode) {
+      const result = await runEarlyBeepTest(ctx, workletNode);
+      const el = $('early-result');
+      if (result.success) {
+        el.className = 'result ok';
+        el.innerHTML = `Latency <strong>${result.latencyMs.toFixed(1)}ms</strong> ±${result.stdDev.toFixed(1)}ms (auto after re-acquire)`;
+      } else {
+        el.className = 'result info';
+        el.innerHTML = `Early test: ${result.error || 'no result'} — try higher amplitude or Run manually`;
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    log(`Re-acquire failed: ${msg}`, 'err');
+  } finally {
+    isReacquiring = false;
+  }
+}
+
+/* ── Canvas: Meta-Freq Graph ───────────────────────────── */
+
+function renderMetaFreqGraph(canvas: HTMLCanvasElement, points: MetaFreqPoint[]) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx2d = canvas.getContext('2d');
+  if (!ctx2d) return;
+  ctx2d.scale(dpr, dpr);
+  const w = rect.width;
+  const h = rect.height;
+
+  ctx2d.fillStyle = '#000';
+  ctx2d.fillRect(0, 0, w, h);
+
+  if (points.length < 2) return;
+
+  const minFreq = points[0].frequencyHz;
+  const maxFreq = points[points.length - 1].frequencyHz;
+  const logMin = Math.log(minFreq);
+  const logMax = Math.log(maxFreq);
+  const logRange = logMax - logMin;
+
+  const amps = points.map(p => p.amplitudeDb);
+  const minAmp = Math.min(...amps);
+  const maxAmp = Math.max(...amps);
+  const ampRange = Math.max(maxAmp - minAmp, 1);
+
+  const padX = 40;
+  const padY = 20;
+  const plotW = w - padX * 2;
+  const plotH = h - padY * 2;
+
+  // Grid
+  ctx2d.strokeStyle = '#1c1c1f';
+  ctx2d.lineWidth = 1;
+  for (let i = 0; i <= 4; i++) {
+    const y = padY + (i / 4) * plotH;
+    ctx2d.beginPath();
+    ctx2d.moveTo(padX, y);
+    ctx2d.lineTo(w - padX, y);
+    ctx2d.stroke();
+  }
+
+  // Plot line
+  ctx2d.beginPath();
+  ctx2d.strokeStyle = '#22c55e';
+  ctx2d.lineWidth = 2;
+  for (let i = 0; i < points.length; i++) {
+    const x = padX + ((Math.log(points[i].frequencyHz) - logMin) / logRange) * plotW;
+    const y = padY + (1 - (points[i].amplitudeDb - minAmp) / ampRange) * plotH;
+    if (i === 0) ctx2d.moveTo(x, y);
+    else ctx2d.lineTo(x, y);
+  }
+  ctx2d.stroke();
+
+  // Peak marker
+  const bestIdx = points.reduce((best, p, i, arr) => p.amplitudeRms > arr[best].amplitudeRms ? i : best, 0);
+  const bestX = padX + ((Math.log(points[bestIdx].frequencyHz) - logMin) / logRange) * plotW;
+  const bestY = padY + (1 - (points[bestIdx].amplitudeDb - minAmp) / ampRange) * plotH;
+  ctx2d.beginPath();
+  ctx2d.arc(bestX, bestY, 5, 0, Math.PI * 2);
+  ctx2d.fillStyle = '#fbbf24';
+  ctx2d.fill();
+
+  // Axis labels
+  ctx2d.fillStyle = '#71717a';
+  ctx2d.font = '9px monospace';
+  const freqLabels = [points[0], points[Math.floor(points.length / 2)], points[points.length - 1]];
+  for (const fl of freqLabels) {
+    const x = padX + ((Math.log(fl.frequencyHz) - logMin) / logRange) * plotW;
+    ctx2d.fillText(`${fl.frequencyHz}Hz`, x - 15, h - 4);
+  }
+  ctx2d.fillText(`${minAmp.toFixed(0)}dB`, 2, padY + 10);
+  ctx2d.fillText(`${maxAmp.toFixed(0)}dB`, 2, h - padY);
+  ctx2d.fillStyle = '#fbbf24';
+  ctx2d.fillText(`★ ${points[bestIdx].frequencyHz}Hz`, bestX - 20, Math.max(bestY - 8, 10));
+}
+
+/* ── Canvas: Clap Waveform ─────────────────────────────── */
+
+function renderClapWaveform(
+  canvas: HTMLCanvasElement,
+  recorded: Float32Array,
+  beatMs: number[],
+  clapMs: number[],
+  latencyMs: number,
+) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  const ctx2d = canvas.getContext('2d');
+  if (!ctx2d) return;
+  ctx2d.scale(dpr, dpr);
+  const w = rect.width;
+  const h = rect.height;
+
+  ctx2d.fillStyle = '#18181b';
+  ctx2d.fillRect(0, 0, w, h);
+
+  const len = recorded.length;
+  if (len === 0) return;
+
+  // Draw waveform
+  const midY = h / 2;
+  const blockSize = Math.ceil(len / w);
+  ctx2d.beginPath();
+  ctx2d.moveTo(0, midY);
+  for (let x = 0; x < w; x++) {
+    const start = Math.floor(x * len / w);
+    const end = Math.floor((x + 1) * len / w);
+    let peak = 0;
+    for (let j = start; j < end && j < len; j++) peak = Math.max(peak, Math.abs(recorded[j]));
+    ctx2d.lineTo(x, midY - peak * midY * 0.8);
+  }
+  ctx2d.strokeStyle = '#3b82f6';
+  ctx2d.lineWidth = 1;
+  ctx2d.stroke();
+
+  // Draw beat markers (gold vertical lines)
+  for (const bm of beatMs) {
+    const x = (bm / (len / 44100) / (len / 44100)) * w;  // normalize
+    const xPos = (bm / 1000) / (recorded.length / 44100 / 1000) * w;
+    ctx2d.beginPath();
+    ctx2d.moveTo(xPos, 0);
+    ctx2d.lineTo(xPos, h);
+    ctx2d.strokeStyle = '#fbbf24';
+    ctx2d.lineWidth = 1;
+    ctx2d.setLineDash([2, 3]);
+    ctx2d.stroke();
+    ctx2d.setLineDash([]);
+  }
+
+  // Draw clap markers (cyan vertical lines)
+  for (const cm of clapMs) {
+    const xPos = (cm / 1000) / (recorded.length / 44100 / 1000) * w;
+    ctx2d.beginPath();
+    ctx2d.moveTo(xPos, 0);
+    ctx2d.lineTo(xPos, h);
+    ctx2d.strokeStyle = '#22d3ee';
+    ctx2d.lineWidth = 2;
+    ctx2d.stroke();
+  }
+
+  // Center line
+  ctx2d.beginPath();
+  ctx2d.moveTo(w / 2, 0);
+  ctx2d.lineTo(w / 2, h);
+  ctx2d.strokeStyle = '#52525b';
+  ctx2d.lineWidth = 1;
+  ctx2d.setLineDash([4, 4]);
+  ctx2d.stroke();
+  ctx2d.setLineDash([]);
+
+  ctx2d.fillStyle = '#71717a';
+  ctx2d.font = '9px monospace';
+  ctx2d.fillText(`${beatMs.length} beats, ${clapMs.length} claps, ${latencyMs.toFixed(0)}ms offset`, 4, 12);
 }
 
 /* ── Noise Floor ──────────────────────────────────────── */
@@ -531,6 +802,17 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
 
       log('AudioWorkletNode created');
       readOL('T4: after AudioWorkletNode');
+
+      // ─── Create workletNodeB for overlapping chunks ───
+      workletNodeB = new AudioWorkletNode(ctx, 'test-recorder', {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [1],
+        channelCount: 1,
+        channelCountMode: 'explicit',
+      });
+      workletNodeB.port.start();
+      log('AudioWorkletNodeB created');
     }
 
     // ─── Setup output audio graph (no mic needed yet) ───
@@ -556,6 +838,7 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       outputAnalyser.fftSize = 1024;
       outputAnalyser.smoothingTimeConstant = 0.3;
       workletNode.connect(outputAnalyser);
+      workletNodeB?.connect(outputAnalyser);
       outputAnalyser.connect(ctx.destination);
 
       inputAnalyser = ctx.createAnalyser();
@@ -622,7 +905,11 @@ async function ensureWorkletReady(gestureType?: string): Promise<boolean> {
       micSrc.connect(inputAnalyser!);
       micSrc.connect(mixerNode);
       mixerNode.connect(workletNode!);
-      log('Mic connected to worklet');
+      const mixerNodeB = ctx.createGain();
+      mixerNodeB.gain.value = 1;
+      micSrc.connect(mixerNodeB);
+      mixerNodeB.connect(workletNodeB!);
+      log('Mic connected to both worklet nodes');
     }
 
     // ─── Settle + display ───
@@ -930,64 +1217,160 @@ $('btn-mls').onclick = async () => {
 
 $('btn-clap').onclick = async () => {
   if (!isInitialized) { if (!initFailed) await ensureWorkletReady(); return; }
-  if (!ctx || !workletNode) return;
+  if (!ctx || !workletNode || !workletNodeB) return;
   if (ctx.state === 'suspended') await ctx.resume();
+
+  const btn = $('btn-clap') as HTMLButtonElement;
+
+  if (clapAbortController) {
+    clapAbortController.abort();
+    clapAbortController = null;
+    btn.textContent = 'Start Clap Test';
+    return;
+  }
 
   const health = await pingWorklet(workletNode);
   if (!health.ok) {
     log(`Clap: worklet not responding (${health.error})`, 'err');
     $('clap-result').className = 'err';
-    $('clap-result').innerHTML = `Worklet not responding (${health.error})<br>
-      <span style="font-size:10px">ctx.state=${ctx.state}</span>`;
+    $('clap-result').innerHTML = `Worklet not responding (${health.error})`;
     return;
   }
-  log(`Clap: worklet alive (frame=${health.currentFrame})`, 'ok');
 
-  const btn = $('btn-clap') as HTMLButtonElement;
-  const loopCb = $('clap-loop') as HTMLInputElement;
+  clapAbortController = new AbortController();
+  const signal = clapAbortController.signal;
+  isClapRunning = true;
+  btn.textContent = 'Stop';
+  $('clap-result').textContent = '';
+  $('clap-chunks-container').textContent = '';
+
+  const bpm = parseInt(($('clap-bpm') as HTMLInputElement).value) || 120;
+  const chunkSizeSec = parseInt(($('clap-chunk') as HTMLInputElement).value) || 2;
+  const gapMs = parseInt(($('clap-gap') as HTMLInputElement).value) || 150;
+
+  const chunkDisplay: string[] = [];
+  const onProgress = (chunk: ClapChunk) => {
+    const icon = chunk.confidence > 0.3 ? '✓' : '✗';
+    chunkDisplay.push(`${icon} chunk #${chunk.idx}: ${chunk.latencyMs.toFixed(1)}ms ±${chunk.stdDev.toFixed(1)}ms (${chunk.matchedClaps}/${chunk.totalBeats} claps)`);
+    $('clap-chunks-container').innerHTML = chunkDisplay.join('<br>');
+  };
+
+  const result = await runClapTest(ctx, [workletNode, workletNodeB], { bpm, chunkSizeSec, gapMs }, onProgress, signal);
+
+  const el = $('clap-result');
+  if (result.success) {
+    el.className = 'result ok';
+    el.innerHTML = `
+      Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong><br>
+      Chunks used: ${result.chunksUsed}/${result.chunks.length}<br>
+      StdDev: ${result.stdDev.toFixed(1)}ms<br>
+      Confidence: ${(result.confidence * 100).toFixed(1)}%
+    `;
+    log(`Clap: latency=${result.latencyMs.toFixed(1)}ms chunks=${result.chunksUsed}/${result.chunks.length}`, 'ok');
+  } else if (signal.aborted) {
+    if (result.chunks.length > 0) {
+      el.className = 'result info';
+      el.innerHTML = `Stopped early — best estimate: <strong>${result.latencyMs.toFixed(1)}ms</strong> ±${result.stdDev.toFixed(1)}ms<br>Chunks: ${result.chunks.length} collected, ${result.chunksUsed} valid`;
+      log(`Clap: stopped early — ${result.latencyMs.toFixed(1)}ms ${result.chunks.length} chunks`, 'ok');
+    } else {
+      el.className = 'result info';
+      el.innerHTML = 'Stopped — no chunks collected';
+    }
+  } else {
+    el.className = 'result err';
+    el.innerHTML = `Failed: ${result.error}<br>${result.chunks.length > 0 ? `Best guess: ${result.latencyMs.toFixed(1)}ms, ${result.chunksUsed} valid chunks` : ''}`;
+    log(`Clap: failed — ${result.error}`, 'err');
+  }
+
+  addToHistory(clapHistory, {
+    amplitude: 0,
+    latencyMs: result.latencyMs,
+    stdDev: result.stdDev,
+    matchedBursts: result.matchedClaps,
+    totalBursts: result.totalBeats || 1,
+  });
+  $('clap-history').innerHTML = renderHistoryTable(clapHistory);
+
+  btn.textContent = 'Start Clap Test';
+  clapAbortController = null;
+  isClapRunning = false;
+};
+
+$('btn-early').onclick = async () => {
+  if (!isInitialized) { if (!initFailed) await ensureWorkletReady(); return; }
+  if (!ctx || !workletNode) return;
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  const health = await pingWorklet(workletNode);
+  if (!health.ok) {
+    log(`Early: worklet not responding (${health.error})`, 'err');
+    $('early-result').className = 'err';
+    $('early-result').innerHTML = `Worklet not responding (${health.error})`;
+    return;
+  }
+
+  const btn = $('btn-early') as HTMLButtonElement;
   btn.disabled = true;
 
-  do {
-    btn.textContent = loopCb.checked ? 'Looping...' : 'Running...';
-    $('clap-result').textContent = '';
+  const amp = parseFloat(($('early-amp') as HTMLInputElement).value) || 0.4;
+  const result = await runEarlyBeepTest(ctx, workletNode, amp);
 
-    const bpmInput = $('bpm') as HTMLInputElement;
-    const bpm = parseInt(bpmInput.value) || 120;
-    const result = await runClapTest(ctx, workletNode, bpm);
-
-    const el = $('clap-result');
-    if (result.success) {
-      el.className = 'result ok';
-      el.innerHTML = `
-        Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong><br>
-        Claps matched: ${result.clapCount}<br>
-        StdDev: ${result.stdDev.toFixed(1)}ms<br>
-        Confidence: ${(result.confidence * 100).toFixed(1)}%
-      `;
-      log(`Clap: latency=${result.latencyMs.toFixed(1)}ms matched=${result.clapCount}`, 'ok');
-    } else {
-      el.className = 'result err';
-      el.innerHTML = `Failed: ${result.error}<br>
-        ${result.latencyMs > 0 ? `(best guess: ${result.latencyMs.toFixed(1)}ms, ${result.clapCount} claps)` : ''}
-      `;
-      log(`Clap: failed — ${result.error}`, 'err');
-    }
-
-    addToHistory(clapHistory, {
-      amplitude: 0,
-      latencyMs: result.latencyMs,
-      stdDev: result.stdDev,
-      matchedBursts: result.clapCount,
-      totalBursts: result.clapCount || 1,
-    });
-    $('clap-history').innerHTML = renderHistoryTable(clapHistory);
-
-    if (!loopCb.checked) break;
-    await sleep(1500);
-  } while (true);
+  const el = $('early-result');
+  if (result.success) {
+    el.className = 'result ok';
+    el.innerHTML = `Latency: <strong>${result.latencyMs.toFixed(1)}ms</strong> ±${result.stdDev.toFixed(1)}ms<br>Trailing edges matched: ${result.matchedBursts}/${result.totalBursts}<br>Confidence: ${(result.confidence * 100).toFixed(1)}%`;
+    log(`Early: latency=${result.latencyMs.toFixed(1)}ms matched=${result.matchedBursts}/${result.totalBursts}`, 'ok');
+  } else {
+    el.className = 'result err';
+    el.innerHTML = `Failed: ${result.error}<br>${result.matchedBursts > 0 ? `Best match: ${result.latencyMs.toFixed(1)}ms, ${result.matchedBursts}/${result.totalBursts}` : ''}`;
+    log(`Early: failed — ${result.error}`, 'err');
+  }
 
   btn.disabled = false;
-  btn.textContent = 'Run Clap Test';
+};
+
+$('btn-metafreq').onclick = async () => {
+  if (!isInitialized) { if (!initFailed) await ensureWorkletReady(); return; }
+  if (!ctx || !workletNode) return;
+  if (ctx.state === 'suspended') await ctx.resume();
+
+  const health = await pingWorklet(workletNode);
+  if (!health.ok) {
+    log(`MetaFreq: worklet not responding (${health.error})`, 'err');
+    return;
+  }
+
+  const btn = $('btn-metafreq') as HTMLButtonElement;
+  btn.disabled = true;
+
+  const progressEl = $('metafreq-progress');
+  const canvas = $('metafreq-graph') as HTMLCanvasElement;
+  const bestEl = $('metafreq-best');
+  const resultEl = $('metafreq-result');
+
+  const result = await runMetaFreqTest(ctx, workletNode, (point, done, total) => {
+    progressEl.textContent = `${done}/${total} — ${point.frequencyHz}Hz: ${point.amplitudeDb.toFixed(1)}dB`;
+  });
+
+  progressEl.textContent = '';
+  canvas.style.display = 'block';
+  renderMetaFreqGraph(canvas, result.points);
+
+  if (result.success) {
+    bestEl.textContent = `★ Best frequency: ${result.peakFrequencyHz}Hz (${result.peakAmplitudeDb.toFixed(1)}dB)`;
+    resultEl.className = 'result ok';
+    resultEl.textContent = `${result.points.length} frequencies scanned`;
+    resultEl.style.display = 'block';
+    log(`MetaFreq: peak at ${result.peakFrequencyHz}Hz (${result.peakAmplitudeDb.toFixed(1)}dB)`, 'ok');
+  } else {
+    bestEl.textContent = '';
+    resultEl.className = 'result err';
+    resultEl.textContent = `Scan failed: ${result.error}`;
+    resultEl.style.display = 'block';
+    log(`MetaFreq: failed — ${result.error}`, 'err');
+  }
+
+  btn.disabled = false;
 };
 
 $('btn-beepfreq').onclick = async () => {
@@ -1163,6 +1546,42 @@ if (beepFreqAmpSlider && beepFreqAmpVal) {
   });
 }
 
+// Clap BPM slider live value display
+const clapBpmSlider = $('clap-bpm') as HTMLInputElement;
+const clapBpmVal = $('clap-bpm-val');
+if (clapBpmSlider && clapBpmVal) {
+  clapBpmSlider.addEventListener('input', () => {
+    clapBpmVal.textContent = clapBpmSlider.value;
+  });
+}
+
+// Clap chunk size slider live value display
+const clapChunkSlider = $('clap-chunk') as HTMLInputElement;
+const clapChunkVal = $('clap-chunk-val');
+if (clapChunkSlider && clapChunkVal) {
+  clapChunkSlider.addEventListener('input', () => {
+    clapChunkVal.textContent = clapChunkSlider.value;
+  });
+}
+
+// Clap gap slider live value display
+const clapGapSlider = $('clap-gap') as HTMLInputElement;
+const clapGapVal = $('clap-gap-val');
+if (clapGapSlider && clapGapVal) {
+  clapGapSlider.addEventListener('input', () => {
+    clapGapVal.textContent = clapGapSlider.value;
+  });
+}
+
+// Early amplitude slider live value display
+const earlyAmpSlider = $('early-amp') as HTMLInputElement;
+const earlyAmpVal = $('early-amp-val');
+if (earlyAmpSlider && earlyAmpVal) {
+  earlyAmpSlider.addEventListener('input', () => {
+    earlyAmpVal.textContent = parseFloat(earlyAmpSlider.value).toFixed(2);
+  });
+}
+
 function renderBeepEdgeTable(result: BeepResult): string {
   if (result.matchedDetectedSamples.length === 0 && result.detectedEdges.length === 0) return '';
   let html = '<table class="sweep-table" style="margin-top:6px"><tr><th>#</th><th>Expected (smp)</th><th>Detected (smp)</th><th>Offset (ms)</th></tr>';
@@ -1215,6 +1634,42 @@ $('btn-refresh').onclick = async () => {
 };
 
 $('btn-init').onclick = () => ensureWorkletReady();
+
+$('btn-reacquire-mic').onclick = reacquireMic;
+
+$('btn-full-restart').onclick = async () => {
+  log('Full engine restart...');
+  stopHealthPoll();
+  stopVUPoll();
+  if (clapAbortController) {
+    clapAbortController.abort();
+    clapAbortController = null;
+  }
+  if (micStream) {
+    micStream.getTracks().forEach(t => t.stop());
+    micStream = null;
+  }
+  if (ctx) {
+    await ctx.close();
+    ctx = null;
+  }
+  workletNode = null;
+  workletNodeB = null;
+  outputAnalyser = null;
+  inputAnalyser = null;
+  isInitialized = false;
+  initFailed = false;
+  initRunning = false;
+  lastProcessCount = -1;
+  $('outputLat').textContent = '—';
+  $('baseLat').textContent = '—';
+  $('heuristic').textContent = '—';
+  $('settle-trace').innerHTML = '';
+  $('worklet-status').className = 'msg pending';
+  $('worklet-status').textContent = '⏳ Re-initializing...';
+  log('State reset — re-acquiring audio...');
+  await ensureWorkletReady();
+};
 
 $('btn-diagnose').onclick = runDiagnose;
 

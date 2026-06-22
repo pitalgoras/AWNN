@@ -282,3 +282,18 @@ export function generateNoise(seed: number, length: number, amplitude = 0.3): Fl
   for (let i = 0; i < length; i++) buf[i] = (rng() * 2 - 1) * amplitude;
   return buf;
 }
+
+export function validatePeriodicity(
+  detectedPositions: number[],
+  expectedGaps: number[],
+  tolerancePct: number,
+): boolean {
+  if (detectedPositions.length < expectedGaps.length + 1) return false;
+  for (let i = 1; i < detectedPositions.length && i <= expectedGaps.length; i++) {
+    const actualGap = detectedPositions[i] - detectedPositions[i - 1];
+    const expectedGap = expectedGaps[i - 1];
+    const tolerance = expectedGap * tolerancePct;
+    if (Math.abs(actualGap - expectedGap) > tolerance) return false;
+  }
+  return true;
+}

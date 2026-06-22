@@ -12,8 +12,10 @@ interface FeedbackMessage {
 
 const USER_ID_KEY = 'feedbackUserId';
 const DEV_MESSAGES_KEY = 'feedbackDevMessages';
-const POLL_OPEN_MS = 3000;
-const POLL_CLOSED_MS = 10 * 60 * 1000;
+const BLOB_URL_KEY = 'feedbackBlobUrl';
+const POLL_FAST_MS = 6000;
+const POLL_SLOW_MS = 120000;
+const FAST_WINDOW_MS = 120000;
 
 function setCookie(name: string, value: string) {
   document.cookie = `${name}=${encodeURIComponent(value)};path=/;max-age=31536000;SameSite=Lax`;
@@ -61,9 +63,11 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const userId = useRef(getUserId());
   const lastTsRef = useRef<string>('');
+  const blobUrlRef = useRef<string | null>(localStorage.getItem(BLOB_URL_KEY));
+  const panelOpenTsRef = useRef<number>(0);
+  const fetchRef = useRef<() => Promise<void>>(async () => {});
 
   const scrollToBottom = useCallback(() => {
     if (listRef.current) {
@@ -78,10 +82,16 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
         const stored = localStorage.getItem(DEV_MESSAGES_KEY);
         msgs = stored ? JSON.parse(stored) : [];
       } else {
-        const res = await fetch(`/api/feedback/messages?userId=${encodeURIComponent(userId.current)}`);
+        const params = new URLSearchParams({ userId: userId.current });
+        if (blobUrlRef.current) params.set('url', blobUrlRef.current);
+        const res = await fetch(`/api/feedback/messages?${params}`);
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
         msgs = data.messages || [];
+        if (data.url && data.url !== blobUrlRef.current) {
+          blobUrlRef.current = data.url;
+          localStorage.setItem(BLOB_URL_KEY, data.url);
+        }
       }
       msgs.sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
       setMessages(prev => {
@@ -96,6 +106,8 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
       console.error('Failed to fetch messages:', err);
     }
   }, []);
+
+  fetchRef.current = fetchMessages;
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
@@ -124,10 +136,18 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
         const res = await fetch('/api/feedback/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, userId: userId.current }),
+          body: JSON.stringify({
+            text,
+            userId: userId.current,
+            url: blobUrlRef.current || undefined,
+          }),
         });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+        if (data.url && data.url !== blobUrlRef.current) {
+          blobUrlRef.current = data.url;
+          localStorage.setItem(BLOB_URL_KEY, data.url);
+        }
         setMessages(prev =>
           prev.map(m => (m.id === optimistic.id ? { ...m, id: data.id, ts: data.ts } : m))
         );
@@ -145,15 +165,28 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
   }, [fetchMessages]);
 
   useEffect(() => {
-    if (pollRef.current) clearInterval(pollRef.current);
-    const interval = show ? POLL_OPEN_MS : POLL_CLOSED_MS;
-    if (interval > 0) {
-      pollRef.current = setInterval(fetchMessages, interval);
-    }
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
+    if (show) panelOpenTsRef.current = Date.now();
+  }, [show]);
+
+  useEffect(() => {
+    if (!show) return;
+
+    let timeoutId: ReturnType<typeof setTimeout>;
+
+    const poll = () => {
+      fetchRef.current?.();
+      const lastTs = lastTsRef.current;
+      const elapsed = lastTs
+        ? Date.now() - new Date(lastTs).getTime()
+        : Date.now() - panelOpenTsRef.current;
+      const interval = elapsed < FAST_WINDOW_MS ? POLL_FAST_MS : POLL_SLOW_MS;
+      timeoutId = setTimeout(poll, interval);
     };
-  }, [show, fetchMessages]);
+
+    poll();
+
+    return () => clearTimeout(timeoutId);
+  }, [show]);
 
   useEffect(() => {
     scrollToBottom();

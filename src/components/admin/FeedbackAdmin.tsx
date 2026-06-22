@@ -1,5 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, Loader2, ArrowLeft, MessageCircle } from 'lucide-react';
+
+const BLOB_URL_KEY = 'feedbackAdminBlobUrl';
+const POLL_FAST_MS = 6000;
+const POLL_SLOW_MS = 120000;
+const FAST_WINDOW_MS = 120000;
 
 interface FeedbackMessage {
   id: string;
@@ -44,12 +49,23 @@ export function FeedbackAdmin() {
   const [sending, setSending] = useState(false);
   const [loadingThreads, setLoadingThreads] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
+  const blobUrlRef = useRef<string | null>(localStorage.getItem(BLOB_URL_KEY));
+  const lastTsRef = useRef<string>('');
+  const fetchThreadsRef = useRef<() => Promise<void>>(async () => {});
+  const fetchMsgsRef = useRef<(userId: string) => Promise<void>>(async () => {});
 
   const fetchThreads = useCallback(async () => {
     try {
-      const res = await fetch('/api/feedback/admin/threads');
+      const params = new URLSearchParams();
+      if (blobUrlRef.current) params.set('url', blobUrlRef.current);
+      const qs = params.toString();
+      const res = await fetch(`/api/feedback/admin/threads${qs ? `?${qs}` : ''}`);
       const data = await res.json();
       setThreads(data.threads || []);
+      if (data.url && data.url !== blobUrlRef.current) {
+        blobUrlRef.current = data.url;
+        localStorage.setItem(BLOB_URL_KEY, data.url);
+      }
     } catch (err) {
       console.error('Failed to fetch threads:', err);
     } finally {
@@ -57,9 +73,13 @@ export function FeedbackAdmin() {
     }
   }, []);
 
+  fetchThreadsRef.current = fetchThreads;
+
   const fetchMessages = useCallback(async (userId: string) => {
     try {
-      const res = await fetch(`/api/feedback/messages?userId=${encodeURIComponent(userId)}`);
+      const params = new URLSearchParams({ userId });
+      if (blobUrlRef.current) params.set('url', blobUrlRef.current);
+      const res = await fetch(`/api/feedback/messages?${params}`);
       const data = await res.json();
       const msgs = (data.messages || []).sort(
         (a: FeedbackMessage, b: FeedbackMessage) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
@@ -71,24 +91,52 @@ export function FeedbackAdmin() {
           (a: FeedbackMessage, b: FeedbackMessage) => new Date(a.ts).getTime() - new Date(b.ts).getTime()
         );
       });
+      if (data.url && data.url !== blobUrlRef.current) {
+        blobUrlRef.current = data.url;
+        localStorage.setItem(BLOB_URL_KEY, data.url);
+      }
+      if (msgs.length > 0) {
+        lastTsRef.current = msgs[msgs.length - 1].ts;
+      }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     }
   }, []);
 
-  useEffect(() => {
-    fetchThreads();
-    const interval = setInterval(fetchThreads, 15000);
-    return () => clearInterval(interval);
-  }, [fetchThreads]);
+  fetchMsgsRef.current = fetchMessages;
 
   useEffect(() => {
-    if (selectedUserId) {
-      fetchMessages(selectedUserId);
-      const interval = setInterval(() => fetchMessages(selectedUserId), 5000);
-      return () => clearInterval(interval);
-    }
-  }, [selectedUserId, fetchMessages]);
+    fetchThreads();
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const poll = () => {
+      fetchThreadsRef.current?.();
+      const lastTs = lastTsRef.current;
+      const elapsed = lastTs
+        ? Date.now() - new Date(lastTs).getTime()
+        : Infinity;
+      const interval = elapsed < FAST_WINDOW_MS ? POLL_FAST_MS : POLL_SLOW_MS;
+      timeoutId = setTimeout(poll, interval);
+    };
+    timeoutId = setTimeout(poll, POLL_FAST_MS);
+    return () => clearTimeout(timeoutId);
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUserId) return;
+    fetchMessages(selectedUserId);
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const poll = () => {
+      if (selectedUserId) fetchMsgsRef.current?.(selectedUserId);
+      const lastTs = lastTsRef.current;
+      const elapsed = lastTs
+        ? Date.now() - new Date(lastTs).getTime()
+        : Infinity;
+      const interval = elapsed < FAST_WINDOW_MS ? POLL_FAST_MS : POLL_SLOW_MS;
+      timeoutId = setTimeout(poll, interval);
+    };
+    timeoutId = setTimeout(poll, POLL_FAST_MS);
+    return () => clearTimeout(timeoutId);
+  }, [selectedUserId]);
 
   useEffect(() => {
     if (listRef.current) {
@@ -119,10 +167,18 @@ export function FeedbackAdmin() {
       const res = await fetch('/api/feedback/reply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, userId: selectedUserId }),
+        body: JSON.stringify({
+          text,
+          userId: selectedUserId,
+          url: blobUrlRef.current || undefined,
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
+      if (data.url && data.url !== blobUrlRef.current) {
+        blobUrlRef.current = data.url;
+        localStorage.setItem(BLOB_URL_KEY, data.url);
+      }
       setMessages(prev =>
         prev.map(m => (m.id === optimistic.id ? { ...m, id: data.id, ts: data.ts } : m))
       );

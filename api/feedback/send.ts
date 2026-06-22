@@ -16,6 +16,21 @@ function uuid(): string {
   return crypto.randomUUID();
 }
 
+async function readMessages(url?: string): Promise<{ messages: FeedbackMessage[]; blobUrl?: string }> {
+  if (url) {
+    const res = await fetch(url);
+    const data = await res.json();
+    return { messages: Array.isArray(data) ? data : [], blobUrl: url };
+  }
+  const { blobs } = await list({ prefix: BLOB_PATH, limit: 1 });
+  if (blobs.length > 0) {
+    const res = await fetch(blobs[0].url);
+    const data = await res.json();
+    return { messages: Array.isArray(data) ? data : [], blobUrl: blobs[0].url };
+  }
+  return { messages: [] };
+}
+
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   if (req.method !== 'POST') {
     res.writeHead(405, { 'Content-Type': 'application/json' });
@@ -28,23 +43,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
     for await (const chunk of req) chunks.push(chunk as Buffer);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf-8'));
 
-    const { text, userId: clientUserId } = body;
+    const { text, userId: clientUserId, url: existingUrl } = body;
     if (!text || !clientUserId) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Missing text or userId' }));
       return;
     }
 
-    let messages: FeedbackMessage[] = [];
-    try {
-      const { blobs } = await list({ prefix: BLOB_PATH, limit: 1 });
-      if (blobs.length > 0) {
-        const blob = await fetch(blobs[0].url).then(r => r.json());
-        messages = Array.isArray(blob) ? blob : [];
-      }
-    } catch {
-      // No blob yet — start fresh
-    }
+    let { messages, blobUrl } = await readMessages(existingUrl);
 
     const message: FeedbackMessage = {
       id: uuid(),
@@ -61,14 +67,14 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
 
     messages.push(message);
 
-    await put(BLOB_PATH, JSON.stringify(messages), {
+    const result = await put(BLOB_PATH, JSON.stringify(messages), {
       contentType: 'application/json',
       access: 'public',
       allowOverwrite: true,
     });
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ id: message.id, ts: message.ts }));
+    res.end(JSON.stringify({ id: message.id, ts: message.ts, url: result.url }));
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(err) }));

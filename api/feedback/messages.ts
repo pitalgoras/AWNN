@@ -13,16 +13,24 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const parsedUrl = new URL(req.url || '', `http://${req.headers.host}`);
     const userId = parsedUrl.searchParams.get('userId');
+    const cachedUrl = parsedUrl.searchParams.get('url');
 
     let messages: any[] = [];
-    try {
+    let blobUrl: string | undefined;
+
+    if (cachedUrl) {
+      const res2 = await fetch(cachedUrl);
+      const data = await res2.json();
+      messages = Array.isArray(data) ? data : [];
+      blobUrl = cachedUrl;
+    } else {
       const { blobs } = await list({ prefix: BLOB_PATH, limit: 1 });
       if (blobs.length > 0) {
-        const blob = await fetch(blobs[0].url).then(r => r.json());
-        messages = Array.isArray(blob) ? blob : [];
+        const res2 = await fetch(blobs[0].url);
+        const data = await res2.json();
+        messages = Array.isArray(data) ? data : [];
+        blobUrl = blobs[0].url;
       }
-    } catch {
-      // No messages yet
     }
 
     if (userId) {
@@ -35,7 +43,7 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
       'Content-Type': 'application/json',
       'Cache-Control': 'no-store',
     });
-    res.end(JSON.stringify({ messages }));
+    res.end(JSON.stringify({ messages, url: blobUrl }));
   } catch (err) {
     res.writeHead(500, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: String(err) }));

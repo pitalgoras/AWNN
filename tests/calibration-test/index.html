@@ -71,6 +71,8 @@
   .history-wrap { margin-top: 8px; }
   .history-wrap summary { font-size: 11px; color: #71717a; cursor: pointer; user-select: none; }
   .history-wrap summary:hover { color: #a1a1aa; }
+
+  canvas { width: 100%; height: 160px; border-radius: 4px; background: #000; }
 </style>
 </head>
 <body>
@@ -85,10 +87,13 @@
   <div class="stat-row"><dt>Heuristic (1.9×)</dt><dd id="heuristic">—</dd></div>
   <div class="stat-row"><dt>Input device</dt><dd id="inputDevice" class="muted">—</dd></div>
   <div class="stat-row"><dt>Output device</dt><dd id="outputDevice" class="muted">—</dd></div>
+  <div class="stat-row"><dt>AEC state</dt><dd id="aec-state" class="muted">—</dd></div>
   <div class="msg" id="status">⏳ Move mouse or press a key to initialize</div>
   <div class="btn-row">
     <button id="btn-refresh" class="btn-secondary btn-sm" disabled>Refresh Latency</button>
     <button id="btn-init" class="btn-secondary btn-sm">Force Init</button>
+    <button id="btn-reacquire-mic" class="btn-secondary btn-sm" disabled>Re-acquire Mic</button>
+    <button id="btn-full-restart" class="btn-secondary btn-sm btn-danger" disabled>Full Restart</button>
   </div>
   <div id="settle-trace" class="trace" style="margin-top:8px"></div>
 </div>
@@ -135,6 +140,65 @@
   <div class="btn-row" style="margin-top:6px">
     <button id="btn-capture-noise" class="btn-secondary btn-sm">Capture Noise Floor</button>
   </div>
+</div>
+
+<!-- Clap Test Card (replaced) -->
+<div class="card">
+  <div class="card-header">Clap Test <span style="font-size:10px;color:#fbbf24;font-weight:400">v2 — looping + chunks</span></div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays a looping rhythmic pulse. Clap along while the pattern loops. Uses overlapping chunks with silence gaps to defeat AEC. Press Stop when done.</p>
+  <div style="margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <label style="font-size:11px;color:#71717a">
+      BPM:
+      <input type="range" id="clap-bpm" min="60" max="180" step="1" value="120" style="width:100px">
+      <span id="clap-bpm-val" class="fw-mon" style="color:#e4e4e7">120</span>
+    </label>
+    <label style="font-size:11px;color:#71717a">
+      Chunk (s):
+      <input type="range" id="clap-chunk" min="1" max="5" step="1" value="2" style="width:80px">
+      <span id="clap-chunk-val" class="fw-mon" style="color:#e4e4e7">2</span>
+    </label>
+    <label style="font-size:11px;color:#71717a">
+      Gap (ms):
+      <input type="range" id="clap-gap" min="50" max="500" step="10" value="150" style="width:80px">
+      <span id="clap-gap-val" class="fw-mon" style="color:#e4e4e7">150</span>
+    </label>
+  </div>
+  <div id="clap-chunks-container" style="margin-bottom:8px;max-height:120px;overflow-y:auto;font-size:11px;font-family:monospace"></div>
+  <div class="btn-row">
+    <button id="btn-clap" class="btn-clap">Start Clap Test</button>
+  </div>
+  <div id="clap-result" class="result"></div>
+  <canvas id="clap-waveform" style="height:100px;margin-top:6px;display:none"></canvas>
+</div>
+
+<!-- Beep (Early) Test Card -->
+<div class="card">
+  <div class="card-header">Beep (Early) Test <span style="font-size:10px;color:#22c55e;font-weight:400">pre-AEC convergence</span></div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Shorter, faster beep test optimized for the pre-convergence AEC window. Run immediately after mic re-acquire for best results.</p>
+  <div style="margin-bottom:8px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+    <label style="font-size:11px;color:#71717a;display:flex;align-items:center;gap:6px">
+      Amplitude:
+      <input type="range" id="early-amp" min="0.24" max="1.0" step="0.01" value="0.4" style="width:120px">
+      <span id="early-amp-val" class="fw-mon" style="color:#e4e4e7">0.40</span>
+    </label>
+  </div>
+  <div class="btn-row">
+    <button id="btn-early" style="background:#d97706">Run Early Beep Test</button>
+  </div>
+  <div id="early-result" class="result"></div>
+</div>
+
+<!-- Meta-Freq Test Card -->
+<div class="card">
+  <div class="card-header">Meta-Freq Scan <span style="font-size:10px;color:#22c55e;font-weight:400">find best frequency</span></div>
+  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Scans 26 frequencies (127Hz–10kHz, 4/octave) using square wave bursts. Measures which frequencies pass through your headphone-mic path best. One-per-device diagnostic (~60s).</p>
+  <div class="btn-row">
+    <button id="btn-metafreq" style="background:#0891b2">Run Meta-Freq Scan</button>
+  </div>
+  <div id="metafreq-progress" style="font-size:11px;color:#71717a;margin-top:4px"></div>
+  <canvas id="metafreq-graph" style="margin-top:6px;display:none"></canvas>
+  <div id="metafreq-best" style="font-size:11px;color:#86efac;margin-top:4px;font-weight:600"></div>
+  <div id="metafreq-result" class="result" style="display:none"></div>
 </div>
 
 <!-- MLS Auto Test Card -->
@@ -229,23 +293,6 @@
   <div id="beepfreq-history" class="history-wrap"></div>
 </div>
 
-<!-- Clap Test Card -->
-<div class="card">
-  <div class="card-header">Clap Test</div>
-  <p style="font-size:12px;color:#71717a;margin-bottom:8px">Plays irregular rhythm through headphones, you clap it back. No speaker→mic path needed.</p>
-  <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-    <label for="bpm">BPM:</label>
-    <input type="number" id="bpm" value="120" min="40" max="200">
-    <label style="display:flex;align-items:center;gap:4px;font-size:12px;margin-left:auto">
-      <input type="checkbox" id="clap-loop" style="width:auto">
-      Loop
-    </label>
-  </div>
-  <button id="btn-clap" class="btn-clap">Run Clap Test</button>
-  <div id="clap-result" class="result"></div>
-  <div id="clap-history" class="history-wrap"></div>
-</div>
-
 <!-- User Note Card -->
 <div class="card">
   <div class="card-header">User Note</div>
@@ -277,8 +324,8 @@
 </div>
 
 <p style="font-size:11px;color:#52525b">
-  Pattern: ♩ ♪ ♪ ♩ ♪ 𝄽 ♩ (irregular — cross-correlation resolves one match)<br>
-  Worklet: START(startFrame+duration) → auto-stop → RESULT(actualStartFrame, frames). No rolling buffer, no head, no config.
+  Clap v2: looping pulse with half-gap anchor, overlapping 2-worklet chunks, silence gaps for AEC de-adaptation.<br>
+  Others: START(startFrame+duration) → auto-stop → RESULT. No rolling buffer, no head, no config.
 </p>
 
 <script type="module" src="./main.ts"></script>
