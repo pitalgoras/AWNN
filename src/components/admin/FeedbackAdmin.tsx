@@ -80,6 +80,10 @@ export function FeedbackAdmin() {
       const params = new URLSearchParams({ userId });
       if (blobUrlRef.current) params.set('url', blobUrlRef.current);
       const res = await fetch(`/api/feedback/messages?${params}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`Server error ${res.status}: ${text.slice(0, 200)}`);
+      }
       const data = await res.json();
       const msgs = (data.messages || []).sort(
         (a: FeedbackMessage, b: FeedbackMessage) => new Date(a.ts).getTime() - new Date(b.ts).getTime()

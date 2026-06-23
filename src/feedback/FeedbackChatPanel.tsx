@@ -85,8 +85,11 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
         const params = new URLSearchParams({ userId: userId.current });
         if (blobUrlRef.current) params.set('url', blobUrlRef.current);
         const res = await fetch(`/api/feedback/messages?${params}`);
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(`Server error ${res.status}: ${text.slice(0, 200)}`);
+        }
         const data = await res.json();
-        if (!res.ok) throw new Error(data.error || `Server error ${res.status}`);
         msgs = data.messages || [];
         if (data.url && data.url !== blobUrlRef.current) {
           blobUrlRef.current = data.url;
