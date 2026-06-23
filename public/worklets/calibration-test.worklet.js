@@ -19,7 +19,7 @@ class TestRecorderProcessor extends AudioWorkletProcessor {
     // in MLS correlation removes this frequency entirely.
     this._activatorPhase = 0;
     this._activatorGain = 0.02;
-    this._feedbackEnabled = true;
+    this._feedbackEnabled = false;
 
     this.port.onmessage = (e) => {
       this._onmessageCount++;

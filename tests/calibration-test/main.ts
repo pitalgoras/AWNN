@@ -67,7 +67,7 @@ let initRunning = false;
 let vuTimer: ReturnType<typeof setInterval> | null = null;
 let noiseFloorRms = 0;
 let noiseFloorTargetAmp = 0.2;
-let feedbackEnabled = true;
+let feedbackEnabled = false;
 let inputVuElement: HTMLDivElement;
 let inputVuVal: HTMLSpanElement;
 let clapAbortController: AbortController | null = null;
@@ -210,6 +210,7 @@ function toggleFeedback() {
   btn.textContent = newState ? 'Mute Feedback' : 'Unmute Feedback';
   btn.className = newState ? 'btn-secondary btn-sm' : 'btn-secondary btn-sm';
   if (workletNode) workletNode.port.postMessage({ type: 'TOGGLE_FEEDBACK', enabled: newState });
+  if (workletNodeB) workletNodeB.port.postMessage({ type: 'TOGGLE_FEEDBACK', enabled: newState });
   log(`Feedback ${newState ? 'enabled' : 'muted'}`, 'ok');
 }
 
