@@ -94,7 +94,7 @@ offset = Math.max(0, Math.min(offset, duration - 0.001))
 const offset = Math.max(0, Math.min(this.playedDuration, duration - 0.001))
 ```
 
-`_anchoredFrame` and `_headLength` remain as stored metadata (used by Reset/Undo in SyncTool) but are no longer used in playback math.
+`_anchoredFrame` and `_headLength` remain as stored metadata (used by Reset/Undo in TakeBar) but are no longer used in playback math.
 
 Constructor keeps both parameters for metadata purposes:
 ```ts
@@ -133,7 +133,7 @@ Actually — let me look at this more carefully. The `gainNode.context` getter r
 
 ---
 
-## File 4: `src/components/SyncTool.tsx`
+## File 4: `src/components/TakeBar.tsx`
 
 ### Reset button (line ~196)
 

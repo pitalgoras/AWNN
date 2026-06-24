@@ -349,7 +349,7 @@ startPos = this.recordingStartTransportTime - latencySec;
 2. ✅ **`anchoredFrame`** = `Math.floor(punchInUserTime_Real × sampleRate)` — AudioContext clock frame via `punchInUserTime_Real = audioContext.currentTime + startupDelay + timeFromPlaybackStartToPunchIn`
 3. ✅ **`startPosition = punchInUserTime − headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
 4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording)
-5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at recording time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`; `_flush()` extracts head + recording from one buffer, no `_audioData`.
+5. ✅ **`headLength` per clip** — editable in TakeBar, stored on phrase at recording time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`; `_flush()` extracts head + recording from one buffer, no `_audioData`.
 6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo
 7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
@@ -365,7 +365,7 @@ startPos = this.recordingStartTransportTime - latencySec;
 - `src/audio/recording/RecordingEngine.ts` — restored `punchInUserTime_Real` computation, named `startupDelay`/`bufferSafety`, `startPos = punchInUserTime - headLength`
 - `src/lib/multitrack/webaudio.ts` — simplified `playAt()`, duplicate gain connection fix
 - `src/lib/multitrack/multitrack.ts` — non-anchored tracks get `headLength: 0`
-- `src/components/SyncTool.tsx` — Reset formula includes `secondsPerBar`
+- `src/components/TakeBar.tsx` — Reset formula includes `secondsPerBar`
 - `src/hooks/useAudioEngine.ts` — async IIFE, fire-and-forget resume, `sampleRate` in store
 - `src/store/useStore.ts` — `sampleRate` state, `startupDelayMs`/`bufferSafetyMs` settings, `updatePhrasePosition` preserves anchor on move
 - `src/App.tsx` — removed `syncedTrackIdsRef` guard, added Dangerous Settings UI

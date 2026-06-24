@@ -92,7 +92,7 @@ offset          = targetPosition - anchorTime       // Seek position into buffer
 
 ### New `sampleRate` field
 - Default `44100`, updated when AudioContext is created.
-- Used by `SyncTool` Reset and `updatePhrasePosition` for anchor math.
+- Used by `TakeBar` Reset and `updatePhrasePosition` for anchor math.
 
 ### `addPhrase()` 
 - Copies `phrase.anchoredFrame` to `track.anchoredFrame` so multitrack picks it up on next rebuild.
@@ -123,7 +123,7 @@ offset          = targetPosition - anchorTime       // Seek position into buffer
 
 ---
 
-## 7. SyncTool (`src/components/SyncTool.tsx`)
+## 7. TakeBar (`src/components/TakeBar.tsx`)
 
 ### Reset button
 - Uses `sampleRate` from store (was hardcoded `44100`).
@@ -170,7 +170,7 @@ Playback:
     → offset = targetPosition - anchorTime
     → bufferNode.start(startTime, offset)
 
-Reset (SyncTool):
+Reset (TakeBar):
   newStartPosition = (originalAnchoredFrame / sampleRate) - headLength
   → restores original anchor + head length alignment
 

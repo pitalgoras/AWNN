@@ -603,12 +603,27 @@ const {
     // Remove redundant currentTime listener as we use pollTime for more control
     
     // Listen for clicks on individual wavesurfers to select phrases
-    multitrack.on('click', (event: { id: string }) => {
+    multitrack.on('click', (event: { id: string; clientX: number; clientY: number; trackRect: any }) => {
       if (event?.id) {
         const state = useStore.getState();
         state.setSelectedPhraseId(event.id);
+        state.setLongPressPosition(event.clientX ?? null, event.clientY ?? null, event.trackRect ?? null);
         
-        // Also select the track
+        for (const track of state.tracks) {
+          if (track.phrases.some(p => p.id === event.id)) {
+            state.setSelectedTrackId(track.id);
+            break;
+          }
+        }
+      }
+    });
+
+    // Listen for long-press on phrases to show TakeBar
+    multitrack.on('longpress', (event: { id: string; clientX: number; clientY: number; trackRect: any }) => {
+      if (event?.id) {
+        const state = useStore.getState();
+        state.setSelectedPhraseId(event.id);
+        state.setLongPressPosition(event.clientX, event.clientY, event.trackRect);
         for (const track of state.tracks) {
           if (track.phrases.some(p => p.id === event.id)) {
             state.setSelectedTrackId(track.id);

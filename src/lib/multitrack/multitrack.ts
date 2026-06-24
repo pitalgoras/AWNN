@@ -77,7 +77,8 @@ export type MultitrackEvents = {
   'intro-end-change': [{ id: TrackId; endTime: number }]
   drop: [{ id: TrackId }]
   currentTime: [number]
-  click: [{ id: TrackId }]
+  click: [{ id: TrackId; clientX: number; clientY: number; trackRect: { top: number; bottom: number; left: number; right: number; height: number; width: number } }]
+  longpress: [{ id: TrackId; clientX: number; clientY: number; trackRect: { top: number; bottom: number; left: number; right: number; height: number; width: number } }]
 }
 
 export type MultitrackTracks = Array<TrackOptions>
@@ -406,8 +407,45 @@ class MultiTrack extends EventEmitter<MultitrackEvents> {
     }
 
     ws.on('click', () => {
-      this.emit('click', { id: track.id })
+      const r = container.getBoundingClientRect()
+      this.emit('click', {
+        id: track.id,
+        clientX: r.left + r.width / 2,
+        clientY: r.top + r.height / 2,
+        trackRect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, width: r.width },
+      })
     })
+
+    // Long press detection
+    let lpTimer: ReturnType<typeof setTimeout> | null = null
+    let lpStartX = 0
+    let lpStartY = 0
+    const clearLpTimer = () => {
+      if (lpTimer) { clearTimeout(lpTimer); lpTimer = null }
+    }
+    container.addEventListener('pointerdown', (e) => {
+      lpStartX = e.clientX; lpStartY = e.clientY
+      lpTimer = setTimeout(() => {
+        lpTimer = null
+        container.dataset.longPressed = 'true'
+        setTimeout(() => { delete container.dataset.longPressed }, 200)
+        const r = container.getBoundingClientRect()
+        this.emit('longpress', {
+          id: track.id,
+          clientX: e.clientX,
+          clientY: e.clientY,
+          trackRect: { top: r.top, bottom: r.bottom, left: r.left, right: r.right, height: r.height, width: r.width },
+        })
+      }, 600)
+    })
+    container.addEventListener('pointermove', (e) => {
+      if (!lpTimer) return
+      if (Math.abs(e.clientX - lpStartX) > 10 || Math.abs(e.clientY - lpStartY) > 10) {
+        clearLpTimer()
+      }
+    })
+    container.addEventListener('pointerup', clearLpTimer)
+    container.addEventListener('pointercancel', clearLpTimer)
 
     return ws
   }
@@ -947,16 +985,11 @@ function initRendering(tracks: MultitrackTracks, options: MultitrackOptions) {
       scroll.addEventListener('click', (e) => {
         if (maxDuration <= 0) return
 
-        // If we clicked on a phrase or something else that should handle its own click, ignore
+        // Skip if click came from a long-pressed phrase
         if (e.target !== scroll && e.target !== wrapper) {
-          // Check if target is a child of a track container
           let target = e.target as HTMLElement | null;
           while (target && target !== wrapper) {
-            if (target.classList.contains('multitrack-track-container')) {
-              // If it's a track container but NOT a phrase, we can still seek
-              if ((e.target as HTMLElement).classList.contains('multitrack-phrase')) return;
-              break;
-            }
+            if (target.dataset?.longPressed === 'true') return;
             target = target.parentElement;
           }
         }

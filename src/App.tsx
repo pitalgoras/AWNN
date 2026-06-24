@@ -12,7 +12,7 @@ import { ImportAudioModal } from './components/modals/ImportAudioModal';
 import { autoMatchFileToTrack, trackNameFromFile } from './audio/import/importUtils';
 
 import { BpmInput } from './components/BpmInput';
-import { SyncTool } from './components/SyncTool';
+import { TakeBar } from './components/TakeBar';
 import { EnvelopeEditor } from './components/EnvelopeEditor';
 import { useToolbarContext, type ScreenSize, type ToolbarType } from './hooks/useToolbarContext';
 import { useAdaptiveLabels } from './hooks/useAdaptiveLabels';
@@ -343,8 +343,8 @@ export default function App() {
     // Disallow seeking during recording
     if (useStore.getState().isRecording) return;
 
-    // Only handle if clicking on the background, not on a phrase
-    if ((e.target as HTMLElement).closest('.phrase-container')) return;
+    // Don't seek if TakeBar is open (long-press or selected phrase)
+    if (useStore.getState().selectedPhraseId) return;
 
     // Stop propagation to prevent MultiTrack's built-in click handler from firing
     e.stopPropagation();
@@ -440,85 +440,7 @@ export default function App() {
 
     container.addEventListener('wheel', handleWheel, { passive: false });
 
-    const handleDoubleClick = (e: MouseEvent) => {
-      const state = useStore.getState();
-      // Block seeking during recording
-      if (state.isRecording) return;
-      const currentTracks = state.tracks;
-      const currentSelectedTrackId = state.selectedTrackId;
-      const currentEnvelopeLocked = state.envelopeLocked;
-
-      const rect = container.getBoundingClientRect();
-      
-      // Attempt to get offset from shadow DOM
-      let tracksOffsetTop = 0;
-      const firstChild = container.firstChild;
-      
-      if (firstChild instanceof HTMLElement && firstChild.shadowRoot) {
-        const scrollContainer = firstChild.shadowRoot.querySelector('.scroll');
-        if (scrollContainer) {
-          const canvases = scrollContainer.querySelector('.canvases');
-          if (canvases) {
-            const canvasesRect = canvases.getBoundingClientRect();
-            tracksOffsetTop = canvasesRect.top - rect.top;
-          }
-        }
-      } else if (container.shadowRoot) {
-        const canvases = container.shadowRoot.querySelector('.canvases');
-        if (canvases) {
-          const canvasesRect = canvases.getBoundingClientRect();
-          tracksOffsetTop = canvasesRect.top - rect.top;
-        }
-      }
-
-      const y = e.clientY - rect.top - tracksOffsetTop;
-      
-      let trackIndex = -1;
-      let currentY = 0;
-      const rootStyle = getComputedStyle(document.documentElement);
-      const expandedH = parseInt(rootStyle.getPropertyValue('--expanded-track-h')) || 80;
-      const normalH = parseInt(rootStyle.getPropertyValue('--normal-track-h')) || 50;
-
-      const trackList = currentTracks || [];
-      for (let i = 0; i < trackList.length; i++) {
-        const h = (trackList[i].id === currentSelectedTrackId && !currentEnvelopeLocked) ? expandedH : normalH;
-        if (y >= currentY && y < currentY + h) {
-          trackIndex = i;
-          break;
-        }
-        currentY += h;
-      }
-      
-      if (trackIndex < 0 || trackIndex >= trackList.length) return;
-      
-      const clickedTrack = trackList[trackIndex];
-      const currentTime = state.getMultitrackTime();
-      
-      // Find which phrase is at the current time
-      let clickedPhraseId = null;
-      for (const p of clickedTrack.phrases) {
-        const visualStart = p.startPosition;
-        const visualEnd = p.startPosition + (p.endCue || p.duration) - (p.startCue || 0);
-        
-        // Use a slightly larger buffer for double-clicks
-        if (currentTime >= visualStart - 0.1 && currentTime <= visualEnd + 0.1) {
-          clickedPhraseId = p.id;
-          break;
-        }
-      }
-      
-      if (clickedPhraseId) {
-        state.setSelectedPhraseId(clickedPhraseId);
-        state.setSelectedTrackId(clickedTrack.id);
-      } else {
-        state.setSelectedPhraseId(null);
-        state.setSelectedTrackId(clickedTrack.id);
-      }
-    };
-
-    container.addEventListener('dblclick', handleDoubleClick);
     return () => {
-      container.removeEventListener('dblclick', handleDoubleClick);
       container.removeEventListener('wheel', handleWheel);
     };
   }, [containerRef, multitrackRef]);
@@ -997,7 +919,7 @@ export default function App() {
                 onClickCapture={handleContainerClick}
               />
               {isReady && <TimelineGrid />}
-              {isReady && <SyncTool />}
+              {isReady && <TakeBar />}
               {isReady && <EnvelopeEditor />}
             </section>
             

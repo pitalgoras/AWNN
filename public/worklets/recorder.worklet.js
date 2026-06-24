@@ -61,7 +61,7 @@ class RecorderWorkletProcessor extends AudioWorkletProcessor {
         this._isRecording = true;
         this._sessionProcessCount = 0;
         this._sessionPushCount = 0;
-        // headLength sent per-recording from main thread (per-clip, adjustable in SyncTool)
+        // headLength sent per-recording from main thread (per-clip, adjustable in TakeBar)
         if (event.data.headLength !== undefined) {
           this._headLength = event.data.headLength;
         }

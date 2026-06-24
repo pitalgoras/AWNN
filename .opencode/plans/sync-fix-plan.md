@@ -35,7 +35,7 @@ The multitrack already handles UserTime→RealTime conversion via `startPosition
 ### 4. `useAudioEngine.ts` — `onAddPhrase` callback (line ~120)
 - Use `rollingOffset / sampleRate` as actual headLength if returned from worklet, falling back to config headLength
 
-### 5. `SyncTool.tsx` — Reset button
+### 5. `TakeBar.tsx` — Reset button
 - No change needed. Current formula `originalAnchoredFrame / sampleRate - headLength` works correctly since anchoredFrame will now store `floor(userTime * sampleRate)`.
 
 ### 6. `multitrack.ts` — `initAudio()` (line ~189)

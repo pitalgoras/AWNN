@@ -1,32 +1,33 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useLayoutEffect } from 'react';
 import { useStore } from '../store/useStore';
 import { Repeat, Trash2, X } from 'lucide-react';
 
-export const SyncTool: React.FC = () => {
-  const { 
-    tracks, 
-    selectedPhraseId, 
+export const TakeBar: React.FC = () => {
+  const {
+    tracks,
+    selectedPhraseId,
     setSelectedPhraseId,
-    updatePhrasePosition, 
+    updatePhrasePosition,
     updatePhrase,
     shiftAllPhrases,
     removePhrase,
-    zoom, 
-    syncLoop, 
+    zoom,
+    syncLoop,
     setSyncLoop,
-    envelopeLocked,
-    selectedTrackId
+    longPressX,
+    longPressTrackRect,
+    setLongPressPosition,
   } = useStore();
-  
+
   const [scrollLeft, setScrollLeft] = useState(0);
-  const [scrollTop, setScrollTop] = useState(0);
+  const [barHeight, setBarHeight] = useState(180);
+  const [barWidth, setBarWidth] = useState(380);
   const toolRef = useRef<HTMLDivElement>(null);
-  
-// Find selected phrase and calculate its visual row index
+
+  // Find selected phrase
   type PhraseWithSync = { id: string; name: string; startPosition: number; duration: number; originalStartPosition?: number; headLength: number; anchoredFrame?: number; originalAnchoredFrame?: number };
   let selectedPhrase: PhraseWithSync | null = null;
   let selectedTrack: { id: string; phrases: PhraseWithSync[] } | null = null;
-  let trackIndex = -1;
 
   const trackList = tracks || [];
   for (let i = 0; i < trackList.length; i++) {
@@ -35,27 +36,36 @@ export const SyncTool: React.FC = () => {
       if (p.id === selectedPhraseId) {
         selectedPhrase = p as PhraseWithSync;
         selectedTrack = t as { id: string; phrases: PhraseWithSync[] };
-        trackIndex = i;
         break;
       }
     }
     if (selectedPhrase) break;
   }
-  
+
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (toolRef.current && !toolRef.current.contains(e.target as Node)) {
-        // Also check if we clicked on a wavesurfer element to avoid immediately closing when selecting a new phrase
         const target = e.target as HTMLElement;
-        if (!target.closest('wave') && !target.closest('.multitrack-container')) {
-          setSelectedPhraseId(null);
-        }
+        if (target.closest('wave')) return;
+        setSelectedPhraseId(null);
+        setLongPressPosition(null, null);
       }
     };
     document.addEventListener('pointerdown', handleClickOutside);
     return () => document.removeEventListener('pointerdown', handleClickOutside);
-  }, [setSelectedPhraseId]);
-  
+  }, [setSelectedPhraseId, setLongPressPosition]);
+
+  // Measure bar dimensions after render for precise positioning
+  useLayoutEffect(() => {
+    if (toolRef.current) {
+      const h = toolRef.current.offsetHeight;
+      const w = toolRef.current.offsetWidth;
+      if (h !== barHeight) setBarHeight(h);
+      if (w !== barWidth) setBarWidth(w);
+    }
+  }, [selectedPhraseId, barHeight, barWidth]);
+
+  // Poll scroll position for fallback x positioning
   useEffect(() => {
     let frameId: number;
     const updateScroll = () => {
@@ -64,7 +74,6 @@ export const SyncTool: React.FC = () => {
         const scrollContainer = container.firstChild.shadowRoot.querySelector('.scroll');
         if (scrollContainer) {
           setScrollLeft(scrollContainer.scrollLeft);
-          setScrollTop(scrollContainer.scrollTop);
         }
       }
       frameId = requestAnimationFrame(updateScroll);
@@ -72,39 +81,58 @@ export const SyncTool: React.FC = () => {
     frameId = requestAnimationFrame(updateScroll);
     return () => cancelAnimationFrame(frameId);
   }, []);
-  
-  if (!selectedPhrase || trackIndex === -1) return null;
-  
-  const rawLeft = (selectedPhrase.startPosition * zoom) - scrollLeft;
-  // Estimate tool width to keep it on screen
+
+  if (!selectedPhrase) return null;
+
   const toolWidth = 380;
-  const left = Math.max(10, Math.min(rawLeft, window.innerWidth - toolWidth - 20));
-  
-  // Calculate actual top position by summing heights of preceding tracks
-  let topOffset = 0;
-  for (let i = 0; i < trackIndex; i++) {
-    const t = trackList[i];
-    const isMetronome = t.id === 'metronome';
-    const isExpanded = t.id === selectedTrackId && !envelopeLocked && !isMetronome;
-    topOffset += isMetronome ? 40 : (isExpanded ? 80 : 50);
+
+  // --- X: center on press point (viewport-relative) ---
+  let rawLeft: number;
+  if (longPressX != null) {
+    rawLeft = longPressX - toolWidth / 2;
+  } else if (longPressTrackRect) {
+    rawLeft = longPressTrackRect.left + longPressTrackRect.width / 2 - toolWidth / 2;
+  } else {
+    // Fallback: phrase start position in viewport
+    const containerEl = document.querySelector('.multitrack-container');
+    const sectionEl = containerEl?.parentElement;
+    const sectionRect = sectionEl?.getBoundingClientRect() ?? { left: 0 };
+    rawLeft = sectionRect.left + (selectedPhrase.startPosition * zoom) - scrollLeft;
   }
-  
-  // Position it just below the track
-  const selTrack = trackList[trackIndex];
-  const isSelMetronome = selTrack.id === 'metronome';
-  const isSelExpanded = selTrack.id === selectedTrackId && !envelopeLocked && !isSelMetronome;
-  const selHeight = isSelMetronome ? 40 : (isSelExpanded ? 80 : 50);
-  
-  // Account for the timeline height (approx 20px)
-  const timelineHeight = 20;
-  const top = topOffset + selHeight + timelineHeight - scrollTop;
-  
+  const left = Math.max(10, Math.min(rawLeft, window.innerWidth - barWidth - 10));
+
+  // --- Y: above or below track using actual DOM rect ---
+  let top: number;
+  if (longPressTrackRect) {
+    const spaceAbove = longPressTrackRect.top;
+    const spaceBelow = window.innerHeight - longPressTrackRect.bottom;
+    const placeBelow = spaceBelow >= barHeight || spaceBelow >= spaceAbove;
+
+    if (placeBelow) {
+      // Bar's top edge = track's bottom edge (flush below)
+      top = longPressTrackRect.bottom;
+    } else {
+      // Bar's bottom edge = track's top edge (flush above)
+      top = longPressTrackRect.top - barHeight;
+    }
+  } else {
+    // Fallback (should not happen — both click and longpress provide trackRect)
+    top = 100;
+  }
+
+  // Debug log
+  console.log('[TakeBar] position:', {
+    longPressX, longPressTrackRect, barHeight, toolWidth,
+    spaceAbove: longPressTrackRect?.top,
+    spaceBelow: longPressTrackRect ? window.innerHeight - longPressTrackRect.bottom : null,
+    placeBelow: longPressTrackRect ? (window.innerHeight - longPressTrackRect.bottom >= barHeight || window.innerHeight - longPressTrackRect.bottom >= longPressTrackRect.top) : null,
+    left, top, zoom, startPosition: selectedPhrase.startPosition, scrollLeft,
+  });
+
   const handleOffset = (amount: number) => {
     if (!selectedPhrase || !selectedTrack) return;
     const newPosition = selectedPhrase.startPosition + amount;
     if (newPosition < 0) {
-      // If we try to move before 0, we instead move ALL OTHER phrases forward
-      // by the amount we would have gone negative, and set this phrase to 0.
       const shiftAmount = Math.abs(newPosition);
       shiftAllPhrases(shiftAmount, selectedPhrase.id);
       updatePhrasePosition(selectedTrack.id, selectedPhrase.id, 0);
@@ -112,7 +140,7 @@ export const SyncTool: React.FC = () => {
       updatePhrasePosition(selectedTrack.id, selectedPhrase.id, newPosition);
     }
   };
-  
+
   const toggleLoop = () => {
     if (!selectedPhrase) return;
     if (syncLoop) {
@@ -124,18 +152,18 @@ export const SyncTool: React.FC = () => {
       });
     }
   };
-  
+
   return (
-    <div 
+    <div
       ref={toolRef}
-      className="absolute z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 flex flex-col gap-3 transition-all duration-100 min-w-[360px]"
+      className="fixed z-50 bg-gray-800 border border-gray-600 rounded-lg shadow-xl p-3 flex flex-col gap-3 transition-all duration-100 min-w-[360px]"
       style={{ left, top }}
     >
       {/* Row 1: Name and Head Length */}
       <div className="flex items-center gap-3">
         <div className="flex flex-col gap-1">
           <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Phrase Name</div>
-          <input 
+          <input
             type="text"
             value={selectedPhrase.name || ''}
             onChange={(e) => updatePhrase(selectedTrack.id, selectedPhrase.id, { name: e.target.value })}
@@ -154,7 +182,7 @@ export const SyncTool: React.FC = () => {
 
         <div className="flex flex-col gap-1">
           <div className="text-[10px] text-gray-500 uppercase font-bold tracking-tighter">Head (s)</div>
-          <input 
+          <input
             type="number"
             min="0"
             max="1"
@@ -188,10 +216,8 @@ export const SyncTool: React.FC = () => {
       <div className="flex items-center gap-2 pt-2 border-t border-gray-700">
         {selectedPhrase.originalAnchoredFrame !== undefined && selectedPhrase.originalAnchoredFrame !== 0 && (
           <>
-            <button 
+            <button
               onClick={() => {
-                // Reset: restore anchor and calculate new startPosition
-                // startPosition = anchor(RealTime) - secondsPerBar(UserTime offset) - headLength
                 const state = useStore.getState();
                 const anchorFrame = selectedPhrase.originalAnchoredFrame;
                 const sampleRate = state.sampleRate;
@@ -202,21 +228,21 @@ export const SyncTool: React.FC = () => {
                   anchoredFrame: anchorFrame,
                   startPosition: Math.max(0, newStartPosition)
                 });
-              }} 
-              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-[10px] text-white transition-colors" 
+              }}
+              className="px-2 py-1 bg-gray-700 hover:bg-gray-600 rounded text-[10px] text-white transition-colors"
               title="Reset to original recorded position"
             >
               Reset
             </button>
-            
+
             {selectedPhrase.startPosition < selectedPhrase.originalStartPosition! && (
-              <button 
+              <button
                 onClick={() => {
                   const latencySec = selectedPhrase.originalStartPosition! - selectedPhrase.startPosition;
                   useStore.getState().setGlobalLatencyMs(Math.round(latencySec * 1000));
                   alert(`Global latency compensation set to ${Math.round(latencySec * 1000)}ms`);
-                }} 
-                className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-[10px] text-white transition-colors" 
+                }}
+                className="px-2 py-1 bg-indigo-600 hover:bg-indigo-500 rounded text-[10px] text-white transition-colors"
                 title="Set this offset as the global latency compensation for future recordings"
               >
                 Set Global
@@ -225,35 +251,37 @@ export const SyncTool: React.FC = () => {
             <div className="w-px h-4 bg-gray-600 mx-1"></div>
           </>
         )}
-        
-        <button 
-          onClick={toggleLoop} 
+
+        <button
+          onClick={toggleLoop}
           className={`px-2 py-1 rounded text-[10px] flex items-center transition-colors ${syncLoop ? 'bg-indigo-600 text-white' : 'bg-gray-700 text-gray-300 hover:bg-gray-600'}`}
           title="Loop playback ±2s around clip"
         >
           <Repeat className="w-3 h-3 mr-1" />
           Loop ±2s
         </button>
-        
+
         <div className="flex-1"></div>
-        
-        <button 
+
+        <button
           onClick={() => {
             removePhrase(selectedTrack.id, selectedPhrase.id);
             setSelectedPhraseId(null);
+            setLongPressPosition(null, null);
             if (syncLoop) setSyncLoop(null);
-          }} 
+          }}
           className="p-1.5 bg-red-500/20 hover:bg-red-500/40 text-red-400 rounded transition-colors"
           title="Delete clip"
         >
           <Trash2 className="w-3.5 h-3.5" />
         </button>
 
-        <button 
+        <button
           onClick={() => {
             setSelectedPhraseId(null);
+            setLongPressPosition(null, null);
             setSyncLoop(null);
-          }} 
+          }}
           className="p-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
           title="Close"
         >

@@ -101,7 +101,7 @@
 - Anchored tracks: creates `WebAudioPlayer` with `{ anchoredFrame, headLength }`
 - Non-anchored tracks (metronome): creates `WebAudioPlayer` with `{ headLength: 0 }`
 
-### SyncTool.tsx
+### TakeBar.tsx
 - Head length input: editable per-clip (0–1s, step 0.1)
 - Reset button: restores `originalAnchoredFrame` and recalculates `startPosition`
 - Nudge: adjusts `anchoredFrame` proportionally via `updatePhrasePosition`

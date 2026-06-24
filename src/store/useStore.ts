@@ -216,6 +216,11 @@ interface AppState {
   seekTo?: (time: number) => void;
   setSeekTo: (fn: (time: number) => void) => void;
 
+  longPressX: number | null;
+  longPressY: number | null;
+  longPressTrackRect: { top: number; bottom: number; left: number; right: number; height: number; width: number } | null;
+  setLongPressPosition: (x: number | null, y: number | null, trackRect?: { top: number; bottom: number; left: number; right: number; height: number; width: number } | null) => void;
+
   saveProject: () => Promise<void>;
   loadProject: () => Promise<void>;
 }
@@ -324,6 +329,9 @@ export const useStore = create<AppState>()(
         selectedTrackId: null,
         selectedPhraseId: null,
         syncLoop: null,
+        longPressX: null,
+        longPressY: null,
+        longPressTrackRect: null,
 
         setAppMode: (mode) => set({ appMode: mode }),
         setLyricsText: (text) => set({ lyricsText: text }),
@@ -559,6 +567,7 @@ export const useStore = create<AppState>()(
         setSelectedTrackId: (selectedTrackId) => set({ selectedTrackId }),
         setSelectedPhraseId: (selectedPhraseId) => set({ selectedPhraseId }),
         setSyncLoop: (syncLoop) => set({ syncLoop }),
+        setLongPressPosition: (x, y, trackRect) => set({ longPressX: x, longPressY: y, longPressTrackRect: trackRect !== undefined ? trackRect : null }),
         
         setSmallBtnSize: (size) => set({ smallBtnSize: size }),
         setMediumBtnSize: (size) => set({ mediumBtnSize: size }),

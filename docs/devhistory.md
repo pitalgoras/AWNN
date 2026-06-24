@@ -107,13 +107,13 @@ This document tracks the key technical decisions, bug fixes, and architectural s
 *   **Multitrack Optimization:** Capped `minPxPerSec` at 100 in `MultiTrack.create`.
     *   **Benefit:** Prevents canvas lag at high zoom levels by limiting the base rendering resolution.
 *   **Offline Confirmation:** Verified that all assets (JS, CSS, Icons) are bundled and no external API calls are made during runtime, supporting full offline operation.
-**Problem:** The app struggled when starting recording while playing, the SyncTool was misaligned, and track selection caused "Loading audio..." flickers.
+**Problem:** The app struggled when starting recording while playing, the TakeBar was misaligned, and track selection caused "Loading audio..." flickers.
 **Root Cause:**
-1. **SyncTool Alignment:** The SyncTool positioning logic didn't account for the timeline header height or the dynamic track heights (expanded vs. normal) correctly during scrolling.
+1. **TakeBar Alignment:** The TakeBar positioning logic didn't account for the timeline header height or the dynamic track heights (expanded vs. normal) correctly during scrolling.
 2. **Engine Re-initialization:** The `useAudioEngine` hook was still re-initializing the entire multitrack instance when `selectedTrackId` or `timeSignature` changed because they were used as objects/arrays in the dependency array.
 3. **Recording Race Condition:** `seekTo` was only updating the multitrack instance, but not the React store's `currentTime` immediately. This caused the recording logic (which reads from the store) to use a stale start time if recording was triggered immediately after a seek.
 **Decision:**
-* **Fixed SyncTool Positioning:** Added `timelineHeight` (20px) to the calculation and ensured it uses the correct track height constants.
+* **Fixed TakeBar Positioning:** Added `timelineHeight` (20px) to the calculation and ensured it uses the correct track height constants.
 * **Stabilized Engine Dependencies:** Refined the `useEffect` dependency array in `useAudioEngine` to use primitive values (`timeSignature[0]`, `timeSignature[1]`) instead of the array object. This prevents the engine from being destroyed and recreated when selecting a track.
 * **Immediate Store Sync on Seek:** Updated `seekTo` to call `setCurrentTime` immediately. This ensures that any subsequent action (like recording) has access to the most up-to-date transport time.
 ## 13. Refining Tempo and Track Controls (2026-03-27)
@@ -897,7 +897,7 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 - Added central `TAG_COLOR_MAP`, `TAG_LABEL_MAP`, and helpers (`getTagColor`, `getTagLabel`, `buildComboTagId`, `buildComboLabel`, `getTrackTagLabel`) in `src/lib/utils.ts`.
 - Renamed `activeColorId` → `activeTagId` in Zustand store.
 - `handleWordInteraction` now uses `activeTagId` directly (no color lookup).
-- Bonus: replaced mouse-only events with pointer events in `LyricsBuilder.tsx`, `MoreIconDropdown.tsx`, and `SyncTool.tsx` for touch device support.
+- Bonus: replaced mouse-only events with pointer events in `LyricsBuilder.tsx`, `MoreIconDropdown.tsx`, and `TakeBar.tsx` for touch device support.
 ### Files Modified
 - `src/lib/utils.ts` — `TAG_COLOR_MAP`, `TAG_LABEL_MAP`, helpers
 - `src/store/useStore.ts` — `activeColorId` → `activeTagId`, `setActiveColorId` → `setActiveTagId`
@@ -905,7 +905,7 @@ The portrait layout overflowed on narrow screens (iPhone SE 375px). Buttons were
 - `src/components/LyricsBuilder.tsx` — removed local maps, direct tag lookup, pointer events
 - `src/components/modals/VoicingChooserModal.tsx` — shared `blendColors`, canonical IDs
 - `src/components/MoreIconDropdown.tsx` — `mousedown` → `pointerdown`
-- `src/components/SyncTool.tsx` — `mousedown` → `pointerdown`
+- `src/components/TakeBar.tsx` — `mousedown` → `pointerdown`
 
 ## R. Dead 'D' Key Handler Removal
 **Problem:** Pressing `D` in lyrics text editing mode switched the app to mixer view.

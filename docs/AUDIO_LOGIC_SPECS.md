@@ -24,7 +24,7 @@ To prevent accidental destructive edits during playback and mixing, the applicat
     *   **`startPosition`** = `punchInUserTime - headLength` — visual clip includes head before anchor. Computed directly from UserTime to avoid drift from AudioContext clock delays.
     *   **Rolling buffer** always captures during playback → Head is always present (~`headLength` seconds)
     *   **WaveSurfer plays entire buffer** from position 0 → head audio is audible, followed by definitive recording
-    *   **`headLength`** is per-clip metadata (editable in SyncTool) — changing it adjusts visual boundaries without affecting sync
+    *   **`headLength`** is per-clip metadata (editable in TakeBar) — changing it adjusts visual boundaries without affecting sync
     *   **`startupDelayMs`** (default 150ms) and **`bufferSafetyMs`** (default 100ms) are editable in Dangerous Settings within the Advanced Settings modal. `startupDelayMs` estimates the time between `onSetIsPlaying(true)` and actual AudioContext playback start. `bufferSafetyMs` adds extra wait margin to ensure the rolling buffer is populated before START_RECORDING is sent.
 *   **Accumulator Buffer (June 2026):** The AudioWorklet pre-allocates a single `Float32Array(4096)` in the constructor. All 128-sample `process()` calls copy input into this fixed buffer. Only when full (~93ms) is the accumulator `.slice()`-ed into `_rollingBuffer` via `_pushAccumulator()`. This reduces allocations from ~344/s to ~11/s — 97% reduction in GC pressure on the audio thread, without SharedArrayBuffer.
 *   **Tempo Control (BpmInput):**
@@ -114,7 +114,7 @@ When a user selects an overlap resolution choice from the floating menu, the sys
 2. ✅ **`anchoredFrame`** stores absolute AudioContext clock frame of punch-in (`punchInUserTime_Real × sampleRate`)
 3. ✅ **`startPosition = punchInUserTime - headLength`** — visual clip computed directly from UserTime, independent of anchorFrame
 4. ✅ **`playAt()` offset = `playedDuration`** — plays entire buffer (head + recording) from position 0
-5. ✅ **`headLength` per clip** — editable in SyncTool, stored on phrase at creation time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`, `_flush()` extracts head from last `headLength` seconds before start, then includes definitive recording. No separate `_audioData` stream.
+5. ✅ **`headLength` per clip** — editable in TakeBar, stored on phrase at creation time. Single-buffer approach: rolling buffer stops trimming at `_recordingStartFrame`, `_flush()` extracts head from last `headLength` seconds before start, then includes definitive recording. No separate `_audioData` stream.
 6. ✅ **`originalAnchoredFrame`** — preserved for Reset/Undo operations
 7. ✅ **Metronome `headLength = 0`** — plays from buffer start, no skip
 8. ✅ **AudioWorklet re-load guard** — `addModule` try/catch for second recording attempts
