@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, Loader2, MessageCircle, ChevronDown } from 'lucide-react';
+import { X, Send, Loader2, MessageCircle } from 'lucide-react';
 import { SidebarPanel } from './SidebarPanel';
 
 interface FeedbackMessage {
@@ -13,9 +13,6 @@ interface FeedbackMessage {
 const USER_ID_KEY = 'feedbackUserId';
 const DEV_MESSAGES_KEY = 'feedbackDevMessages';
 const BLOB_URL_KEY = 'feedbackBlobUrl';
-const POLL_FAST_MS = 6000;
-const POLL_SLOW_MS = 120000;
-const FAST_WINDOW_MS = 120000;
 
 function setCookie(name: string, value: string) {
   document.cookie = `${name}=${encodeURIComponent(value)};path=/;max-age=31536000;SameSite=Lax`;
@@ -64,10 +61,7 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
   const [sending, setSending] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const userId = useRef(getUserId());
-  const lastTsRef = useRef<string>('');
   const blobUrlRef = useRef<string | null>(localStorage.getItem(BLOB_URL_KEY));
-  const panelOpenTsRef = useRef<number>(0);
-  const fetchRef = useRef<() => Promise<void>>(async () => {});
 
   const scrollToBottom = useCallback(() => {
     if (listRef.current) {
@@ -102,15 +96,10 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
         const local = prev.filter(m => !serverIds.has(m.id));
         return [...msgs, ...local].sort((a, b) => new Date(a.ts).getTime() - new Date(b.ts).getTime());
       });
-      if (msgs.length > 0) {
-        lastTsRef.current = msgs[msgs.length - 1].ts;
-      }
     } catch (err) {
       console.error('Failed to fetch messages:', err);
     }
   }, []);
-
-  fetchRef.current = fetchMessages;
 
   const sendMessage = useCallback(async () => {
     const text = inputText.trim();
@@ -154,6 +143,9 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
         setMessages(prev =>
           prev.map(m => (m.id === optimistic.id ? { ...m, id: data.id, ts: data.ts } : m))
         );
+        // One-shot refetch after send: picks up any reply that landed
+        // while typing and self-heals the cached blob URL. Not polling.
+        fetchMessages();
       }
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -161,35 +153,12 @@ export function FeedbackChatPanel({ show, onClose }: FeedbackChatPanelProps) {
     } finally {
       setSending(false);
     }
-  }, [inputText, sending, scrollToBottom]);
+  }, [inputText, sending, scrollToBottom, fetchMessages]);
 
+  // Email-style: fetch once when the panel opens. No continuous polling.
   useEffect(() => {
-    fetchMessages();
-  }, [fetchMessages]);
-
-  useEffect(() => {
-    if (show) panelOpenTsRef.current = Date.now();
-  }, [show]);
-
-  useEffect(() => {
-    if (!show) return;
-
-    let timeoutId: ReturnType<typeof setTimeout>;
-
-    const poll = () => {
-      fetchRef.current?.();
-      const lastTs = lastTsRef.current;
-      const elapsed = lastTs
-        ? Date.now() - new Date(lastTs).getTime()
-        : Date.now() - panelOpenTsRef.current;
-      const interval = elapsed < FAST_WINDOW_MS ? POLL_FAST_MS : POLL_SLOW_MS;
-      timeoutId = setTimeout(poll, interval);
-    };
-
-    poll();
-
-    return () => clearTimeout(timeoutId);
-  }, [show]);
+    if (show) fetchMessages();
+  }, [show, fetchMessages]);
 
   useEffect(() => {
     scrollToBottom();
