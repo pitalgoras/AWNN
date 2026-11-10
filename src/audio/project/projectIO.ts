@@ -1,7 +1,7 @@
 import JSZip from 'jszip';
 import { audioBufferToWav } from '../processing/audioBufferToWav';
 
-export async function exportProject(state: any): Promise<boolean> {
+export async function exportProject(state: any, fileName?: string): Promise<boolean> {
   try {
     const zip = new JSZip();
 
@@ -70,9 +70,12 @@ export async function exportProject(state: any): Promise<boolean> {
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE' });
     const url = URL.createObjectURL(blob);
 
+    const base = fileName
+      ? fileName.trim().replace(/\.awnn$/i, '')
+      : `AWNN_Project_${new Date().toISOString().slice(0, 10)}`;
     const a = document.createElement('a');
     a.href = url;
-    a.download = `AWNN_Project_${new Date().toISOString().slice(0, 10)}.awnn`;
+    a.download = `${base}.awnn`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);

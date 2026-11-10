@@ -1,6 +1,7 @@
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import { useStore, EnvelopeNode } from '../store/useStore';
 import { cn } from '../lib/utils';
+import { ConfirmModal } from './modals/ConfirmModal';
 
 export const EnvelopeEditor: React.FC = () => {
   const { 
@@ -17,6 +18,7 @@ export const EnvelopeEditor: React.FC = () => {
   const [scrollTop, setScrollTop] = useState(0);
   const [tracksOffsetTop, setTracksOffsetTop] = useState(0);
   const [draggingNode, setDraggingNode] = useState<{ trackId: string, nodeId: string } | null>(null);
+  const [pendingNodeDelete, setPendingNodeDelete] = useState<{ trackId: string, nodeId: string } | null>(null);
   const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const lastTapTime = useRef<{ [key: string]: number }>({});
   const containerRef = useRef<HTMLDivElement>(null);
@@ -92,10 +94,8 @@ export const EnvelopeEditor: React.FC = () => {
       // Setup long press for mobile deletion
       if (longPressTimer.current) clearTimeout(longPressTimer.current);
       longPressTimer.current = setTimeout(() => {
-        if (window.confirm('Delete this envelope node?')) {
-          removeEnvelopeNode(trackId, node.id);
-          setDraggingNode(null);
-        }
+        // In-app confirmation: native window.confirm is invisible in fullscreen
+        setPendingNodeDelete({ trackId, nodeId: node.id });
       }, 600);
     } else {
       // Add new node
@@ -276,6 +276,22 @@ export const EnvelopeEditor: React.FC = () => {
           );
         })}
       </div>
+      <ConfirmModal
+        show={!!pendingNodeDelete}
+        title="Delete node"
+        message="Delete this envelope node?"
+        onClose={() => setPendingNodeDelete(null)}
+        actions={[
+          { label: 'Delete', variant: 'danger', onClick: () => {
+            if (pendingNodeDelete) {
+              removeEnvelopeNode(pendingNodeDelete.trackId, pendingNodeDelete.nodeId);
+              setDraggingNode(null);
+            }
+            setPendingNodeDelete(null);
+          } },
+          { label: 'Cancel', onClick: () => setPendingNodeDelete(null) },
+        ]}
+      />
     </div>
   );
 };

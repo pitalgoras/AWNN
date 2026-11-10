@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useStore } from '../../store/useStore';
 import { cn } from '../../lib/utils';
-import { Settings, Save, FolderOpen, Eye } from 'lucide-react';
+import { Settings, Eye } from 'lucide-react';
 import { ModalShell, ModalHeading, ModalRow, ModalLabel } from './ModalShell';
 import { ToggleRow } from '../settings/ToggleRow';
 import { VisualCalibrationModal } from './VisualCalibrationModal';
@@ -12,8 +12,6 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
   const [showCalibration, setShowCalibration] = useState(false);
   const metronomeEnabled = useStore(s => s.metronomeEnabled);
   const barLinesEnabled = useStore(s => s.barLinesEnabled);
-  const saveProject = useStore(s => s.saveProject);
-  const loadProject = useStore(s => s.loadProject);
   const comboTagSeparator = useStore(s => s.comboTagSeparator);
   const setComboTagSeparator = useStore(s => s.setComboTagSeparator);
   const sectionTags = useStore(s => s.sectionTags);
@@ -111,19 +109,6 @@ export const SettingsModal: React.FC<Props> = ({ show, onClose, onOpenAdvanced, 
         <button onClick={onOpenTracks} className="w-full h-11 bg-zinc-800 hover:bg-zinc-700 text-zinc-100 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2">
           <Settings size={14} /> Manage Tracks
         </button>
-      </div>
-
-      {/* Project Actions */}
-      <div>
-        <ModalHeading>Project Actions</ModalHeading>
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={saveProject} className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2">
-            <Save size={14} /> Save Project
-          </button>
-          <button onClick={loadProject} className="py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all flex items-center justify-center gap-2">
-            <FolderOpen size={14} /> Load Project
-          </button>
-        </div>
       </div>
     </ModalShell>
       <VisualCalibrationModal show={showCalibration} onClose={() => setShowCalibration(false)} />

@@ -1,10 +1,10 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { useStore } from './store/useStore';
-import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FolderOpen, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, Maximize, Minimize, Edit3, ListMusic, FileText, Volume2 } from 'lucide-react';
+import { Play, Pause, Square, Mic, Metronome, Settings, Plus, FastForward, Rewind, Music, Upload, Save, FileDown, FolderOpen, FilePlus2, Lock, Unlock, Activity, Trash2, ChevronUp, ChevronDown, Maximize, Minimize, Edit3, ListMusic, FileText, Volume2 } from 'lucide-react';
 import { cn } from './lib/utils';
 import { calculatePeaksAsync } from './audio/processing/audioUtils';
 import { useAudioEngine } from './hooks/useAudioEngine';
-import { ModalShell } from './components/modals/ModalShell';
+import { ModalShell, ModalHeading } from './components/modals/ModalShell';
 import { SettingsModal } from './components/modals/SettingsModal';
 import { TrackManagerModal } from './components/modals/TrackManagerModal';
 import { MetronomeModal } from './components/modals/MetronomeModal';
@@ -24,6 +24,8 @@ import { exportProject, importProject } from './audio/project/projectIO';
 import { TransportTimeDisplay } from './components/TransportTimeDisplay';
 import { DeviceChangeBanner } from './components/DeviceChangeBanner';
 import { VisualCalibrationModal } from './components/modals/VisualCalibrationModal';
+import { ConfirmModal } from './components/modals/ConfirmModal';
+import { LoadingOverlay } from './components/modals/LoadingOverlay';
 import { perfLogger } from './utils/PerformanceLogger';
 import { FeedbackAdmin } from './components/admin/FeedbackAdmin';
 import { FeedbackChatPanel, SidebarPanel, useFeedbackActivation } from './feedback';
@@ -70,6 +72,8 @@ export default function App() {
   const resetSettings = useStore(s => s.resetSettings);
   const saveProject = useStore(s => s.saveProject);
   const loadProject = useStore(s => s.loadProject);
+  const newSong = useStore(s => s.newSong);
+  const songName = useStore(s => s.songName);
   const addTrack = useStore(s => s.addTrack);
   const removeTrack = useStore(s => s.removeTrack);
   const reorderTracks = useStore(s => s.reorderTracks);
@@ -155,6 +159,19 @@ export default function App() {
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [showCues, setShowCues] = useState(false);
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
+  const [showUnsavedModal, setShowUnsavedModal] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [showSaveAsModal, setShowSaveAsModal] = useState(false);
+  const [saveAsName, setSaveAsName] = useState('');
+  const [loadingFileName, setLoadingFileName] = useState<string | null>(null);
+  const [importErrorMessage, setImportErrorMessage] = useState<string | null>(null);
+  const [loadedToast, setLoadedToast] = useState(false);
+  const loadedToastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Destructive action queued behind the unsaved-changes prompt
+  const pendingActionRef = useRef<(() => void) | null>(null);
+  // Optional continuation after the Save As modal completes
+  const saveAsAfterRef = useRef<(() => void) | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
@@ -171,6 +188,19 @@ export default function App() {
       seekTo(0);
     }
   }, [isReady, seekTo]);
+
+  // Warn before leaving with unsaved song changes (generic browser banner —
+  // beforeunload cannot be styled or message-customized)
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => {
+      if (useStore.getState().songDirty) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('beforeunload', handler);
+    return () => window.removeEventListener('beforeunload', handler);
+  }, []);
 
   // Handle Responsive Layout — recalculates on resize, track count, or selection change
   useEffect(() => {
@@ -459,6 +489,101 @@ export default function App() {
     }
   };
 
+  // Pause transport / stop recording before a song-content swap
+  const prepareEngineForSongChange = () => {
+    setIsPlaying(false);
+    if (isRecording) stopRecording();
+    if (multitrackRef.current && typeof multitrackRef.current.pause === 'function') {
+      multitrackRef.current.pause();
+    }
+  };
+
+  const doNewSong = () => {
+    prepareEngineForSongChange();
+    newSong();
+    useStore.getState().seekTo?.(0);
+  };
+
+  // Gate a destructive song action behind the unsaved-changes prompt when
+  // the song is dirty. `action` runs unmodified through the guard otherwise.
+  const guardSongAction = (action: () => void) => {
+    if (useStore.getState().songDirty) {
+      pendingActionRef.current = action;
+      setShowUnsavedModal(true);
+    } else {
+      action();
+    }
+  };
+
+  // Sanitize a proposed song name for use as a download filename
+  const sanitizeSongName = (raw: string) =>
+    raw.replace(/\.awnn$/i, '').replace(/[\\/:*?"<>|]/g, '').trim().slice(0, 80);
+
+  // Choice from the unsaved-changes modal. Save → export .awnn (same flow
+  // as Save As) then mark clean; Discard → just continue. Both continue to
+  // the queued action (new song / load song).
+  const handleUnsavedChoice = (saveFirst: boolean) => {
+    setShowUnsavedModal(false);
+    const nextAction = pendingActionRef.current;
+    if (!saveFirst) {
+      pendingActionRef.current = null;
+      if (nextAction) nextAction();
+      return;
+    }
+    // Never-saved song: standard behavior routes Save → Save As, and the
+    // named save still continues to the queued action once done
+    if (!useStore.getState().songName) {
+      openSaveAsModal(nextAction || undefined);
+      return;
+    }
+    pendingActionRef.current = null;
+    const savedState = useStore.getState();
+    void exportProject(savedState, savedState.songName).then(ok => {
+      // Mark clean only if the song state is untouched since the export —
+      // otherwise the queued action's own flow handles the flag
+      if (ok && useStore.getState() === savedState) useStore.getState().markSongSaved();
+    });
+    if (nextAction) nextAction();
+  };
+
+  const handleNewSong = () => guardSongAction(doNewSong);
+
+  // Save As: opens the naming modal; exported file becomes the new baseline.
+  // `after` (optional) runs once the named save succeeds.
+  const openSaveAsModal = (after?: () => void) => {
+    saveAsAfterRef.current = after || null;
+    setSaveAsName(useStore.getState().songName || '');
+    setShowSaveAsModal(true);
+  };
+
+  const confirmSaveAs = () => {
+    const name = sanitizeSongName(saveAsName) || 'Untitled Song';
+    setShowSaveAsModal(false);
+    const savedState = useStore.getState();
+    void exportProject(savedState, name).then(ok => {
+      if (!ok) return;
+      useStore.getState().setSongName(name);
+      // Mark clean only if the song is untouched by the continuation
+      if (useStore.getState() === savedState) useStore.getState().markSongSaved();
+      const after = saveAsAfterRef.current;
+      saveAsAfterRef.current = null;
+      if (after) after();
+    });
+  };
+
+  // Save: rewrite the existing song file. Save on a never-saved song
+  // routes to Save As (standard behavior).
+  const handleSaveSong = () => {
+    if (!useStore.getState().songName) {
+      openSaveAsModal();
+      return;
+    }
+    const savedState = useStore.getState();
+    void exportProject(savedState, savedState.songName).then(ok => {
+      if (ok && useStore.getState() === savedState) useStore.getState().markSongSaved();
+    });
+  };
+
   const handleRecord = async (trackId: string) => {
     if (isRecording) {
       perfLogger.log(8);
@@ -551,7 +676,11 @@ export default function App() {
 
   const handleFileImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    (e.target as HTMLInputElement).value = '';
     if (!file) return;
+    // In-app loading indicator + error modal: native dialogs don't render
+    // in fullscreen. Loaded file becomes the new saved baseline.
+    setLoadingFileName(file.name);
     try {
       const data = await importProject(file);
       // Restore the store heavily via localforage override or explicit set
@@ -564,10 +693,16 @@ export default function App() {
         lyricsText: data.lyricsText || '',
         lyricsSegments: data.lyricsSegments || [],
       });
-      alert('Project loaded from file!');
+      useStore.getState().setSongName(file.name.replace(/\.awnn$/i, ''));
+      useStore.getState().markSongSaved();
+      setLoadedToast(true);
+      if (loadedToastTimer.current) clearTimeout(loadedToastTimer.current);
+      loadedToastTimer.current = setTimeout(() => setLoadedToast(false), 2500);
     } catch (err) {
       console.error(err);
-      alert('Failed to parse file.');
+      setImportErrorMessage(String(err));
+    } finally {
+      setLoadingFileName(null);
     }
   };
 
@@ -850,26 +985,46 @@ export default function App() {
       </header>
 
       {/* Logo Menu Modal */}
-      <ModalShell show={showLogoMenu} onClose={() => setShowLogoMenu(false)} title="Menu">
-        <div className="space-y-1">
-          <button onClick={() => { exportProject(useStore.getState()); setShowLogoMenu(false); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-            <Save size={16} /> Save Song
-          </button>
-          <button onClick={() => { fileInputRef.current?.click(); setShowLogoMenu(false); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-            <FolderOpen size={16} /> Load Song
-          </button>
-          <div className="h-px bg-zinc-800 mx-2" />
-          <button onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-            <Upload size={16} /> Import Audio Tracks
-          </button>
-          <div className="h-px bg-zinc-800 mx-2" />
-          <button onClick={() => { setShowSettings(true); setShowLogoMenu(false); }}
-            className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
-            <Settings size={16} /> Settings
-          </button>
+      <ModalShell show={showLogoMenu} onClose={() => setShowLogoMenu(false)} title={songName || 'Untitled Song'}>
+        {/* Section blocks: atomic units for the shared modal column flow */}
+        <div>
+          <ModalHeading>File</ModalHeading>
+          <div className="space-y-1">
+            <button onClick={() => { setShowLogoMenu(false); handleNewSong(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <FilePlus2 size={16} /> New Song
+            </button>
+            <button onClick={() => { setShowLogoMenu(false); guardSongAction(() => fileInputRef.current?.click()); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <FolderOpen size={16} /> Load Song
+            </button>
+            <button onClick={() => { setShowLogoMenu(false); handleSaveSong(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <Save size={16} /> Save Song
+            </button>
+            <button onClick={() => { setShowLogoMenu(false); openSaveAsModal(); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <FileDown size={16} /> Save Song As…
+            </button>
+          </div>
+        </div>
+        <div>
+          <ModalHeading>Import</ModalHeading>
+          <div className="space-y-1">
+            <button onClick={() => { audioImportInputRef.current?.click(); setShowLogoMenu(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <Upload size={16} /> Import Audio Tracks
+            </button>
+          </div>
+        </div>
+        <div>
+          <ModalHeading>Settings</ModalHeading>
+          <div className="space-y-1">
+            <button onClick={() => { setShowSettings(true); setShowLogoMenu(false); }}
+              className="w-full flex items-center gap-3 px-4 py-3 text-sm font-semibold text-zinc-300 hover:bg-zinc-800 hover:text-white rounded-lg transition-colors">
+              <Settings size={16} /> Settings
+            </button>
+          </div>
         </div>
       </ModalShell>
 
@@ -1103,11 +1258,7 @@ export default function App() {
 
         {/* Reset to Defaults */}
         <button
-          onClick={() => {
-            if (window.confirm('Reset all settings to defaults? This will not affect your tracks, recordings, or calibration data.')) {
-              useStore.getState().resetSettings();
-            }
-          }}
+          onClick={() => setShowResetConfirm(true)}
           className="w-full py-3 bg-red-900/30 hover:bg-red-900/50 text-red-400 hover:text-red-300 rounded text-[10px] font-bold uppercase tracking-wider transition-all border border-red-900/30 mt-4"
         >
           Reset to Defaults
@@ -1127,6 +1278,65 @@ export default function App() {
         onOpenAdvanced={() => { setShowSettings(false); setShowAdvancedSettings(true); }}
         onOpenTracks={() => { setShowSettings(false); setShowTracksModal(true); }}
       />
+
+      {/* Unsaved Changes Prompt (New Song / Load Song when dirty) */}
+      <ConfirmModal
+        show={showUnsavedModal}
+        title="Unsaved changes"
+        message="Your song has unsaved changes. Save them before continuing?"
+        onClose={() => setShowUnsavedModal(false)}
+        actions={[
+          { label: 'Save Song & Continue', variant: 'primary', onClick: () => handleUnsavedChoice(true) },
+          { label: 'Discard & Continue', onClick: () => handleUnsavedChoice(false) },
+          { label: 'Cancel', onClick: () => setShowUnsavedModal(false) },
+        ]}
+      />
+
+      {/* Reset Settings Confirmation */}
+      <ConfirmModal
+        show={showResetConfirm}
+        title="Reset to Defaults"
+        message="Reset all settings to defaults? This will not affect your tracks, recordings, or calibration data."
+        onClose={() => setShowResetConfirm(false)}
+        actions={[
+          { label: 'Reset', variant: 'danger', onClick: () => { setShowResetConfirm(false); resetSettings(); } },
+          { label: 'Cancel', onClick: () => setShowResetConfirm(false) },
+        ]}
+      />
+
+      {/* Save Song As — naming dialog (in-app, fullscreen-safe) */}
+      <ModalShell show={showSaveAsModal} onClose={() => setShowSaveAsModal(false)} title="Save Song As" maxWidth="max-w-xs" singleColumn>
+        <input
+          type="text"
+          value={saveAsName}
+          autoFocus
+          onChange={(e) => setSaveAsName(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') confirmSaveAs(); }}
+          placeholder="Untitled Song"
+          className="w-full bg-zinc-800 border border-zinc-700 rounded px-2 py-2 text-sm text-zinc-200 outline-none focus:border-zinc-500 mb-4"
+        />
+        <div className="space-y-1">
+          <button onClick={confirmSaveAs} className="w-full py-3 rounded-lg text-sm font-semibold transition-colors bg-emerald-800 hover:bg-emerald-700 text-zinc-100">Save</button>
+          <button onClick={() => setShowSaveAsModal(false)} className="w-full py-3 rounded-lg text-sm font-semibold transition-colors bg-zinc-800 hover:bg-zinc-700 text-zinc-300">Cancel</button>
+        </div>
+      </ModalShell>
+
+      {/* Song import error (replaces native alert, fullscreen-safe) */}
+      <ConfirmModal
+        show={!!importErrorMessage}
+        title="Failed to load song"
+        message={importErrorMessage || ''}
+        onClose={() => setImportErrorMessage(null)}
+        actions={[{ label: 'OK', onClick: () => setImportErrorMessage(null) }]}
+      />
+
+      {/* Song import buffering + completion toast */}
+      <LoadingOverlay show={!!loadingFileName} label={`Loading ${loadingFileName || ''}…`} />
+      {loadedToast && (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-zinc-800 border border-zinc-700 text-zinc-200 text-xs px-3 py-2 rounded-lg shadow-lg z-[110]">
+          Song loaded
+        </div>
+      )}
 
       {/* Advanced Settings Modal */}
       {/* Tracks Modal */}
