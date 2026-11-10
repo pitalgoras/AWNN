@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
+import { persist, subscribeWithSelector } from 'zustand/middleware';
 import { mutative } from 'zustand-mutative';
 import localforage from 'localforage';
 import { audioBufferToWav } from '../audio/processing/audioBufferToWav';
@@ -223,7 +223,21 @@ interface AppState {
 
   saveProject: () => Promise<void>;
   loadProject: () => Promise<void>;
+  newSong: () => void;
+  markSongSaved: () => void;
+  songDirty: boolean;
+  songName: string | null;
+  setSongName: (name: string | null) => void;
 }
+
+const defaultTracks = () => [
+  { id: 'metronome', name: 'Metronome', color: '#718096', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+  { id: '1', name: 'Instruments', color: '#4a5568', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, isInstrument: true, phrases: [], envelope: [] },
+  { id: '2', name: 'Sopranos', color: '#F6E05E', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+  { id: '3', name: 'Altos', color: '#F56565', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+  { id: '4', name: 'Tenors', color: '#48BB78', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+  { id: '5', name: 'Basses', color: '#4299E1', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
+];
 
 const defaultSettings = {
   bpm: 120,
@@ -308,22 +322,22 @@ const userDefaultSettings = {
   largeBtnSize: 52,
 };
 
+// Guards the subscriber below: writes that shouldn't dirty the song
+// (markSongSaved, newSong reset) temporarily suppress it.
+let suppressDirty = false;
+
 export const useStore = create<AppState>()(
-  persist(
-    mutative(
-      (set, get) => ({
-        tracks: [
-          { id: 'metronome', name: 'Metronome', color: '#718096', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-          { id: '1', name: 'Instruments', color: '#4a5568', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, isInstrument: true, phrases: [], envelope: [] },
-          { id: '2', name: 'Sopranos', color: '#F6E05E', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-          { id: '3', name: 'Altos', color: '#F56565', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-          { id: '4', name: 'Tenors', color: '#48BB78', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-          { id: '5', name: 'Basses', color: '#4299E1', isMuted: false, isSolo: false, volume: 1, pan: 0, offset: 0, phrases: [], envelope: [] },
-        ],
+  subscribeWithSelector(
+    persist(
+      mutative(
+        (set, get) => ({
+        tracks: defaultTracks(),
         cues: [],
         ...defaultSettings,
         isPlaying: false,
         isRecording: false,
+        songDirty: false,
+        songName: null,
         currentTime: 0,
         duration: 0,
         selectedTrackId: null,
@@ -572,7 +586,7 @@ export const useStore = create<AppState>()(
         setSmallBtnSize: (size) => set({ smallBtnSize: size }),
         setMediumBtnSize: (size) => set({ mediumBtnSize: size }),
         setLargeBtnSize: (size) => set({ largeBtnSize: size }),
-        
+
         getMultitrackTime: () => 0,
         setMultitrackTimeGetter: (getter) => set({ getMultitrackTime: getter }),
         seekTo: undefined,
@@ -680,6 +694,44 @@ export const useStore = create<AppState>()(
             alert('Failed to load project.');
           }
         },
+        newSong: () => {
+          // Start from a blank canvas: reset song content (tracks, cues, lyrics,
+          // transport) to defaults. Deliberately keeps device latency calibration
+          // and customTags (app setup, not song content). The saved project blob
+          // (awnn_project) is untouched so "Load Project" can restore the last
+          // saved song. A new blank canvas starts out clean: suppress the
+          // dirty-tracking subscribers for this atomic reset.
+          suppressDirty = true;
+          set((state) => {
+            state.tracks = defaultTracks();
+            state.cues = [];
+            state.bpm = 120;
+            state.timeSignature = [4, 4];
+            state.lyricsText = '';
+            state.lyricsSegments = [];
+            state.currentTime = 0;
+            state.duration = 0;
+            state.selectedTrackId = null;
+            state.selectedPhraseId = null;
+            state.syncLoop = null;
+            state.activeTagId = '[ALL]';
+            state.songName = null;
+            state.songDirty = false;
+          });
+          suppressDirty = false;
+        },
+
+        markSongSaved: () => {
+          // The .awnn file now reflects the current song content. The
+          // suppression flag keeps the dirty-tracking subscribers below
+          // from immediately re-dirtying during this atomic reset.
+          suppressDirty = true;
+          set({ songDirty: false });
+          suppressDirty = false;
+        },
+
+        setSongName: (name) => set({ songName: name }),
+
       })
     ),
     {
@@ -720,6 +772,22 @@ export const useStore = create<AppState>()(
         metronomeHeight: state.metronomeHeight,
         sidebarWidth: state.sidebarWidth,
       }),
-    }
+    },
   )
+)
 );
+
+// Dirty-tracking: the song becomes unsaved whenever its content changes.
+// Uses subscribeWithSelector so transport ticks, zoom, appMode toggles and
+// latency updates never fire — only the fields that make up the song.
+const dirtySourceKeys: Array<'tracks' | 'cues' | 'bpm' | 'timeSignature' | 'lyricsText' | 'lyricsSegments'> = [
+  'tracks', 'cues', 'bpm', 'timeSignature', 'lyricsText', 'lyricsSegments',
+];
+for (const key of dirtySourceKeys) {
+  useStore.subscribe(
+    (s) => s[key],
+    () => {
+      if (!suppressDirty) useStore.setState({ songDirty: true });
+    }
+  );
+}
